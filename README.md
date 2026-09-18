@@ -30,7 +30,7 @@ factors:
   - file: [sample.pb, sample.png, sample.txt]
     algorithm: [gzip, zstd]
     preset: [min, default, max]
-run: './run.bash "{algorithm}" "{preset}" "{file}"'
+run: './run.bash {algorithm} {preset} {file}'
 replicates: 6
 ```
 
@@ -38,13 +38,10 @@ It uses a [setup.bash](./example/compression/setup.bash) script to install depen
 
 ```bash
 $ ./setup.bash
-{
-  "os": "Darwin",
-  "arch": "arm64"
-}
+{"os":"Darwin","arch":"arm64"}
 ```
 
-The [run.bash](./example/compression/run.bash) script is invoked `replicates` times for each design point (unique combination of factors and settings) and emits a flat JSON object on stdout containing the outputs of the run:
+The [run.bash](./example/compression/run.bash) script is invoked `replicates` times for each design point (unique combination of factors and settings) and emits a flat JSON object on the last line of stdout containing the outputs of the run:
 
 ```bash
 $ ./run.bash zstd default sample.pb
@@ -63,10 +60,10 @@ Run an experiment by passing its design path to `doe run`. Incomplete work can b
 ```bash
 $ doe run design.yaml
 <progress on stderr>
-<output on stdout>
+/home/alice/doe/example/compression/results
 ```
 
-doe streams one JSON object per run to the `runs.jsonl` file inside the study's `results` directory. You can analyze this data any way you like, e.g. using DuckDB's `read_json` function:
+`doe run` prints the results directory to stdout. doe streams one JSON object per run to the `runs.jsonl` file inside that directory. You can analyze this data any way you like, e.g. using DuckDB's `read_json` function:
 
 ```bash
 $ duckdb -c 'SELECT algorithm, file, level, preset, round(avg(input_size_bytes/output_size_bytes), 2) as ratio, round(avg(input_size_bytes/cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/runs.jsonl') GROUP BY ALL ORDER BY ALL;'
@@ -104,7 +101,7 @@ Below you can find an overview of doe commands.
 ```
 A lightweight CLI for design of experiments studies.
 
-Usage: doe [global options] <command> [command options] [arguments]
+Usage: doe <command> [command options] [arguments]
 
 Commands:
 	run			Conduct or resume the execution of a study.
@@ -118,20 +115,24 @@ Run performs one experiment per design. Previous runs are reused, allowing work 
 Usage: doe run [options] <design>...
 
 Arguments:
-  <design>...           Path to a design YAML file
+  <design>...           Paths to one or more design YAML files
 
 Options:
-  -p, --list-points 		List the design points in the study. Do not run them.
+  -p, --plan            Show the design points and schedule. Do not run them.
   -f, --force           Force the study to run, even if it will dirty the results.
-  -o, --output					Put the results in the given directory. Defaults to ./results in the study root.
-  -h, --help						Print help text.
+  -o, --output DIR      Put the results in DIR. Defaults to ./results in the study root.
+  -h, --help            Print help text.
 
 Examples:
   doe run study.yaml
   doe run -o /tmp/compression-results-2026-09-18 study.yaml
   doe run -f study.yaml
-  doe run -p study.yaml
+  doe run --plan study.yaml
 ```
+
+Relative `--output` paths are resolved from the current working directory. When the option is omitted, results default to `./results` in the study root. A successful run prints the absolute results directory path to stdout.
+
+`--plan` prints an ASCII table of the deterministic design-point order. Its first column is `#`, numbered from 1. Below it, a schedule table has one row per replicate, a leading replicate label, and one data column per design point; its cells use the `#` values to show execution order.
 
 ## Studies
 
@@ -143,6 +144,8 @@ experiment2.yaml
 setup.bash
 run.bash
 ```
+
+The study root is the parent directory of its design files. All designs passed to one invocation must belong to the same study root.
 
 ### Reserved Keywords
 
@@ -157,17 +160,19 @@ Designs are defined as YAML files and must be placed at the top level of the stu
 | field      | description                                                  |
 | ---------- | ------------------------------------------------------------ |
 | setup      | An optional string holding a Bourne shell command to run once before the start of an experiment. It is re-executed when incomplete work is resumed because resuming the execution of a design produces another experiment. May output a JSON object describing the experiment's environment. |
-| factors    | A required list of factor groups. Each group maps the same set of factors to lists of settings and produces their Cartesian product. The union of these products forms the design points and must not contain duplicates. |
+| factors    | A required list of factor groups. Each group maps the same set of factors to lists of settings and produces their Cartesian product. Settings must be JSON scalars: strings, numbers, booleans, or null. The union of these products forms the design points and must not contain duplicates. |
 | run        | A required string holding a Bourne shell command that is invoked `replicates` times at every design point. Must produce a JSON object containing the outputs of the run. See Commands & Scripts for more information. See the `runs.jsonl` description below for reserved field names. |
 | replicates | An optional integer defining the number of runs to perform at each design point. Defaults to 1. |
 
-doe places design points in a deterministic order that can be inspected with `--list-points`. Within each replicate, it reorders them using successive rows of a balanced Latin square (Williams design). Over a complete schedule, every design point occupies every execution position equally and immediately precedes every other point equally. The schedule repeats as needed.
+doe places design points in a deterministic order that can be inspected with `--plan`. Replicates are numbered from 1. For replicate `r`, doe orders the design points using row `r-1` of a repeating Williams design derived from that order. A complete schedule has `n` rows for an even number of points and `2n` rows for an odd number, then repeats as needed. This balances execution position and first-order carryover effects.
 
 ### Scripts
 
 The inline Bourne shell scripts invoked by `setup` and `run` are always executed using the study root as their working directory.
 
 Typically the inline scripts just shell out to a script file in the study. Those scripts can be written in any language. The setup script can install runtime dependencies or perform compilations as needed.
+
+Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For both `setup` and `run`, doe treats the last line of stdout as the result and streams earlier output to stderr while the experiment runs. The result must be a flat JSON object whose values are JSON scalars. Empty setup output is treated as `{}`; a run must produce a result.
 
 ## Results
 
@@ -183,9 +188,9 @@ results
 
 #### study
 
-When `doe run` is invoked, it computes the `files_hash` of the current study directory. The snapshot is taken before the setup command runs and excludes the results directory and files matched by `.gitignore` files. Files that affect runs should not be ignored unless the setup command recreates them.
+When `doe run` is invoked, it computes the `files_hash` of the current study directory. The snapshot is taken before the setup command runs. It excludes the active output directory, every `.git` directory, and files matched by `.gitignore` files. Symlinks are preserved and hashed by their link target text; doe never traverses them. Files that affect runs should not be ignored unless the setup command recreates them.
 
-If `experiments.jsonl` contains a record with a different hash, the results are considered to be dirty, and doe will only proceed with the `-f` flag. In this case, it will replace the existing `study` directory with the current version.
+If `experiments.jsonl` contains a record with a different hash, the results are considered to be dirty, and doe will only proceed with the `-f` flag. In this case, it replaces the existing `study` directory with the current version and still reuses matching runs from older snapshots. To rerun them, the user must clear or change the results directory.
 
 #### runs.jsonl
 
@@ -195,7 +200,7 @@ This file contains Newline-Delimited JSON, with each line holding an object as d
 | ------------- | ------------------------------------------------------------ |
 | run_id        | A string holding a unique identifier of the run within the study. |
 | experiment_id | A string holding the ID of the experiment the run belongs to. |
-| replicate     | An integer holding the replicate number of the run.          |
+| replicate     | An integer holding the replicate number of the run, starting at 1. |
 | start         | A string holding the [RFC3339Nano](https://pkg.go.dev/time) timestamp that the run was started. |
 | end           | A string holding the [RFC3339Nano](https://pkg.go.dev/time) timestamp that the run was finished. |
 | ...           | The remainder of the object contains the inputs and outputs of the run. |
@@ -214,12 +219,12 @@ This file contains Newline-Delimited JSON, with each line holding an object as d
 | factors       | An array of strings listing the factors that are being studied. |
 | files         | An object with one key per included file path in the study. The value is the hash of the file contents at the time the experiment began. |
 | files_hash    | A string holding the hash over all file paths and content hashes in the `files` object, ordered by path in ascending byte order. |
-| env           | An object holding the JSON output of the setup script. If the setup script did not output JSON, this is an empty object. |
+| env           | An object holding the JSON result of the setup script. If setup produced no result, this is an empty object. |
 | env_hash      | A string holding the hash over all values in the `env` object after sorting them by their keys in ascending byte order. |
 
 #### README.md
 
-The results directory always contains a copy of this README where the `@latest` install instruction is replaced with the precise version of doe that was being used.
+The results directory always contains a copy of this README where the `@latest` install instruction is replaced with the precise version of doe that was being used. Development builds use the full commit hash when clean, `<commit>-dirty` when modified, and `devel-unknown` when unavailable. For dirty or unknown builds, the copied README notes that the exact doe binary is not reproducible.
 
 ## Terminology
 

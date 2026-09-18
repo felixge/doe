@@ -7,4 +7,4 @@ if [[ $OSTYPE == darwin* ]] && ! command -v gtime >/dev/null; then
   brew install gnu-time
 fi
 
-printf '{\n  "os": "%s",\n  "arch": "%s"\n}\n' "$(uname -s)" "$(uname -m)"
+printf '{"os":"%s","arch":"%s"}\n' "$(uname -s)" "$(uname -m)"
