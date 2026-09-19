@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/felixge/doe/internal/model"
 )
@@ -17,6 +18,7 @@ type resultIndex struct {
 	experiments []model.Experiment
 	experiment  map[string]model.Experiment
 	runs        map[string]bool
+	durations   map[string]time.Duration
 }
 
 func loadResults(output, root string) (*resultIndex, error) {
@@ -24,6 +26,7 @@ func loadResults(output, root string) (*resultIndex, error) {
 		root:       root,
 		experiment: make(map[string]model.Experiment),
 		runs:       make(map[string]bool),
+		durations:  make(map[string]time.Duration),
 	}
 	if err := readJSONL(filepath.Join(output, "experiments.jsonl"), func(data []byte) error {
 		var experiment model.Experiment
@@ -74,11 +77,35 @@ func loadResults(output, root string) (*resultIndex, error) {
 			return err
 		}
 		index.runs[key] = true
+		start, err := runTime(record, "start")
+		if err != nil {
+			return err
+		}
+		end, err := runTime(record, "end")
+		if err != nil {
+			return err
+		}
+		if end.Before(start) {
+			return fmt.Errorf("run ends before it starts")
+		}
+		index.durations[key] = end.Sub(start)
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 	return index, nil
+}
+
+func runTime(record map[string]any, name string) (time.Time, error) {
+	text, ok := record[name].(string)
+	if !ok {
+		return time.Time{}, fmt.Errorf("run has invalid %s", name)
+	}
+	value, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("run has invalid %s", name)
+	}
+	return value, nil
 }
 
 func (r *resultIndex) addExperiment(experiment model.Experiment) {
@@ -87,6 +114,14 @@ func (r *resultIndex) addExperiment(experiment model.Experiment) {
 }
 
 func reuseKey(design string, replicate int, point model.Point) (string, error) {
+	key, err := pointKey(design, point)
+	if err != nil {
+		return "", err
+	}
+	return key + "\x00" + strconv.Itoa(replicate), nil
+}
+
+func pointKey(design string, point model.Point) (string, error) {
 	values := make(map[string]model.Scalar, len(point.Values))
 	for _, value := range point.Values {
 		values[value.Name] = value.Value
@@ -95,7 +130,7 @@ func reuseKey(design string, replicate int, point model.Point) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return design + "\x00" + strconv.Itoa(replicate) + "\x00" + string(data), nil
+	return design + "\x00" + string(data), nil
 }
 
 func readJSONL(path string, consume func([]byte) error) error {

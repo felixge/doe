@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/felixge/doe/internal/cli"
 	runcmd "github.com/felixge/doe/internal/cmd/run"
@@ -52,8 +53,8 @@ replicates: 2
 	if strings.Contains(secondErr.String(), "run log") {
 		t.Fatalf("resumed invocation executed a run:\n%s", secondErr.String())
 	}
-	if got := strings.Count(secondErr.String(), "reused"); got != 4 {
-		t.Fatalf("reused count = %d, want 4; stderr:\n%s", got, secondErr.String())
+	if got := secondErr.String(); got != "setup log\n" {
+		t.Fatalf("stderr = %q, want only command output when it is not a TTY", got)
 	}
 	if got := lineCount(t, filepath.Join(output, "experiments.jsonl")); got != 2 {
 		t.Fatalf("experiment count = %d, want 2", got)
@@ -151,6 +152,47 @@ func TestCommandOutputStreamsEarlierLines(t *testing.T) {
 	}
 	if last != `{"ok":true}` || stderr.String() != "first\n" {
 		t.Fatalf("last = %q, stderr = %q", last, stderr.String())
+	}
+}
+
+func TestCommandOutputOnlyClearsProgressForLogs(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		script      string
+		wantCleared bool
+	}{
+		{name: "quiet", script: `printf '{"ok":true}\n'`},
+		{name: "logging", script: `printf 'log\n{"ok":true}\n'`, wantCleared: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			progress := &progressBar{output: &stderr, writer: &stderr, total: 1, shown: true}
+			env := testEnv(new(bytes.Buffer), &stderr)
+			env.Stderr = progress.LogWriter()
+			if _, err := commandOutput(context.Background(), env, t.TempDir(), test.script); err != nil {
+				t.Fatal(err)
+			}
+			if got := !progress.shown; got != test.wantCleared {
+				t.Fatalf("progress cleared = %v, want %v; stderr = %q", got, test.wantCleared, stderr.String())
+			}
+		})
+	}
+}
+
+func TestLoadResultsLoadsRunDurations(t *testing.T) {
+	output := t.TempDir()
+	writeFile(t, filepath.Join(output, "experiments.jsonl"), `{"experiment_id":"experiment","design":"design.yaml","factors":["value"]}`+"\n")
+	writeFile(t, filepath.Join(output, "runs.jsonl"), `{"experiment_id":"experiment","replicate":1,"start":"2026-09-19T12:00:00Z","end":"2026-09-19T12:00:02.25Z","value":"one"}`+"\n")
+	results, err := loadResults(output, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := reuseKey("design.yaml", 1, model.Point{Values: []model.Value{{Name: "value", Value: "one"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := results.durations[key]; got != 2250*time.Millisecond {
+		t.Fatalf("duration = %v, want 2.25s", got)
 	}
 }
 

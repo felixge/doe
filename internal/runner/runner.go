@@ -337,25 +337,43 @@ func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snaps
 		return err
 	}
 	results.addExperiment(experiment)
-
-	for replicate, row := range design.Schedule(len(points), d.Replicates) {
-		for position, pointIndex := range row {
+	schedule := design.Schedule(len(points), d.Replicates)
+	reused := 0
+	var doneDuration time.Duration
+	for replicate, row := range schedule {
+		for _, pointIndex := range row {
 			point := points[pointIndex]
 			key, err := reuseKey(d.Path, replicate+1, point)
 			if err != nil {
 				return err
 			}
 			if results.runs[key] {
-				_, _ = fmt.Fprintf(env.Stderr, "%s: replicate %d, point %d/%d (#%d): reused\n", d.Path, replicate+1, position+1, len(row), pointIndex+1)
+				reused++
+				doneDuration += results.durations[key]
+			}
+		}
+	}
+	progress := newProgress(env.Stderr, d.Path, len(points)*d.Replicates, reused, doneDuration)
+	defer progress.Close()
+	runEnv := *env
+	runEnv.Stderr = progress.LogWriter()
+
+	for replicate, row := range schedule {
+		for _, pointIndex := range row {
+			point := points[pointIndex]
+			key, err := reuseKey(d.Path, replicate+1, point)
+			if err != nil {
+				return err
+			}
+			if results.runs[key] {
 				continue
 			}
-			_, _ = fmt.Fprintf(env.Stderr, "%s: replicate %d, point %d/%d (#%d): running\n", d.Path, replicate+1, position+1, len(row), pointIndex+1)
 			command, err := interpolate(d.Run, point)
 			if err != nil {
 				return err
 			}
 			runStart := time.Now()
-			last, err := commandOutput(ctx, env, root, command)
+			last, err := commandOutput(ctx, &runEnv, root, command)
 			if err != nil {
 				return fmt.Errorf("replicate %d point #%d: %w", replicate+1, pointIndex+1, err)
 			}
@@ -387,6 +405,9 @@ func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snaps
 				return err
 			}
 			results.runs[key] = true
+			duration := run.End.Sub(run.Start)
+			results.durations[key] = duration
+			progress.Complete(duration)
 		}
 	}
 	return nil
