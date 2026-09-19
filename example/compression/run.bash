@@ -28,25 +28,23 @@ esac
 
 case "$algorithm" in
 gzip)
-  output="$file.gz"
-  command=(gzip -kf "-$level" "${inputs[@]}")
+  command=(gzip -c "-$level" "${inputs[@]}")
   ;;
 zstd)
-  output="$file.zst"
-  command=(zstd -qf "-$level" "${inputs[@]}")
+  command=(zstd -qc "-$level" "${inputs[@]}")
   ;;
 esac
 
 stats=$(mktemp)
+output=$(mktemp)
 trap 'rm -f "$stats" "$output"' EXIT
-rm -f "$output"
 
 time_command=/usr/bin/time
 [[ $OSTYPE == darwin* ]] && time_command=gtime
 
-"$time_command" -f '%e %U %S %M' -o "$stats" "${command[@]}"
+"$time_command" -f '%e %U %S %M' -o "$stats" "${command[@]}" >"$output"
 input_size=$(wc -c <"$file")
-output_size=$(wc -c <"$output")
+output_size=$(($(wc -c <"$output") / iterations))
 awk -v iterations="$iterations" -v level="$level" -v input_size="$input_size" -v output_size="$output_size" '
   {
     printf "{\"level\":%.0f,\"wall_seconds\":%g,\"cpu_seconds\":%g,\"peak_rss_bytes\":%.0f,\"input_size_bytes\":%.0f,\"output_size_bytes\":%.0f}\n",
