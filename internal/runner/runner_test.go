@@ -168,7 +168,7 @@ func TestCommandOutputOnlyClearsProgressForLogs(t *testing.T) {
 			var stderr bytes.Buffer
 			progress := &progressBar{output: &stderr, writer: &stderr, total: 1, shown: true}
 			env := testEnv(new(bytes.Buffer), &stderr)
-			env.Stderr = progress.LogWriter()
+			env.Stderr = progress
 			if _, err := commandOutput(context.Background(), env, t.TempDir(), test.script); err != nil {
 				t.Fatal(err)
 			}

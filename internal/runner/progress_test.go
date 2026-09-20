@@ -59,15 +59,33 @@ func TestProgressBarClearsEachRedraw(t *testing.T) {
 }
 
 func TestProgressEstimateCombinesHistoricalAndCurrentDurations(t *testing.T) {
+	started := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	bar := &progressBar{
 		writer:       io.Discard,
 		total:        3,
 		done:         1,
 		doneDuration: 4 * time.Second,
+		runStarted:   started,
+		now:          func() time.Time { return started.Add(time.Second) },
 	}
-	bar.Complete(8 * time.Second)
-	if got, ok := bar.estimate(); !ok || got != 6*time.Second {
-		t.Fatalf("estimate = %s, %v; want 6s, true", got, ok)
+	if got, ok := bar.estimate(); !ok || got != 7*time.Second {
+		t.Fatalf("estimate = %s, %v; want 7s, true", got, ok)
+	}
+}
+
+func TestProgressShowsElapsedTimeWhileEstimating(t *testing.T) {
+	var output bytes.Buffer
+	started := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	now := started
+	bar := &progressBar{
+		output: &output, writer: &output, total: 2,
+		started: started, now: func() time.Time { return now },
+	}
+	bar.StartRun()
+	now = now.Add(3 * time.Second)
+	bar.render()
+	if got := output.String(); !strings.Contains(got, "estimating ... · 3s elapsed") {
+		t.Fatalf("progress output = %q", got)
 	}
 }
 

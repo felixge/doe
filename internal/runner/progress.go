@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -13,6 +14,7 @@ import (
 const progressWidth = 24
 
 type progressBar struct {
+	mu           sync.Mutex
 	output       io.Writer
 	writer       io.Writer
 	label        string
@@ -20,8 +22,11 @@ type progressBar struct {
 	done         int
 	doneDuration time.Duration
 	started      time.Time
+	runStarted   time.Time
 	now          func() time.Time
 	shown        bool
+	stop         chan struct{}
+	stopped      chan struct{}
 }
 
 func newProgress(writer io.Writer, label string, total, done int, doneDuration time.Duration) *progressBar {
@@ -39,6 +44,11 @@ func newProgress(writer io.Writer, label string, total, done int, doneDuration t
 		bar.writer = writer
 	}
 	bar.render()
+	if bar.writer != io.Discard {
+		bar.stop = make(chan struct{})
+		bar.stopped = make(chan struct{})
+		go bar.refresh()
+	}
 	return bar
 }
 
@@ -47,17 +57,36 @@ func isTerminal(writer io.Writer) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
-func (p *progressBar) Complete(duration time.Duration) {
-	p.done++
-	p.doneDuration += duration
-	p.render()
+func (p *progressBar) StartRun() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.runStarted = p.now()
+	p.renderLocked()
 }
 
-func (p *progressBar) LogWriter() io.Writer {
-	return &progressLogWriter{progress: p, writer: p.output}
+func (p *progressBar) Complete(duration time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.done++
+	p.doneDuration += duration
+	p.runStarted = time.Time{}
+	p.renderLocked()
+}
+
+func (p *progressBar) Write(data []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.clearLocked()
+	return p.output.Write(data)
 }
 
 func (p *progressBar) Clear() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.clearLocked()
+}
+
+func (p *progressBar) clearLocked() {
 	if p.shown {
 		_, _ = fmt.Fprint(p.writer, "\r\x1b[2K")
 		p.shown = false
@@ -65,6 +94,13 @@ func (p *progressBar) Clear() {
 }
 
 func (p *progressBar) Close() {
+	if p.stop != nil {
+		close(p.stop)
+		<-p.stopped
+		p.stop = nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.shown {
 		_, _ = fmt.Fprintln(p.writer)
 		p.shown = false
@@ -72,6 +108,12 @@ func (p *progressBar) Close() {
 }
 
 func (p *progressBar) render() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.renderLocked()
+}
+
+func (p *progressBar) renderLocked() {
 	bar := strings.Repeat("=", progressWidth)
 	if p.done < p.total {
 		filled := 0
@@ -85,6 +127,8 @@ func (p *progressBar) render() {
 		status = "done in " + formatDuration(p.now().Sub(p.started))
 	} else if estimate, ok := p.estimate(); ok {
 		status = "~" + formatDuration(estimate) + " remaining"
+	} else if !p.runStarted.IsZero() {
+		status = "estimating ... · " + formatDuration(p.now().Sub(p.runStarted)) + " elapsed"
 	}
 	_, _ = fmt.Fprintf(p.writer, "\r\x1b[2K%s [%s] %d/%d · %s", p.label, bar, p.done, p.total, status)
 	p.shown = true
@@ -95,7 +139,30 @@ func (p *progressBar) estimate() (time.Duration, bool) {
 		return 0, false
 	}
 	average := p.doneDuration / time.Duration(p.done)
-	return time.Duration(p.total-p.done) * average, true
+	remaining := time.Duration(p.total-p.done) * average
+	if !p.runStarted.IsZero() {
+		remaining -= p.now().Sub(p.runStarted)
+	}
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining, true
+}
+
+func (p *progressBar) refresh() {
+	ticker := time.NewTicker(time.Second)
+	defer func() {
+		ticker.Stop()
+		close(p.stopped)
+	}()
+	for {
+		select {
+		case <-ticker.C:
+			p.render()
+		case <-p.stop:
+			return
+		}
+	}
 }
 
 func formatDuration(duration time.Duration) string {
@@ -118,14 +185,4 @@ func formatDuration(duration time.Duration) string {
 		parts = append(parts, fmt.Sprintf("%ds", seconds))
 	}
 	return strings.Join(parts, " ")
-}
-
-type progressLogWriter struct {
-	progress *progressBar
-	writer   io.Writer
-}
-
-func (w *progressLogWriter) Write(data []byte) (int, error) {
-	w.progress.Clear()
-	return w.writer.Write(data)
 }

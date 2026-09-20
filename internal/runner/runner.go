@@ -356,7 +356,7 @@ func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snaps
 	progress := newProgress(env.Stderr, d.Path, len(points)*d.Replicates, reused, doneDuration)
 	defer progress.Close()
 	runEnv := *env
-	runEnv.Stderr = progress.LogWriter()
+	runEnv.Stderr = progress
 
 	for replicate, row := range schedule {
 		for _, pointIndex := range row {
@@ -373,6 +373,7 @@ func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snaps
 				return err
 			}
 			runStart := time.Now()
+			progress.StartRun()
 			last, err := commandOutput(ctx, &runEnv, root, command)
 			if err != nil {
 				return fmt.Errorf("replicate %d point #%d: %w", replicate+1, pointIndex+1, err)
