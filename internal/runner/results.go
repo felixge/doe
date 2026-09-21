@@ -114,7 +114,11 @@ func reuseKey(design string, replicate int, point model.Point) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return key + "\x00" + strconv.Itoa(replicate), nil
+	return replicateKey(key, replicate), nil
+}
+
+func replicateKey(pointKey string, replicate int) string {
+	return pointKey + "\x00" + strconv.Itoa(replicate)
 }
 
 func pointKey(design string, point model.Point) (string, error) {
