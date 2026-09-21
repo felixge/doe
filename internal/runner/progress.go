@@ -80,12 +80,6 @@ func (p *progressBar) Write(data []byte) (int, error) {
 	return p.output.Write(data)
 }
 
-func (p *progressBar) Clear() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.clearLocked()
-}
-
 func (p *progressBar) clearLocked() {
 	if p.shown {
 		_, _ = fmt.Fprint(p.writer, "\r\x1b[2K")
