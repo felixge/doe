@@ -113,6 +113,7 @@ Arguments:
 Options:
   -p, --plan            Show the design points and schedule. Do not run them.
   -d, --dirty           Run the study even if it will dirty the results.
+  -c, --clean           Remove the results and work directories before running.
   -h, --help            Print help text.
 
 Examples:
@@ -120,15 +121,18 @@ Examples:
   doe run design.yaml
   # Run a design, even if it will produce dirty results
   doe run -d design.yaml
+  # Remove previous results and work before running a design
+  doe run -c design.yaml
   # Show the plan for the design
   doe run -p design.yaml
 ```
 
 A run always follows the steps below:
 
-1. Compute the `files_hash` over all files in the study, excluding the `results` and `work` directories and any `.git` directories.
-2. Check if `results/experiments.jsonl` contains a `files_hash` for a different version of the study. If yes, refuse to resume unless the `-d` flag is provided or until the user clears the `results` directory.
-3. Execute the designs in the order they were listed.
+1. If `-c` or `--clean` is provided, remove the study's `results` and `work` directories so the study starts from scratch.
+2. Compute the `files_hash` over all files in the study, excluding the `results` and `work` directories and any `.git` directories.
+3. Check if `results/experiments.jsonl` contains a `files_hash` for a different version of the study. If yes, refuse to resume unless the `-d` flag is provided or until the user clears the `results` directory.
+4. Execute the designs in the order they were listed.
    1. Invoke the `setup` script and capture the env JSON it emits, if any.
    2. Record the experiment for the design in `results/experiments.jsonl` along with the env JSON that was captured.
    3. Expand the `factors` and `replicates` into a list of all runs that need to be performed.
@@ -136,7 +140,7 @@ A run always follows the steps below:
    5. Invoke the `run` script for next remaining run and capture the JSON output it emits.
    6. Record the design point, env and outputs for the run in `results/runs.jsonl`
    7. Continue with any remaining run.
-4. Output the path to the `results` directory on stdout.
+5. Output the path to the `results` directory on stdout.
 
 #### Inspect Plan
 

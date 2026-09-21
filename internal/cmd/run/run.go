@@ -16,6 +16,7 @@ type Options struct {
 	Designs []string
 	Plan    bool
 	Dirty   bool
+	Clean   bool
 }
 
 // ExecuteFunc conducts a run after its command-line arguments are parsed.
@@ -50,6 +51,7 @@ func parse(stderr io.Writer, args []string) (Options, bool, error) {
 	flags.Usage = func() {}
 	flags.BoolVarP(&opts.Plan, "plan", "p", false, "show design points and their schedule without running them")
 	flags.BoolVarP(&opts.Dirty, "dirty", "d", false, "run even if this will dirty the results")
+	flags.BoolVarP(&opts.Clean, "clean", "c", false, "remove the results and work directories before running")
 
 	err := flags.Parse(args)
 	if errors.Is(err, pflag.ErrHelp) {
@@ -76,6 +78,7 @@ Arguments:
 Options:
   -p, --plan            Show the design points and schedule. Do not run them.
   -d, --dirty           Run the study even if it will dirty the results.
+  -c, --clean           Remove the results and work directories before running.
   -h, --help            Print help text.
 
 Examples:
@@ -83,6 +86,8 @@ Examples:
   doe run design.yaml
   # Run a design, even if it will produce dirty results
   doe run -d design.yaml
+  # Remove previous results and work before running a design
+  doe run -c design.yaml
   # Show the plan for the design
   doe run -p design.yaml
 `)

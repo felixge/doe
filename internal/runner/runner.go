@@ -43,6 +43,13 @@ func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
 	if opts.Plan {
 		return planStudy(env.Stdout, study)
 	}
+	if opts.Clean {
+		for _, name := range []string{"results", "work"} {
+			if err := os.RemoveAll(filepath.Join(study.Root, name)); err != nil {
+				return fmt.Errorf("remove %s directory: %w", name, err)
+			}
+		}
+	}
 
 	output := filepath.Join(study.Root, "results")
 	lock, err := lockResults(output)

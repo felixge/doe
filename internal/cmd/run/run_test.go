@@ -18,11 +18,11 @@ func TestCommandParsesOptions(t *testing.T) {
 		got = opts
 		return nil
 	}
-	args := []string{"a.yaml", "--plan", "b.yaml", "--dirty"}
+	args := []string{"a.yaml", "--plan", "b.yaml", "--dirty", "--clean"}
 	if code := Command(context.Background(), env, args, execute); code != 0 {
 		t.Fatalf("Command() = %d; stderr = %q", code, stderr.String())
 	}
-	if !got.Plan || !got.Dirty {
+	if !got.Plan || !got.Dirty || !got.Clean {
 		t.Fatalf("options = %+v", got)
 	}
 	if strings.Join(got.Designs, ",") != "a.yaml,b.yaml" {

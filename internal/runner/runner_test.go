@@ -86,6 +86,23 @@ replicates: 2
 	if got := lineCount(t, filepath.Join(output, "runs.jsonl")); got != 6 {
 		t.Fatalf("run count = %d, want 6", got)
 	}
+
+	cleanOut, cleanErr := newBuffers()
+	if err := Execute(context.Background(), testEnv(cleanOut, cleanErr), runcmd.Options{Designs: []string{designPath}, Clean: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(cleanErr.String(), "run log"); got != 6 {
+		t.Fatalf("clean run count = %d, want 6; stderr:\n%s", got, cleanErr.String())
+	}
+	if got := lineCount(t, filepath.Join(output, "experiments.jsonl")); got != 1 {
+		t.Fatalf("clean experiment count = %d, want 1", got)
+	}
+	if got := lineCount(t, filepath.Join(output, "runs.jsonl")); got != 6 {
+		t.Fatalf("clean run count = %d, want 6", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "work")); !os.IsNotExist(err) {
+		t.Fatalf("clean left work directory: %v", err)
+	}
 }
 
 func TestExecutePlan(t *testing.T) {
