@@ -399,16 +399,14 @@ func parseFlatObject(line string) (map[string]model.Scalar, error) {
 	if err := ensureEOF(decoder); err != nil {
 		return nil, err
 	}
-	result := make(map[string]model.Scalar, len(object))
 	for name, value := range object {
 		switch value.(type) {
 		case nil, bool, string, json.Number:
-			result[name] = value
 		default:
 			return nil, fmt.Errorf("field %q must be a JSON scalar", name)
 		}
 	}
-	return result, nil
+	return object, nil
 }
 
 func ensureEOF(decoder *json.Decoder) error {
