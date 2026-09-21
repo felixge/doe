@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -144,29 +143,7 @@ func canonicalPath(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	current := filepath.Clean(absolute)
-	var missing []string
-	for {
-		if _, err := os.Lstat(current); err == nil {
-			break
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("resolve %s: no existing parent", path)
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
-	resolved, err := filepath.EvalSymlinks(current)
-	if err != nil {
-		return "", err
-	}
-	for _, name := range slices.Backward(missing) {
-		resolved = filepath.Join(resolved, name)
-	}
-	return resolved, nil
+	return filepath.EvalSymlinks(absolute)
 }
 
 func ensureOwnedOutput(output string) error {

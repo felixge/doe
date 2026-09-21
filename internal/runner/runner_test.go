@@ -127,6 +127,29 @@ replicates: 2
 	}
 }
 
+func TestCanonicalPath(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "study")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	want, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := canonicalPath(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("canonicalPath() = %q, want %q", got, want)
+	}
+	if _, err := canonicalPath(filepath.Join(real, "missing")); err == nil {
+		t.Fatal("canonicalPath() succeeded for missing path")
+	}
+}
+
 func TestLoadStudyRequiresSharedRoot(t *testing.T) {
 	first := filepath.Join(t.TempDir(), "a.yaml")
 	second := filepath.Join(t.TempDir(), "b.yaml")
