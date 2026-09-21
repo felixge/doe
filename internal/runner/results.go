@@ -15,19 +15,15 @@ import (
 )
 
 type resultIndex struct {
-	root        string
 	experiments []model.Experiment
 	experiment  map[string]model.Experiment
-	runs        map[string]bool
-	durations   map[string]time.Duration
+	runs        map[string]time.Duration
 }
 
-func loadResults(output, root string) (*resultIndex, error) {
+func loadResults(output string) (*resultIndex, error) {
 	index := &resultIndex{
-		root:       root,
 		experiment: make(map[string]model.Experiment),
-		runs:       make(map[string]bool),
-		durations:  make(map[string]time.Duration),
+		runs:       make(map[string]time.Duration),
 	}
 	if err := readJSONL(filepath.Join(output, "experiments.jsonl"), func(data []byte) error {
 		var experiment model.Experiment
@@ -77,7 +73,6 @@ func loadResults(output, root string) (*resultIndex, error) {
 		if err != nil {
 			return err
 		}
-		index.runs[key] = true
 		start, err := runTime(record, "start")
 		if err != nil {
 			return err
@@ -89,7 +84,7 @@ func loadResults(output, root string) (*resultIndex, error) {
 		if end.Before(start) {
 			return fmt.Errorf("run ends before it starts")
 		}
-		index.durations[key] = end.Sub(start)
+		index.runs[key] = end.Sub(start)
 		return nil
 	}); err != nil {
 		return nil, err

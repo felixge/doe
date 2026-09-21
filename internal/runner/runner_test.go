@@ -225,11 +225,11 @@ func TestCommandOutputOnlyClearsProgressForLogs(t *testing.T) {
 	}
 }
 
-func TestLoadResultsLoadsRunDurations(t *testing.T) {
+func TestLoadResultsIndexesRunsByDuration(t *testing.T) {
 	output := t.TempDir()
 	writeFile(t, filepath.Join(output, "experiments.jsonl"), `{"experiment_id":"experiment","design":"design.yaml","factors":["value"]}`+"\n")
 	writeFile(t, filepath.Join(output, "runs.jsonl"), `{"experiment_id":"experiment","replicate":1,"start":"2026-09-19T12:00:00Z","end":"2026-09-19T12:00:02.25Z","value":"one"}`+"\n")
-	results, err := loadResults(output, t.TempDir())
+	results, err := loadResults(output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,8 +237,12 @@ func TestLoadResultsLoadsRunDurations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := results.durations[key]; got != 2250*time.Millisecond {
-		t.Fatalf("duration = %v, want 2.25s", got)
+	duration, ok := results.runs[key]
+	if !ok {
+		t.Fatal("run is not indexed")
+	}
+	if duration != 2250*time.Millisecond {
+		t.Fatalf("duration = %v, want 2.25s", duration)
 	}
 }
 

@@ -71,7 +71,7 @@ func Execute(ctx context.Context, env *cli.Env, opts Options) error {
 		return fmt.Errorf("snapshot study: %w", err)
 	}
 
-	results, err := loadResults(output, study.Root)
+	results, err := loadResults(output)
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func Execute(ctx context.Context, env *cli.Env, opts Options) error {
 	}
 
 	for _, d := range study.Designs {
-		if err := conductDesign(ctx, env, output, snap, d, results); err != nil {
+		if err := conductDesign(ctx, env, study.Root, output, snap, d, results); err != nil {
 			return fmt.Errorf("%s: %w", d.Path, err)
 		}
 	}
@@ -223,12 +223,10 @@ func validateManagedPaths(output string) error {
 	return nil
 }
 
-func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snapshot.Snapshot, d model.Design, results *resultIndex) error {
+func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap *snapshot.Snapshot, d model.Design, results *resultIndex) error {
 	points := d.Points
 	started := time.Now()
 	environment := map[string]model.Scalar{}
-	// setup must run in the live study, not the immutable snapshot.
-	root := results.root
 	if d.Setup != "" {
 		last, err := commandOutput(ctx, env, root, d.Setup)
 		if err != nil {
@@ -264,9 +262,9 @@ func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snaps
 			if err != nil {
 				return err
 			}
-			if results.runs[key] {
+			if duration, ok := results.runs[key]; ok {
 				reused++
-				doneDuration += results.durations[key]
+				doneDuration += duration
 			}
 		}
 	}
@@ -282,7 +280,7 @@ func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snaps
 			if err != nil {
 				return err
 			}
-			if results.runs[key] {
+			if _, ok := results.runs[key]; ok {
 				continue
 			}
 			command, err := interpolate(d.Run, point)
@@ -322,9 +320,8 @@ func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snaps
 			if err := appendJSON(filepath.Join(output, "runs.jsonl"), flattenRun(run)); err != nil {
 				return err
 			}
-			results.runs[key] = true
 			duration := run.End.Sub(run.Start)
-			results.durations[key] = duration
+			results.runs[key] = duration
 			progress.Complete(duration)
 		}
 	}
