@@ -11,13 +11,11 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Options contains the validated command-line arguments for doe run. An empty
-// Output means the application should use ./results in the study root.
+// Options contains the validated command-line arguments for doe run.
 type Options struct {
 	Designs []string
 	Plan    bool
 	Force   bool
-	Output  string
 }
 
 // ExecuteFunc conducts a run after its command-line arguments are parsed.
@@ -52,7 +50,6 @@ func parse(stderr io.Writer, args []string) (Options, bool, error) {
 	flags.Usage = func() {}
 	flags.BoolVarP(&opts.Plan, "plan", "p", false, "show design points and their schedule without running them")
 	flags.BoolVarP(&opts.Force, "force", "f", false, "run even if this will dirty the results")
-	flags.StringVarP(&opts.Output, "output", "o", "", "put results in this directory")
 
 	err := flags.Parse(args)
 	if errors.Is(err, pflag.ErrHelp) {
@@ -69,23 +66,24 @@ func parse(stderr io.Writer, args []string) (Options, bool, error) {
 }
 
 func runUsage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `Run one experiment per design, reusing previous runs when possible.
+	_, _ = fmt.Fprint(w, `Run performs one experiment per design. Previous runs are reused, allowing work to be resumed.
 
 Usage: doe run [options] <design>...
 
 Arguments:
-  <design>...         Path to one or more design YAML files
+  <design>...           Paths to one or more design YAML files
 
 Options:
-  -p, --plan         Show design points and their schedule. Do not run them.
-  -f, --force        Run even if this will dirty the results.
-  -o, --output DIR   Put results in DIR. Defaults to ./results in the study root.
-  -h, --help         Print help text.
+  -p, --plan            Show the design points and schedule. Do not run them.
+  -f, --force           Force the study to run, even if it will dirty the results.
+  -h, --help            Print help text.
 
 Examples:
+  # Run a design
   doe run design.yaml
-  doe run -o /tmp/compression-results design.yaml
+  # Run a design, even if it will produce dirty results
   doe run -f design.yaml
-  doe run --plan design.yaml
+  # Show the plan for the design
+  doe run -p design.yaml
 `)
 }

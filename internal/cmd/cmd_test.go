@@ -43,11 +43,11 @@ func TestMainDoesNotParseRunFlags(t *testing.T) {
 		got = opts
 		return nil
 	}
-	args := []string{"run", "first.yaml", "-f", "--output", "out", "second.yaml", "-p"}
+	args := []string{"run", "first.yaml", "-f", "second.yaml", "-p"}
 	if code := MainWithRun(context.Background(), env, args, execute); code != 0 {
 		t.Fatalf("MainWithRun() = %d; stderr = %q", code, stderr.String())
 	}
-	if !got.Force || !got.Plan || got.Output != "out" {
+	if !got.Force || !got.Plan {
 		t.Fatalf("options = %+v", got)
 	}
 	if strings.Join(got.Designs, ",") != "first.yaml,second.yaml" {

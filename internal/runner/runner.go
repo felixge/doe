@@ -44,13 +44,7 @@ func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
 		return planStudy(env.Stdout, study)
 	}
 
-	output, err := outputPath(study.Root, opts.Output)
-	if err != nil {
-		return err
-	}
-	if err := validateOutput(study.Root, output); err != nil {
-		return err
-	}
+	output := filepath.Join(study.Root, "results")
 	lock, err := lockResults(output)
 	if err != nil {
 		return err
@@ -59,11 +53,10 @@ func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
 	if err := validateManagedPaths(output); err != nil {
 		return err
 	}
-	snap, err := snapshot.Capture(study.Root, output)
+	snap, err := snapshot.Capture(study.Root)
 	if err != nil {
 		return fmt.Errorf("snapshot study: %w", err)
 	}
-	defer snap.Close()
 
 	results, err := loadResults(output, study.Root)
 	if err != nil {
@@ -77,15 +70,10 @@ func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
 		}
 	}
 	if dirty && !opts.Force {
-		return errors.New("study files have changed; use --force or a different results directory")
+		return errors.New("study files have changed; use --force or clear the results directory")
 	}
 	if err := os.MkdirAll(output, 0o755); err != nil {
 		return err
-	}
-	if dirty || len(results.experiments) == 0 || !isDir(filepath.Join(output, "study")) {
-		if err := snap.CopyTo(filepath.Join(output, "study")); err != nil {
-			return fmt.Errorf("write study snapshot: %w", err)
-		}
 	}
 	if err := writeResultsReadme(output, env.Readme); err != nil {
 		return err
@@ -138,30 +126,6 @@ func loadStudy(paths []string) (model.Study, error) {
 		study.Designs = append(study.Designs, d)
 	}
 	return study, nil
-}
-
-func outputPath(root, option string) (string, error) {
-	if option == "" {
-		return filepath.Join(root, "results"), nil
-	}
-	return canonicalPath(option)
-}
-
-func validateOutput(root, output string) error {
-	var err error
-	root, err = canonicalPath(root)
-	if err != nil {
-		return err
-	}
-	output, err = canonicalPath(output)
-	if err != nil {
-		return err
-	}
-	rel, err := filepath.Rel(output, root)
-	if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
-		return errors.New("results directory must not contain the study root")
-	}
-	return nil
 }
 
 func canonicalPath(path string) (string, error) {
@@ -288,7 +252,7 @@ func writeMarker(output string) error {
 }
 
 func validateManagedPaths(output string) error {
-	for _, name := range []string{".doe", ".doe.lock", "study", "README.md", "experiments.jsonl", "runs.jsonl"} {
+	for _, name := range []string{".doe", ".doe.lock", "README.md", "experiments.jsonl", "runs.jsonl"} {
 		info, err := os.Lstat(filepath.Join(output, name))
 		if os.IsNotExist(err) {
 			continue
@@ -624,9 +588,4 @@ func writeResultsReadme(output string, source []byte) error {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(output, "README.md"))
-}
-
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }

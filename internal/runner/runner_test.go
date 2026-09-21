@@ -45,7 +45,14 @@ replicates: 2
 	if got := lineCount(t, filepath.Join(output, "runs.jsonl")); got != 4 {
 		t.Fatalf("run count = %d, want 4", got)
 	}
+	if _, err := os.Stat(filepath.Join(output, "study")); !os.IsNotExist(err) {
+		t.Fatalf("results contains a study copy: %v", err)
+	}
 
+	if err := os.Mkdir(filepath.Join(root, "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "work", "temporary.txt"), "ignored work")
 	secondOut, secondErr := newBuffers()
 	if err := Execute(context.Background(), testEnv(secondOut, secondErr), runcmd.Options{Designs: []string{designPath}}); err != nil {
 		t.Fatal(err)
@@ -66,7 +73,7 @@ factors:
 run: 'printf ''run log\n''; printf ''{"seen":"%s"}\n'' {value}'
 replicates: 2
 `)
-	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), runcmd.Options{Designs: []string{designPath}}); err == nil || !strings.Contains(err.Error(), "--force") {
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), runcmd.Options{Designs: []string{designPath}}); err == nil || !strings.Contains(err.Error(), "--force") || !strings.Contains(err.Error(), "clear the results directory") {
 		t.Fatalf("changed study error = %v", err)
 	}
 	forcedOut, forcedErr := newBuffers()
@@ -212,20 +219,6 @@ func TestInterpolateDoesNotRescanValues(t *testing.T) {
 }
 
 func TestOutputSafety(t *testing.T) {
-	study := t.TempDir()
-	outside := t.TempDir()
-	link := filepath.Join(outside, "out")
-	if err := os.Symlink(filepath.Dir(study), link); err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := canonicalPath(link)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateOutput(study, resolved); err == nil {
-		t.Fatal("validateOutput accepted a symlink resolving to an ancestor of the study")
-	}
-
 	unowned := filepath.Join(t.TempDir(), "output")
 	if err := os.Mkdir(unowned, 0o755); err != nil {
 		t.Fatal(err)

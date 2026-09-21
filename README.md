@@ -45,14 +45,7 @@ The [run.bash](./example/compression/run.bash) script is invoked `replicates` ti
 
 ```bash
 $ ./run.bash zstd default sample.pb
-{
-  "level": 3,
-  "wall_seconds": 0.00039,
-  "cpu_seconds": 0.00036,
-  "peak_rss_bytes": 2588672,
-  "input_size_bytes": 26400,
-  "output_size_bytes": 24243
-}
+{"level": 3,"wall_seconds": 0.00039,"cpu_seconds": 0.00036,"peak_rss_bytes": 2588672,"input_size_bytes": 26400,"output_size_bytes": 24243}
 ```
 
 Run an experiment by passing its design path to `doe run`. Incomplete work can be resumed at any time. If any file in the study has changed since the last experiment, doe will refuse to conduct the experiment unless the `-f` flag is provided.
@@ -120,19 +113,34 @@ Arguments:
 Options:
   -p, --plan            Show the design points and schedule. Do not run them.
   -f, --force           Force the study to run, even if it will dirty the results.
-  -o, --output DIR      Put the results in DIR. Defaults to ./results in the study root.
   -h, --help            Print help text.
 
 Examples:
-  doe run study.yaml
-  doe run -o /tmp/compression-results-2026-09-18 study.yaml
-  doe run -f study.yaml
-  doe run --plan study.yaml
+  # Run a design
+  doe run design.yaml
+  # Run a design, even if it will produce dirty results
+  doe run -f design.yaml
+  # Show the plan for the design
+  doe run -p design.yaml
 ```
 
-Relative `--output` paths are resolved from the current working directory. When the option is omitted, results default to `./results` in the study root. A successful run prints the absolute results directory path to stdout.
+A run always follows the steps below:
 
-`--plan` prints an ASCII table of the deterministic design-point order. Its first column is `#`, numbered from 1. Below it, a schedule table has one row per replicate, a leading replicate label, and one data column per design point; its cells use the `#` values to show execution order.
+1. Compute the `files_hash` over all files in the study, excluding the `results` and `work` directories and any `.git` directories.
+2. Check if `results/experiments.jsonl` contains a `files_hash` for a different version of the study. If yes, refuse to resume unless the `-f` flag is provided or until the user clears the `results` directory.
+3. Execute the designs in the order they were listed.
+   1. Invoke the `setup` script and capture the env JSON it emits, if any.
+   2. Record the experiment for the design in `results/experiments.jsonl` along with the env JSON that was captured.
+   3. Expand the `factors` and `replicates` into a list of all runs that need to be performed.
+   4. Reuse `results/runs.jsonl` records that belong to the same design, design point and replicate number.
+   5. Invoke the `run` script for next remaining run and capture the JSON output it emits.
+   6. Record the design point, env and outputs for the run in `results/runs.jsonl`
+   7. Continue with any remaining run.
+4. Output the path to the `results` directory on stdout.
+
+#### Inspect Plan
+
+The `--plan` flag prints an ASCII table of the deterministic design-point order. Its first column is `#`, numbered from 1. Below it, a schedule table has one row per replicate, a leading replicate label, and one data column per design point; its cells use the `#` values to show execution order.
 
 ## Studies
 
@@ -176,21 +184,14 @@ Factor placeholders in `run` are replaced with shell-escaped settings; the comma
 
 ## Results
 
-Results are stored in a directory that contains a record of all experiments and runs. Additionally, the latest copy of the `study` is included, along with this `README.md` file.
+Results are stored in the `results` directory of the study being executed. It contains a record of all experiments and runs, along with this `README.md` file.
 
 ```
 results
-	study
 	experiments.jsonl
 	runs.jsonl
 	README.md
 ```
-
-#### study
-
-When `doe run` is invoked, it computes the `files_hash` of the current study directory. The snapshot is taken before the setup command runs. It excludes the active output directory, every `.git` directory, and files matched by `.gitignore` files. Symlinks are preserved and hashed by their link target text; doe never traverses them. Files that affect runs should not be ignored unless the setup command recreates them.
-
-If `experiments.jsonl` contains a record with a different hash, the results are considered to be dirty, and doe will only proceed with the `-f` flag. In this case, it replaces the existing `study` directory with the current version and still reuses matching runs from older snapshots. To rerun them, the user must clear or change the results directory.
 
 #### runs.jsonl
 
@@ -243,9 +244,8 @@ This project aims to use the following terminology consistently.
 | output       | A response and measurement combination. E.g. `cpu_seconds=0.025 peak_rss_bytes=493894`. |
 | experiment   | A single doe invocation of a design. Resuming the execution of a design produces another experiment. |
 | run          | A single execution at a design point and the outputs it produced. |
-| results      | A directory containing experiment and run records associated with a study, as well as a snapshot of the study at the most recent execution. |
-| snapshot     | A copy of all nonignored files in the study. Two snapshots are considered to be equal if their `files_hash` values are equal. |
-| dirty        | A results directory is considered to be dirty if it contains experiments belonging to different snapshots of a study. By convention, dirty results are expected to be reproducible using the snapshot of the study contained within it. The use case is adding additional settings to a design after its first execution. |
+| results      | The directory within a study that contains its experiment and run records. |
+| dirty        | A study is considered to be dirty if it contains results with different `files_hash` values. The use case is adding additional settings to a design after its first execution. |
 
 ## AI Usage
 
