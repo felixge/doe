@@ -236,16 +236,26 @@ func runSetup(ctx context.Context, env *cli.Env, root string, d model.Design) er
 	if d.Setup == "" {
 		return nil
 	}
-	last, err := commandOutput(ctx, env, root, d.Setup)
+	_, err := setupOutput(ctx, env, root, d.Setup)
+	return err
+}
+
+func setupOutput(ctx context.Context, env *cli.Env, root, script string) (map[string]model.Scalar, error) {
+	last, err := commandOutput(ctx, env, root, script)
 	if err != nil {
-		return fmt.Errorf("setup: %w", err)
+		return nil, fmt.Errorf("setup: %w", err)
 	}
-	if last != "" {
-		if _, err := parseFlatObject(last); err != nil {
-			return fmt.Errorf("setup result: %w", err)
-		}
+	if last == "" {
+		return map[string]model.Scalar{}, nil
 	}
-	return nil
+	if _, err := fmt.Fprintln(env.Stderr, last); err != nil {
+		return nil, err
+	}
+	environment, err := parseFlatObject(last)
+	if err != nil {
+		return map[string]model.Scalar{}, nil
+	}
+	return environment, nil
 }
 
 func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap *snapshot.Snapshot, d model.Design, results *resultIndex) error {
@@ -253,14 +263,10 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 	started := time.Now()
 	environment := map[string]model.Scalar{}
 	if d.Setup != "" {
-		last, err := commandOutput(ctx, env, root, d.Setup)
+		var err error
+		environment, err = setupOutput(ctx, env, root, d.Setup)
 		if err != nil {
-			return fmt.Errorf("setup: %w", err)
-		}
-		if last != "" {
-			if environment, err = parseFlatObject(last); err != nil {
-				return fmt.Errorf("setup result: %w", err)
-			}
+			return err
 		}
 	}
 

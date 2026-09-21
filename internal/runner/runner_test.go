@@ -59,8 +59,8 @@ replicates: 2
 	if strings.Contains(secondErr.String(), "run log") {
 		t.Fatalf("resumed invocation executed a run:\n%s", secondErr.String())
 	}
-	if got := secondErr.String(); got != "setup log\n" {
-		t.Fatalf("stderr = %q, want only command output when it is not a TTY", got)
+	if got := secondErr.String(); got != "setup log\n{\"host\":\"test\"}\n" {
+		t.Fatalf("stderr = %q, want all setup output", got)
 	}
 	if got := lineCount(t, filepath.Join(output, "experiments.jsonl")); got != 2 {
 		t.Fatalf("experiment count = %d, want 2", got)
@@ -101,6 +101,26 @@ replicates: 2
 	}
 	if _, err := os.Stat(filepath.Join(root, "work")); !os.IsNotExist(err) {
 		t.Fatalf("clean left work directory: %v", err)
+	}
+}
+
+func TestExecuteSetupUsesOnlyJSONFinalLineAsEnvironment(t *testing.T) {
+	root := t.TempDir()
+	designPath := filepath.Join(root, "design.yaml")
+	writeFile(t, designPath, "setup: printf 'setup complete\\n'\nfactors: [{value: [x]}]\nrun: echo '{}'\n")
+	stdout, stderr := newBuffers()
+	if err := Execute(context.Background(), testEnv(stdout, stderr), Options{Designs: []string{designPath}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); got != "setup complete\n" {
+		t.Fatalf("stderr = %q, want all setup output", got)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "results", "experiments.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"env":{}`) {
+		t.Fatalf("experiment = %s, want empty environment", data)
 	}
 }
 

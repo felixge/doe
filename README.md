@@ -187,7 +187,7 @@ The inline Bourne shell scripts invoked by `setup` and `run` are always executed
 
 Typically the inline scripts just shell out to a script file in the study. Those scripts can be written in any language. The setup script can install runtime dependencies or perform compilations as needed.
 
-Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For both `setup` and `run`, doe treats the last line of stdout as the result and streams earlier output to stderr while the experiment runs. The result must be a flat JSON object whose values are JSON scalars. Empty setup output is treated as `{}`; a run must produce a result.
+Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For `run`, doe treats the last line of stdout as the result and streams earlier output to stderr while the experiment runs. The result must be a flat JSON object whose values are JSON scalars. Setup output is streamed to stderr in full. If its last line is a flat JSON object, doe uses it as the environment; otherwise, the environment is `{}`. A run must produce a result.
 
 ### Work Directory
 
