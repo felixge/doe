@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/felixge/doe/internal/cli"
-	runcmd "github.com/felixge/doe/internal/cmd/run"
 )
 
 func TestMainHelp(t *testing.T) {
@@ -36,46 +36,86 @@ func TestMainUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestMainDoesNotParseRunFlags(t *testing.T) {
-	env, _, stderr := testEnv()
-	var got runcmd.Options
-	execute := func(_ context.Context, _ *cli.Env, opts runcmd.Options) error {
-		got = opts
-		return nil
+func TestParseRunFlagsAnywhere(t *testing.T) {
+	stderr := new(bytes.Buffer)
+	opts, help, err := parseRun(stderr, []string{"first.yaml", "-d", "second.yaml", "--plan", "-c"})
+	if err != nil || help {
+		t.Fatalf("parseRun() = (%+v, %v, %v); stderr = %q", opts, help, err, stderr)
 	}
-	args := []string{"run", "first.yaml", "-d", "second.yaml", "-p"}
-	if code := MainWithRun(context.Background(), env, args, execute); code != 0 {
-		t.Fatalf("MainWithRun() = %d; stderr = %q", code, stderr.String())
+	if !opts.Dirty || !opts.Plan || !opts.Clean {
+		t.Fatalf("options = %+v", opts)
 	}
-	if !got.Dirty || !got.Plan {
-		t.Fatalf("options = %+v", got)
-	}
-	if strings.Join(got.Designs, ",") != "first.yaml,second.yaml" {
-		t.Fatalf("designs = %q", got.Designs)
+	if got := strings.Join(opts.Designs, ","); got != "first.yaml,second.yaml" {
+		t.Fatalf("designs = %q", got)
 	}
 }
 
-func TestMainUsesSignalContext(t *testing.T) {
+func TestRunHelp(t *testing.T) {
+	env, stdout, stderr := testEnv()
+	if code := Main(context.Background(), env, []string{"run", "--help"}); code != 0 {
+		t.Fatalf("Main() = %d", code)
+	}
+	if !strings.Contains(stdout.String(), "Usage: doe run") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunArgumentErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing design", args: []string{"run"}, want: "at least one design is required"},
+		{name: "unknown flag", args: []string{"run", "--wat", "design.yaml"}, want: "unknown flag: --wat"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env, _, stderr := testEnv()
+			if code := Main(context.Background(), env, test.args); code != 1 {
+				t.Fatalf("Main() = %d, want 1", code)
+			}
+			if !strings.Contains(stderr.String(), test.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), test.want)
+			}
+		})
+	}
+}
+
+func TestRunPlanIntegration(t *testing.T) {
+	design := writeDesign(t, "run: echo '{}'\nfactors:\n  - value: [one, two]\n")
+	env, stdout, stderr := testEnv()
+	if code := Main(context.Background(), env, []string{"run", design, "--plan"}); code != 0 {
+		t.Fatalf("Main() = %d; stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "| # | value |") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunExecutionErrorIntegration(t *testing.T) {
+	design := writeDesign(t, "run: exit 7\nfactors:\n  - value: [one]\n")
 	env, _, stderr := testEnv()
-	type contextKey struct{}
-	stopCalled := false
-	env.NotifyContext = func(ctx context.Context, signals ...os.Signal) (context.Context, context.CancelFunc) {
-		if len(signals) != 2 {
-			t.Fatalf("signals = %v, want interrupt and SIGTERM", signals)
-		}
-		return context.WithValue(ctx, contextKey{}, true), func() { stopCalled = true }
+	if code := Main(context.Background(), env, []string{"run", design}); code != 1 {
+		t.Fatalf("Main() = %d, want 1", code)
 	}
-	execute := func(ctx context.Context, _ *cli.Env, _ runcmd.Options) error {
-		if value, _ := ctx.Value(contextKey{}).(bool); !value {
-			t.Fatal("execute did not receive signal context")
-		}
-		return nil
+	if !strings.Contains(stderr.String(), "exit status 7") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
-	if code := MainWithRun(context.Background(), env, []string{"run", "design.yaml"}, execute); code != 0 {
-		t.Fatalf("MainWithRun() = %d; stderr = %q", code, stderr.String())
+}
+
+func TestRunCanceledContext(t *testing.T) {
+	design := writeDesign(t, "run: echo '{}'\nfactors:\n  - value: [one]\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	env, _, stderr := testEnv()
+	if code := Main(ctx, env, []string{"run", design}); code != 1 {
+		t.Fatalf("Main() = %d, want 1", code)
 	}
-	if !stopCalled {
-		t.Fatal("signal context was not stopped")
+	if !strings.Contains(stderr.String(), context.Canceled.Error()) {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
@@ -83,11 +123,16 @@ func testEnv() (*cli.Env, *bytes.Buffer, *bytes.Buffer) {
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	return &cli.Env{
-		Stdin:  strings.NewReader(""),
-		Stdout: stdout,
-		Stderr: stderr,
-		NotifyContext: func(ctx context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
-			return ctx, func() {}
-		},
+		Stdin: strings.NewReader(""), Stdout: stdout, Stderr: stderr,
+		Readme: []byte("# doe\n\n`go install github.com/felixge/doe@latest`\n"),
 	}, stdout, stderr
+}
+
+func writeDesign(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "design.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

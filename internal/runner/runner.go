@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/felixge/doe/internal/cli"
-	runcmd "github.com/felixge/doe/internal/cmd/run"
 	"github.com/felixge/doe/internal/design"
 	"github.com/felixge/doe/internal/model"
 	"github.com/felixge/doe/internal/snapshot"
@@ -36,8 +35,16 @@ var reserved = map[string]bool{
 
 const resultsMarker = "doe results\n"
 
+// Options contains the validated command-line arguments for doe run.
+type Options struct {
+	Designs []string
+	Plan    bool
+	Dirty   bool
+	Clean   bool
+}
+
 // Execute loads, lists, or conducts the designs selected by doe run.
-func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
+func Execute(ctx context.Context, env *cli.Env, opts Options) error {
 	study, err := loadStudy(opts.Designs)
 	if err != nil {
 		return err

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/felixge/doe/internal/cli"
-	runcmd "github.com/felixge/doe/internal/cmd/run"
 	"github.com/felixge/doe/internal/model"
 )
 
@@ -26,7 +25,7 @@ replicates: 2
 `)
 
 	firstOut, firstErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(firstOut, firstErr), runcmd.Options{Designs: []string{designPath}}); err != nil {
+	if err := Execute(context.Background(), testEnv(firstOut, firstErr), Options{Designs: []string{designPath}}); err != nil {
 		t.Fatal(err)
 	}
 	output, err := canonicalPath(filepath.Join(root, "results"))
@@ -54,7 +53,7 @@ replicates: 2
 	}
 	writeFile(t, filepath.Join(root, "work", "temporary.txt"), "ignored work")
 	secondOut, secondErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(secondOut, secondErr), runcmd.Options{Designs: []string{designPath}}); err != nil {
+	if err := Execute(context.Background(), testEnv(secondOut, secondErr), Options{Designs: []string{designPath}}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(secondErr.String(), "run log") {
@@ -73,11 +72,11 @@ factors:
 run: 'printf ''run log\n''; printf ''{"seen":"%s"}\n'' {value}'
 replicates: 2
 `)
-	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), runcmd.Options{Designs: []string{designPath}}); err == nil || !strings.Contains(err.Error(), "--dirty") || !strings.Contains(err.Error(), "clear the results directory") {
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err == nil || !strings.Contains(err.Error(), "--dirty") || !strings.Contains(err.Error(), "clear the results directory") {
 		t.Fatalf("changed study error = %v", err)
 	}
 	dirtyOut, dirtyErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(dirtyOut, dirtyErr), runcmd.Options{Designs: []string{designPath}, Dirty: true}); err != nil {
+	if err := Execute(context.Background(), testEnv(dirtyOut, dirtyErr), Options{Designs: []string{designPath}, Dirty: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Count(dirtyErr.String(), "run log"); got != 2 {
@@ -88,7 +87,7 @@ replicates: 2
 	}
 
 	cleanOut, cleanErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(cleanOut, cleanErr), runcmd.Options{Designs: []string{designPath}, Clean: true}); err != nil {
+	if err := Execute(context.Background(), testEnv(cleanOut, cleanErr), Options{Designs: []string{designPath}, Clean: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Count(cleanErr.String(), "run log"); got != 6 {
@@ -115,7 +114,7 @@ run: echo '{}'
 replicates: 2
 `)
 	stdout, stderr := newBuffers()
-	if err := Execute(context.Background(), testEnv(stdout, stderr), runcmd.Options{Designs: []string{designPath}, Plan: true}); err != nil {
+	if err := Execute(context.Background(), testEnv(stdout, stderr), Options{Designs: []string{designPath}, Plan: true}); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"| # | a | b |", "| 1 | x | 1 |", "| replicate | 1 | 2 |", "| 2         | 2 | 1 |"} {
