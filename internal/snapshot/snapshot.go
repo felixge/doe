@@ -38,15 +38,18 @@ func Capture(root string) (*Snapshot, error) {
 			}
 			return nil
 		}
+		rel = filepath.ToSlash(rel)
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("study input must not be a symlink: %s", rel)
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		rel = filepath.ToSlash(rel)
-		if !info.Mode().IsRegular() && info.Mode()&fs.ModeSymlink == 0 {
+		if !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported study file %s (%s)", rel, info.Mode().Type())
 		}
-		return s.hashEntry(path, rel, info)
+		return s.hashEntry(path, rel)
 	}); err != nil {
 		return nil, err
 	}
@@ -67,26 +70,18 @@ func Capture(root string) (*Snapshot, error) {
 	return s, nil
 }
 
-func (s *Snapshot) hashEntry(source, path string, info fs.FileInfo) error {
+func (s *Snapshot) hashEntry(source, path string) error {
 	h := sha256.New()
-	if info.Mode()&fs.ModeSymlink != 0 {
-		target, err := os.Readlink(source)
-		if err != nil {
-			return err
-		}
-		_, _ = h.Write([]byte(target))
-	} else {
-		file, err := os.Open(source)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(h, file); err != nil {
-			_ = file.Close()
-			return err
-		}
-		if err := file.Close(); err != nil {
-			return err
-		}
+	file, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(h, file); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
 	}
 	s.Files[path] = hex.EncodeToString(h.Sum(nil))
 	return nil

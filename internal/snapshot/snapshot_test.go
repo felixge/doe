@@ -29,9 +29,6 @@ func TestCapture(t *testing.T) {
 	write(".git/config", "git")
 	write("results/runs.jsonl", "result")
 	write("work/output.txt", "work")
-	if err := os.Symlink("data.txt", filepath.Join(root, "link")); err != nil {
-		t.Fatal(err)
-	}
 
 	s, err := Capture(root)
 	if err != nil {
@@ -41,7 +38,6 @@ func TestCapture(t *testing.T) {
 		".gitignore",
 		"data.txt",
 		"drop.tmp",
-		"link",
 		"nested/ignored/file",
 		"nested/work/file",
 	} {
@@ -73,28 +69,80 @@ func TestCaptureHashesRegularFileContents(t *testing.T) {
 	}
 }
 
-func TestCaptureHashChangesWithSymlinkTarget(t *testing.T) {
+func TestCaptureRejectsSymlinks(t *testing.T) {
+	tests := []struct {
+		name   string
+		target func(t *testing.T, root string) string
+	}{
+		{
+			name: "file",
+			target: func(t *testing.T, root string) string {
+				writeTestFile(t, filepath.Join(root, "target.txt"), "data")
+				return "target.txt"
+			},
+		},
+		{
+			name: "directory",
+			target: func(t *testing.T, root string) string {
+				if err := os.Mkdir(filepath.Join(root, "target"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				return "target"
+			},
+		},
+		{
+			name: "external",
+			target: func(t *testing.T, _ string) string {
+				target := filepath.Join(t.TempDir(), "external.txt")
+				writeTestFile(t, target, "data")
+				return target
+			},
+		},
+		{
+			name: "broken",
+			target: func(_ *testing.T, _ string) string {
+				return "missing"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			link := filepath.Join(root, "nested", "input")
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(test.target(t, root), link); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Capture(root)
+			if err == nil || err.Error() != "study input must not be a symlink: nested/input" {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCaptureIgnoresSymlinksInExcludedTrees(t *testing.T) {
 	root := t.TempDir()
-	link := filepath.Join(root, "link")
-	if err := os.Symlink("one", link); err != nil {
+	for _, dir := range []string{".git", "results", "work"} {
+		path := filepath.Join(root, dir)
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("missing", filepath.Join(path, "link")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Capture(root); err != nil {
 		t.Fatal(err)
 	}
-	first, err := Capture(root)
-	if err != nil {
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	if err := os.Remove(link); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("two", link); err != nil {
-		t.Fatal(err)
-	}
-	second, err := Capture(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Hash == second.Hash {
-		t.Fatal("snapshot hash did not change")
 	}
 }
 
