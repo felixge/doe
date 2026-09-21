@@ -112,6 +112,7 @@ Arguments:
 
 Options:
   -p, --plan            Show the design points and schedule. Do not run them.
+  -s, --setup           Run setup without running experiments.
   -d, --dirty           Run the study even if it will dirty the results.
   -c, --clean           Remove the results and work directories before running.
   -h, --help            Print help text.
@@ -125,6 +126,8 @@ Examples:
   doe run -c design.yaml
   # Show the plan for the design
   doe run -p design.yaml
+  # Run setup without running experiments
+  doe run -s design.yaml
 ```
 
 A run always follows the steps below:

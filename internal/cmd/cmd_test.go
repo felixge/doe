@@ -38,11 +38,11 @@ func TestMainUnknownCommand(t *testing.T) {
 
 func TestParseRunFlagsAnywhere(t *testing.T) {
 	stderr := new(bytes.Buffer)
-	opts, help, err := parseRun(stderr, []string{"first.yaml", "-d", "second.yaml", "--plan", "-c"})
+	opts, help, err := parseRun(stderr, []string{"first.yaml", "-d", "second.yaml", "--plan", "-c", "-s"})
 	if err != nil || help {
 		t.Fatalf("parseRun() = (%+v, %v, %v); stderr = %q", opts, help, err, stderr)
 	}
-	if !opts.Dirty || !opts.Plan || !opts.Clean {
+	if !opts.Dirty || !opts.Plan || !opts.Clean || !opts.Setup {
 		t.Fatalf("options = %+v", opts)
 	}
 	if got := strings.Join(opts.Designs, ","); got != "first.yaml,second.yaml" {
@@ -91,6 +91,34 @@ func TestRunPlanIntegration(t *testing.T) {
 		t.Fatalf("Main() = %d; stderr = %q", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "| point | value |") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunSetupIntegration(t *testing.T) {
+	root := t.TempDir()
+	design := filepath.Join(root, "design.yaml")
+	if err := os.WriteFile(design, []byte("setup: echo setup > setup.txt\nfactors: [{value: [one]}]\nrun: echo run > run.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"results", "work"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env, stdout, stderr := testEnv()
+	if code := Main(context.Background(), env, []string{"run", design, "--clean", "--setup"}); code != 0 {
+		t.Fatalf("Main() = %d; stderr = %q", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "setup.txt")); err != nil {
+		t.Fatalf("setup was not run: %v", err)
+	}
+	for _, name := range []string{"run.txt", "results", "work"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s exists after --setup: %v", name, err)
+		}
+	}
+	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }

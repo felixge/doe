@@ -53,6 +53,7 @@ func parseRun(stderr io.Writer, args []string) (runner.Options, bool, error) {
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
 	flags.BoolVarP(&opts.Plan, "plan", "p", false, "show design points and their schedule without running them")
+	flags.BoolVarP(&opts.Setup, "setup", "s", false, "run setup without running experiments")
 	flags.BoolVarP(&opts.Dirty, "dirty", "d", false, "run even if this will dirty the results")
 	flags.BoolVarP(&opts.Clean, "clean", "c", false, "remove the results and work directories before running")
 
@@ -97,6 +98,7 @@ Arguments:
 
 Options:
   -p, --plan            Show the design points and schedule. Do not run them.
+  -s, --setup           Run setup without running experiments.
   -d, --dirty           Run the study even if it will dirty the results.
   -c, --clean           Remove the results and work directories before running.
   -h, --help            Print help text.
@@ -110,5 +112,7 @@ Examples:
   doe run -c design.yaml
   # Show the plan for the design
   doe run -p design.yaml
+  # Run setup without running experiments
+  doe run -s design.yaml
 `)
 }

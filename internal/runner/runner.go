@@ -33,6 +33,7 @@ const resultsMarker = "doe results\n"
 type Options struct {
 	Designs []string
 	Plan    bool
+	Setup   bool
 	Dirty   bool
 	Clean   bool
 }
@@ -52,6 +53,14 @@ func Execute(ctx context.Context, env *cli.Env, opts Options) error {
 				return fmt.Errorf("remove %s directory: %w", name, err)
 			}
 		}
+	}
+	if opts.Setup {
+		for _, d := range study.Designs {
+			if err := runSetup(ctx, env, study.Root, d); err != nil {
+				return fmt.Errorf("%s: %w", d.Path, err)
+			}
+		}
+		return nil
 	}
 
 	output := filepath.Join(study.Root, "results")
@@ -218,6 +227,22 @@ func validateManagedPaths(output string) error {
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing symlinked results path: %s", filepath.Join(output, name))
+		}
+	}
+	return nil
+}
+
+func runSetup(ctx context.Context, env *cli.Env, root string, d model.Design) error {
+	if d.Setup == "" {
+		return nil
+	}
+	last, err := commandOutput(ctx, env, root, d.Setup)
+	if err != nil {
+		return fmt.Errorf("setup: %w", err)
+	}
+	if last != "" {
+		if _, err := parseFlatObject(last); err != nil {
+			return fmt.Errorf("setup result: %w", err)
 		}
 	}
 	return nil
