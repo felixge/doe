@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/felixge/doe/internal/design"
 	"github.com/felixge/doe/internal/model"
@@ -78,7 +79,7 @@ func writeTable(w io.Writer, rows [][]string) {
 	border := func() {
 		_, _ = fmt.Fprint(w, "+")
 		for _, width := range widths {
-			_, _ = fmt.Fprint(w, "-"+repeat("-", width)+"-+")
+			_, _ = fmt.Fprint(w, "-"+strings.Repeat("-", width)+"-+")
 		}
 		_, _ = fmt.Fprintln(w)
 	}
@@ -94,12 +95,4 @@ func writeTable(w io.Writer, rows [][]string) {
 		}
 	}
 	border()
-}
-
-func repeat(value string, count int) string {
-	result := ""
-	for range count {
-		result += value
-	}
-	return result
 }

@@ -230,8 +230,8 @@ func assertBalancedCarryover(t *testing.T, rows [][]int) {
 		}
 	}
 	want := -1
-	for previous := 0; previous < n; previous++ {
-		for next := 0; next < n; next++ {
+	for previous := range n {
+		for next := range n {
 			if previous == next {
 				continue
 			}

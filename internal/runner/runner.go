@@ -12,9 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +37,7 @@ var reserved = map[string]bool{
 const resultsMarker = "doe results\n"
 
 // Execute loads, lists, or conducts the designs selected by doe run.
-func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
+func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) (err error) {
 	study, err := loadStudy(opts.Designs)
 	if err != nil {
 		return err
@@ -56,7 +58,9 @@ func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer func() {
+		err = errors.Join(err, lock.Close())
+	}()
 	if err := validateManagedPaths(output); err != nil {
 		return err
 	}
@@ -159,8 +163,8 @@ func canonicalPath(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for i := len(missing) - 1; i >= 0; i-- {
-		resolved = filepath.Join(resolved, missing[i])
+	for _, name := range slices.Backward(missing) {
+		resolved = filepath.Join(resolved, name)
 	}
 	return resolved, nil
 }
@@ -243,7 +247,7 @@ func writeMarker(output string) error {
 		return err
 	}
 	tmp := file.Name()
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	if err := file.Chmod(0o644); err != nil {
 		_ = file.Close()
 		return err
@@ -524,12 +528,8 @@ func flattenRun(run model.Run) map[string]any {
 	record["replicate"] = run.Replicate
 	record["start"] = run.Start
 	record["end"] = run.End
-	for name, value := range run.Inputs {
-		record[name] = value
-	}
-	for name, value := range run.Outputs {
-		record[name] = value
-	}
+	maps.Copy(record, run.Inputs)
+	maps.Copy(record, run.Outputs)
 	return record
 }
 
@@ -578,7 +578,7 @@ func writeResultsReadme(output string, source []byte) error {
 		return err
 	}
 	tmp := file.Name()
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	if err := file.Chmod(0o644); err != nil {
 		_ = file.Close()
 		return err

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -133,7 +134,7 @@ func pointKey(design string, point model.Point) (string, error) {
 	return design + "\x00" + string(data), nil
 }
 
-func readJSONL(path string, consume func([]byte) error) error {
+func readJSONL(path string, consume func([]byte) error) (err error) {
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -141,7 +142,9 @@ func readJSONL(path string, consume func([]byte) error) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		err = errors.Join(err, file.Close())
+	}()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	line := 0

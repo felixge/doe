@@ -166,10 +166,7 @@ func (p *progressBar) refresh() {
 }
 
 func formatDuration(duration time.Duration) string {
-	duration = duration.Round(time.Second)
-	if duration < 0 {
-		duration = 0
-	}
+	duration = max(duration.Round(time.Second), 0)
 	hours := duration / time.Hour
 	duration %= time.Hour
 	minutes := duration / time.Minute

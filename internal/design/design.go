@@ -235,7 +235,7 @@ func Schedule(pointCount, replicates int) [][]int {
 		}
 	}
 	complete := make([][]int, 0, pointCount*2)
-	for shift := 0; shift < pointCount; shift++ {
+	for shift := range pointCount {
 		row := make([]int, pointCount)
 		for column, point := range base {
 			row[column] = (point + shift) % pointCount
@@ -243,7 +243,7 @@ func Schedule(pointCount, replicates int) [][]int {
 		complete = append(complete, row)
 	}
 	if pointCount%2 == 1 && pointCount > 1 {
-		for shift := 0; shift < pointCount; shift++ {
+		for shift := range pointCount {
 			row := make([]int, pointCount)
 			for column := range row {
 				row[column] = complete[shift][pointCount-1-column]
