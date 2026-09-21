@@ -299,7 +299,6 @@ func testEnv(stdout, stderr *bytes.Buffer) *cli.Env {
 		Stdin:  strings.NewReader(""),
 		Stdout: stdout,
 		Stderr: stderr,
-		Readme: []byte("# doe\n\n`go install example/doe@latest`\n"),
 	}
 }
 

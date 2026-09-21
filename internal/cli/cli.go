@@ -11,15 +11,13 @@ type Env struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
-	Readme []byte
 }
 
 // NewEnv returns an environment connected to the current process.
-func NewEnv(readme []byte) *Env {
+func NewEnv() *Env {
 	return &Env{
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
-		Readme: readme,
 	}
 }

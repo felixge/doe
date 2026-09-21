@@ -192,13 +192,12 @@ Temporary files as well as a expensive setup state that may be reused between ru
 
 ### Results Directory
 
-Results are stored in the `results` directory of the study being executed. It contains a record of all experiments and runs, along with this `README.md` file.
+Results are stored in the `results` directory of the study being executed. It contains a record of all experiments and runs.
 
 ```
 results
 	experiments.jsonl
 	runs.jsonl
-	README.md
 ```
 
 #### runs.jsonl
@@ -230,10 +229,6 @@ This file contains Newline-Delimited JSON, with each line holding an object as d
 | files_hash    | A string holding the hash over all file paths and content hashes in the `files` object, ordered by path in ascending byte order. |
 | env           | An object holding the JSON result of the setup script. If setup produced no result, this is an empty object. |
 | env_hash      | A string holding the hash over all values in the `env` object after sorting them by their keys in ascending byte order. |
-
-#### README.md
-
-The results directory always contains a copy of this README where the `@latest` install instruction is replaced with the precise version of doe that was being used. Development builds use the full commit hash when clean, `<commit>-dirty` when modified, and `devel-unknown` when unavailable. For dirty or unknown builds, the copied README notes that the exact doe binary is not reproducible.
 
 ## Terminology
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,12 +10,9 @@ import (
 	"github.com/felixge/doe/internal/cmd"
 )
 
-//go:embed README.md
-var readme []byte
-
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	env := cli.NewEnv(readme)
+	env := cli.NewEnv()
 	code := cmd.Main(ctx, env, os.Args[1:])
 	stop()
 	os.Exit(code)

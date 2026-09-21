@@ -24,7 +24,6 @@ import (
 	"github.com/felixge/doe/internal/design"
 	"github.com/felixge/doe/internal/model"
 	"github.com/felixge/doe/internal/snapshot"
-	"github.com/felixge/doe/internal/version"
 	"golang.org/x/term"
 )
 
@@ -81,10 +80,6 @@ func Execute(ctx context.Context, env *cli.Env, opts Options) error {
 	if dirty && !opts.Dirty {
 		return errors.New("study files have changed; use --dirty or clear the results directory")
 	}
-	if err := writeResultsReadme(output, env.Readme); err != nil {
-		return err
-	}
-
 	for _, d := range study.Designs {
 		if err := conductDesign(ctx, env, study.Root, output, snap, d, results); err != nil {
 			return fmt.Errorf("%s: %w", d.Path, err)
@@ -213,7 +208,7 @@ func atomicWrite(dir, pattern, name string, content []byte, durable bool) error 
 }
 
 func validateManagedPaths(output string) error {
-	for _, name := range []string{".doe", "README.md", "experiments.jsonl", "runs.jsonl"} {
+	for _, name := range []string{".doe", "experiments.jsonl", "runs.jsonl"} {
 		info, err := os.Lstat(filepath.Join(output, name))
 		if os.IsNotExist(err) {
 			continue
@@ -601,21 +596,4 @@ func appendJSON(path string, value any) error {
 		return err
 	}
 	return file.Close()
-}
-
-func writeResultsReadme(output string, source []byte) error {
-	if len(source) == 0 {
-		return errors.New("embedded README is unavailable")
-	}
-	build, reproducible := version.Info()
-	content := bytes.Replace(source, []byte("@latest"), []byte("@"+build), 1)
-	if !reproducible {
-		note := []byte("\n> This results snapshot was created by doe " + build + "; the exact doe binary is not reproducible.\n")
-		if index := bytes.IndexByte(content, '\n'); index >= 0 {
-			content = append(append(append([]byte(nil), content[:index+1]...), note...), content[index+1:]...)
-		} else {
-			content = append(content, note...)
-		}
-	}
-	return atomicWrite(output, ".README-*", "README.md", content, true)
 }

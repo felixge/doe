@@ -124,7 +124,6 @@ func testEnv() (*cli.Env, *bytes.Buffer, *bytes.Buffer) {
 	stderr := new(bytes.Buffer)
 	return &cli.Env{
 		Stdin: strings.NewReader(""), Stdout: stdout, Stderr: stderr,
-		Readme: []byte("# doe\n\n`go install github.com/felixge/doe@latest`\n"),
 	}, stdout, stderr
 }
 
