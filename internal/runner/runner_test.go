@@ -241,8 +241,8 @@ func TestOutputSafety(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(unowned, "important.txt"), "keep")
-	if _, err := lockResults(unowned); err == nil {
-		t.Fatal("lockResults accepted an unrelated nonempty directory")
+	if err := ensureOwnedOutput(unowned); err == nil {
+		t.Fatal("ensureOwnedOutput accepted an unrelated nonempty directory")
 	}
 
 	owned := filepath.Join(t.TempDir(), "output")
@@ -250,8 +250,8 @@ func TestOutputSafety(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(owned, ".doe"), "not doe\n")
-	if _, err := lockResults(owned); err == nil {
-		t.Fatal("lockResults accepted an invalid ownership marker")
+	if err := ensureOwnedOutput(owned); err == nil {
+		t.Fatal("ensureOwnedOutput accepted an invalid ownership marker")
 	}
 }
 

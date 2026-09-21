@@ -4,7 +4,6 @@ package runner
 
 import (
 	"context"
-	"os"
 	"os/exec"
 )
 
@@ -15,6 +14,3 @@ func watchProcessGroup(_ context.Context, _ *exec.Cmd) func() {
 }
 
 func killProcessGroup(command *exec.Cmd) { _ = command.Process.Kill() }
-
-func lockFile(_ *os.File) error   { return nil }
-func unlockFile(_ *os.File) error { return nil }

@@ -37,7 +37,7 @@ var reserved = map[string]bool{
 const resultsMarker = "doe results\n"
 
 // Execute loads, lists, or conducts the designs selected by doe run.
-func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) (err error) {
+func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
 	study, err := loadStudy(opts.Designs)
 	if err != nil {
 		return err
@@ -54,13 +54,9 @@ func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) (err error)
 	}
 
 	output := filepath.Join(study.Root, "results")
-	lock, err := lockResults(output)
-	if err != nil {
+	if err := ensureOwnedOutput(output); err != nil {
 		return err
 	}
-	defer func() {
-		err = errors.Join(err, lock.Close())
-	}()
 	if err := validateManagedPaths(output); err != nil {
 		return err
 	}
@@ -82,9 +78,6 @@ func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) (err error)
 	}
 	if dirty && !opts.Dirty {
 		return errors.New("study files have changed; use --dirty or clear the results directory")
-	}
-	if err := os.MkdirAll(output, 0o755); err != nil {
-		return err
 	}
 	if err := writeResultsReadme(output, env.Readme); err != nil {
 		return err
@@ -169,38 +162,6 @@ func canonicalPath(path string) (string, error) {
 	return resolved, nil
 }
 
-type resultsLock struct{ file *os.File }
-
-func lockResults(output string) (*resultsLock, error) {
-	if err := ensureOwnedOutput(output); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(output, ".doe.lock")
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("refusing symlinked results path: %s", path)
-	} else if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, err
-	}
-	if err := lockFile(file); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return &resultsLock{file: file}, nil
-}
-
-func (l *resultsLock) Close() error {
-	unlockErr := unlockFile(l.file)
-	closeErr := l.file.Close()
-	if unlockErr != nil {
-		return unlockErr
-	}
-	return closeErr
-}
-
 func ensureOwnedOutput(output string) error {
 	info, err := os.Lstat(output)
 	if os.IsNotExist(err) {
@@ -263,7 +224,7 @@ func writeMarker(output string) error {
 }
 
 func validateManagedPaths(output string) error {
-	for _, name := range []string{".doe", ".doe.lock", "README.md", "experiments.jsonl", "runs.jsonl"} {
+	for _, name := range []string{".doe", "README.md", "experiments.jsonl", "runs.jsonl"} {
 		info, err := os.Lstat(filepath.Join(output, name))
 		if os.IsNotExist(err) {
 			continue
