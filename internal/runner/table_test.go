@@ -65,7 +65,7 @@ func TestPlanStudyOutput(t *testing.T) {
 	const want = "Design points:\n" +
 		"+-------+-------+\n| point | value |\n+-------+-------+\n| #1    | one   |\n| #2    | two   |\n+-------+-------+\n\n" +
 		"Schedule:\n" +
-		"+-------+-------+-------+\n|       | rep 1 | rep 2 |\n+-------+-------+-------+\n| run 1 | #1    | #2    |\n| run 2 | #2    | #1    |\n+-------+-------+-------+\n\n" +
+		"+---------+----+----+\n| run/rep | 1  | 2  |\n+---------+----+----+\n| 1       | #1 | #2 |\n| 2       | #2 | #1 |\n+---------+----+----+\n\n" +
 		"Total runs: 4\n"
 	if got := output.String(); got != want {
 		t.Fatalf("planStudy() output = %q, want %q", got, want)

@@ -50,13 +50,13 @@ func planStudy(w io.Writer, study model.Study) error {
 		}
 		schedule := design.Schedule(len(points), d.Replicates)
 		scheduleRows := make([][]string, 0, len(points)+1)
-		header = []string{""}
+		header = []string{"run/rep"}
 		for replicate := range schedule {
-			header = append(header, "rep "+strconv.Itoa(replicate+1))
+			header = append(header, strconv.Itoa(replicate+1))
 		}
 		scheduleRows = append(scheduleRows, header)
 		for position := range points {
-			values := []string{"run " + strconv.Itoa(position+1)}
+			values := []string{strconv.Itoa(position + 1)}
 			for _, row := range schedule {
 				values = append(values, "#"+strconv.Itoa(row[position]+1))
 			}
