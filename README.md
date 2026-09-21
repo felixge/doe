@@ -48,7 +48,7 @@ $ ./run.bash zstd default sample.pb
 {"level": 3,"wall_seconds": 0.00039,"cpu_seconds": 0.00036,"peak_rss_bytes": 2588672,"input_size_bytes": 26400,"output_size_bytes": 24243}
 ```
 
-Run an experiment by passing its design path to `doe run`. Incomplete work can be resumed at any time. If any file in the study has changed since the last experiment, doe will refuse to conduct the experiment unless the `-f` flag is provided.
+Run an experiment by passing its design path to `doe run`. Incomplete work can be resumed at any time. If any file in the study has changed since the last experiment, doe will refuse to conduct the experiment unless the `-d` flag is provided.
 
 ```bash
 $ doe run design.yaml
@@ -112,14 +112,14 @@ Arguments:
 
 Options:
   -p, --plan            Show the design points and schedule. Do not run them.
-  -f, --force           Force the study to run, even if it will dirty the results.
+  -d, --dirty           Run the study even if it will dirty the results.
   -h, --help            Print help text.
 
 Examples:
   # Run a design
   doe run design.yaml
   # Run a design, even if it will produce dirty results
-  doe run -f design.yaml
+  doe run -d design.yaml
   # Show the plan for the design
   doe run -p design.yaml
 ```
@@ -127,7 +127,7 @@ Examples:
 A run always follows the steps below:
 
 1. Compute the `files_hash` over all files in the study, excluding the `results` and `work` directories and any `.git` directories.
-2. Check if `results/experiments.jsonl` contains a `files_hash` for a different version of the study. If yes, refuse to resume unless the `-f` flag is provided or until the user clears the `results` directory.
+2. Check if `results/experiments.jsonl` contains a `files_hash` for a different version of the study. If yes, refuse to resume unless the `-d` flag is provided or until the user clears the `results` directory.
 3. Execute the designs in the order they were listed.
    1. Invoke the `setup` script and capture the env JSON it emits, if any.
    2. Record the experiment for the design in `results/experiments.jsonl` along with the env JSON that was captured.

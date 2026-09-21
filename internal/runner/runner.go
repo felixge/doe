@@ -69,8 +69,8 @@ func Execute(ctx context.Context, env *cli.Env, opts runcmd.Options) error {
 			break
 		}
 	}
-	if dirty && !opts.Force {
-		return errors.New("study files have changed; use --force or clear the results directory")
+	if dirty && !opts.Dirty {
+		return errors.New("study files have changed; use --dirty or clear the results directory")
 	}
 	if err := os.MkdirAll(output, 0o755); err != nil {
 		return err

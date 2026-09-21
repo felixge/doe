@@ -73,15 +73,15 @@ factors:
 run: 'printf ''run log\n''; printf ''{"seen":"%s"}\n'' {value}'
 replicates: 2
 `)
-	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), runcmd.Options{Designs: []string{designPath}}); err == nil || !strings.Contains(err.Error(), "--force") || !strings.Contains(err.Error(), "clear the results directory") {
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), runcmd.Options{Designs: []string{designPath}}); err == nil || !strings.Contains(err.Error(), "--dirty") || !strings.Contains(err.Error(), "clear the results directory") {
 		t.Fatalf("changed study error = %v", err)
 	}
-	forcedOut, forcedErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(forcedOut, forcedErr), runcmd.Options{Designs: []string{designPath}, Force: true}); err != nil {
+	dirtyOut, dirtyErr := newBuffers()
+	if err := Execute(context.Background(), testEnv(dirtyOut, dirtyErr), runcmd.Options{Designs: []string{designPath}, Dirty: true}); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(forcedErr.String(), "run log"); got != 2 {
-		t.Fatalf("forced new run count = %d, want 2; stderr:\n%s", got, forcedErr.String())
+	if got := strings.Count(dirtyErr.String(), "run log"); got != 2 {
+		t.Fatalf("dirty new run count = %d, want 2; stderr:\n%s", got, dirtyErr.String())
 	}
 	if got := lineCount(t, filepath.Join(output, "runs.jsonl")); got != 6 {
 		t.Fatalf("run count = %d, want 6", got)
