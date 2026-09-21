@@ -1,12 +1,10 @@
 package runner
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -134,58 +132,47 @@ func pointKey(design string, point model.Point) (string, error) {
 	return design + "\x00" + string(data), nil
 }
 
-func readJSONL(path string, consume func([]byte) error) (err error) {
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
+func readJSONL(path string, consume func([]byte) error) error {
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	defer func() {
-		err = errors.Join(err, file.Close())
-	}()
 
-	reader := bufio.NewReader(file)
-	var offset int64
-	for line := 1; ; line++ {
-		data, readErr := reader.ReadBytes('\n')
-		if len(data) == 0 && errors.Is(readErr, io.EOF) {
-			return nil
-		}
-		start := offset
-		offset += int64(len(data))
-		terminated := len(data) > 0 && data[len(data)-1] == '\n'
+	lines := bytes.Split(data, []byte{'\n'})
+	offset := 0
+	for i, line := range lines {
+		terminated := i < len(lines)-1
 		if terminated {
-			data = data[:len(data)-1]
-			if len(data) > 0 && data[len(data)-1] == '\r' {
-				data = data[:len(data)-1]
-			}
+			line = bytes.TrimSuffix(line, []byte{'\r'})
 		}
-		if len(bytes.TrimSpace(data)) != 0 {
-			decoder := json.NewDecoder(bytes.NewReader(data))
+		if len(bytes.TrimSpace(line)) != 0 {
+			decoder := json.NewDecoder(bytes.NewReader(line))
 			var value json.RawMessage
-			if decodeErr := decoder.Decode(&value); decodeErr != nil {
-				if !terminated && errors.Is(readErr, io.EOF) {
-					if err := file.Truncate(start); err != nil {
-						return err
+			if err := decoder.Decode(&value); err != nil {
+				if !terminated {
+					file, openErr := os.OpenFile(path, os.O_WRONLY, 0)
+					if openErr != nil {
+						return openErr
 					}
-					return file.Sync()
+					err = file.Truncate(int64(offset))
+					if err == nil {
+						err = file.Sync()
+					}
+					return errors.Join(err, file.Close())
 				}
-				return fmt.Errorf("%s:%d: %w", path, line, decodeErr)
+				return fmt.Errorf("%s:%d: %w", path, i+1, err)
 			}
-			if decodeErr := ensureEOF(decoder); decodeErr != nil {
-				return fmt.Errorf("%s:%d: %w", path, line, decodeErr)
+			if err := ensureEOF(decoder); err != nil {
+				return fmt.Errorf("%s:%d: %w", path, i+1, err)
 			}
-			if consumeErr := consume(data); consumeErr != nil {
-				return fmt.Errorf("%s:%d: %w", path, line, consumeErr)
+			if err := consume(line); err != nil {
+				return fmt.Errorf("%s:%d: %w", path, i+1, err)
 			}
 		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				return nil
-			}
-			return readErr
-		}
+		offset += len(lines[i]) + 1
 	}
+	return nil
 }
