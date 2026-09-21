@@ -181,8 +181,11 @@ func ensureOwnedOutput(output string) error {
 }
 
 func writeMarker(output string) error {
-	path := filepath.Join(output, ".doe")
-	file, err := os.CreateTemp(output, ".doe-*")
+	return atomicWrite(output, ".doe-*", ".doe", []byte(resultsMarker), false)
+}
+
+func atomicWrite(dir, pattern, name string, content []byte, durable bool) error {
+	file, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return err
 	}
@@ -192,14 +195,20 @@ func writeMarker(output string) error {
 		_ = file.Close()
 		return err
 	}
-	if _, err := io.WriteString(file, resultsMarker); err != nil {
+	if _, err := file.Write(content); err != nil {
 		_ = file.Close()
 		return err
+	}
+	if durable {
+		if err := file.Sync(); err != nil {
+			_ = file.Close()
+			return err
+		}
 	}
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return os.Rename(tmp, filepath.Join(dir, name))
 }
 
 func validateManagedPaths(output string) error {
@@ -492,26 +501,5 @@ func writeResultsReadme(output string, source []byte) error {
 			content = append(content, note...)
 		}
 	}
-	file, err := os.CreateTemp(output, ".README-*")
-	if err != nil {
-		return err
-	}
-	tmp := file.Name()
-	defer func() { _ = os.Remove(tmp) }()
-	if err := file.Chmod(0o644); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.Write(content); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(output, "README.md"))
+	return atomicWrite(output, ".README-*", "README.md", content, true)
 }
