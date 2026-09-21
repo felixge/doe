@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -134,7 +135,7 @@ func pointKey(design string, point model.Point) (string, error) {
 }
 
 func readJSONL(path string, consume func([]byte) error) (err error) {
-	file, err := os.Open(path)
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -144,17 +145,47 @@ func readJSONL(path string, consume func([]byte) error) (err error) {
 	defer func() {
 		err = errors.Join(err, file.Close())
 	}()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	line := 0
-	for scanner.Scan() {
-		line++
-		if len(scanner.Bytes()) == 0 {
-			continue
+
+	reader := bufio.NewReader(file)
+	var offset int64
+	for line := 1; ; line++ {
+		data, readErr := reader.ReadBytes('\n')
+		if len(data) == 0 && errors.Is(readErr, io.EOF) {
+			return nil
 		}
-		if err := consume(scanner.Bytes()); err != nil {
-			return fmt.Errorf("%s:%d: %w", path, line, err)
+		start := offset
+		offset += int64(len(data))
+		terminated := len(data) > 0 && data[len(data)-1] == '\n'
+		if terminated {
+			data = data[:len(data)-1]
+			if len(data) > 0 && data[len(data)-1] == '\r' {
+				data = data[:len(data)-1]
+			}
+		}
+		if len(bytes.TrimSpace(data)) != 0 {
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			var value json.RawMessage
+			if decodeErr := decoder.Decode(&value); decodeErr != nil {
+				if !terminated && errors.Is(readErr, io.EOF) {
+					if err := file.Truncate(start); err != nil {
+						return err
+					}
+					return file.Sync()
+				}
+				return fmt.Errorf("%s:%d: %w", path, line, decodeErr)
+			}
+			if decodeErr := ensureEOF(decoder); decodeErr != nil {
+				return fmt.Errorf("%s:%d: %w", path, line, decodeErr)
+			}
+			if consumeErr := consume(data); consumeErr != nil {
+				return fmt.Errorf("%s:%d: %w", path, line, consumeErr)
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return nil
+			}
+			return readErr
 		}
 	}
-	return scanner.Err()
 }

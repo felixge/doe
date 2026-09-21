@@ -470,13 +470,34 @@ func flattenRun(run model.Run) map[string]any {
 }
 
 func appendJSON(path string, value any) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
-	encoder := json.NewEncoder(file)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return err
+	}
+	data := encoded.Bytes()
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := file.ReadAt(last[:], info.Size()-1); err != nil {
+			_ = file.Close()
+			return err
+		}
+		if last[0] != '\n' {
+			data = append([]byte{'\n'}, data...)
+		}
+	}
+	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
 		return err
 	}
