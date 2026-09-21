@@ -2,42 +2,25 @@ package runner
 
 import (
 	"bytes"
-	"io"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestProgressBar(t *testing.T) {
-	var redirected bytes.Buffer
-	newProgress(&redirected, "design.yaml", 4, 0, 0).Complete(time.Second)
-	if redirected.Len() != 0 {
-		t.Fatalf("redirected progress output = %q", redirected.String())
-	}
-
+func TestProgressBarRendersSnapshots(t *testing.T) {
 	var output bytes.Buffer
-	started := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
-	now := started
-	bar := &progressBar{
-		output: &output, writer: &output, label: "design.yaml", total: 108,
-		started: started, now: func() time.Time { return now },
-	}
-	bar.render()
+	bar := newProgress(&output, "design.yaml")
+	bar.Render(progressSnapshot{total: 108, status: "estimating ..."})
 	if got := output.String(); !strings.Contains(got, "design.yaml [>                       ] 0/108 · estimating ...") {
 		t.Fatalf("estimating progress output = %q", got)
 	}
 
-	bar.done = 12
-	wantBar := "[==>                     ]"
-	bar.doneDuration = 27750 * time.Millisecond
-	bar.render()
-	if got := output.String(); !strings.Contains(got, "design.yaml "+wantBar+" 12/108 · ~3m 42s remaining") {
+	bar.Render(progressSnapshot{total: 108, done: 12, status: "~3m 42s remaining"})
+	if got := output.String(); !strings.Contains(got, "design.yaml [==>                     ] 12/108 · ~3m 42s remaining") {
 		t.Fatalf("estimated progress output = %q", got)
 	}
 
-	bar.done = 108
-	now = started.Add(4*time.Minute + 11*time.Second)
-	bar.render()
+	bar.Render(progressSnapshot{total: 108, done: 108, status: "done in 4m 11s"})
 	bar.Close()
 	if got := output.String(); !strings.Contains(got, "design.yaml [========================] 108/108 · done in 4m 11s\n") {
 		t.Fatalf("completed progress output = %q", got)
@@ -46,46 +29,69 @@ func TestProgressBar(t *testing.T) {
 
 func TestProgressBarClearsEachRedraw(t *testing.T) {
 	var output bytes.Buffer
-	bar := &progressBar{
-		output: &output, writer: &output, label: "design.yaml", total: 2,
-		doneDuration: time.Minute,
-		started:      time.Now(), now: time.Now,
-	}
-	bar.render()
-	bar.Complete(time.Second)
+	bar := newProgress(&output, "design.yaml")
+	bar.Render(progressSnapshot{total: 2, status: "estimating ..."})
+	bar.Render(progressSnapshot{total: 2, done: 1, status: "~1s remaining"})
 	if got := strings.Count(output.String(), "\r\x1b[2K"); got != 2 {
 		t.Fatalf("line clear count = %d, want 2; output = %q", got, output.String())
 	}
+	bar.Clear()
+	bar.Clear()
+	if got := strings.Count(output.String(), "\r\x1b[2K"); got != 3 {
+		t.Fatalf("line clear count after Clear = %d, want 3; output = %q", got, output.String())
+	}
 }
 
-func TestProgressEstimateCombinesHistoricalAndCurrentDurations(t *testing.T) {
+func TestProgressStateUsesGlobalAverageForUnseenPoints(t *testing.T) {
 	started := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
-	bar := &progressBar{
-		writer:       io.Discard,
-		total:        3,
-		done:         1,
-		doneDuration: 4 * time.Second,
-		runStarted:   started,
-		now:          func() time.Time { return started.Add(time.Second) },
-	}
-	if got, ok := bar.estimate(); !ok || got != 7*time.Second {
+	state := newProgressState(3, 1, started, []string{"new-a", "new-b"})
+	state.AddDuration("old", 4*time.Second)
+	state.Start(started)
+
+	if got, ok := state.estimate(started.Add(time.Second)); !ok || got != 7*time.Second {
 		t.Fatalf("estimate = %s, %v; want 7s, true", got, ok)
 	}
 }
 
-func TestProgressShowsElapsedTimeWhileEstimating(t *testing.T) {
-	var output bytes.Buffer
+func TestProgressStatePrefersPointAverages(t *testing.T) {
 	started := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
-	now := started
-	bar := &progressBar{
-		output: &output, writer: &output, total: 2,
-		started: started, now: func() time.Time { return now },
+	state := newProgressState(5, 2, started, []string{"fast", "slow", "fast"})
+	state.AddDuration("fast", 2*time.Second)
+	state.AddDuration("slow", 10*time.Second)
+
+	if got, ok := state.estimate(started); !ok || got != 14*time.Second {
+		t.Fatalf("estimate = %s, %v; want 14s, true", got, ok)
 	}
-	bar.StartRun()
-	now = now.Add(3 * time.Second)
-	bar.render()
-	if got := output.String(); !strings.Contains(got, "estimating ... · 3s elapsed") {
-		t.Fatalf("progress output = %q", got)
+}
+
+func TestProgressStateWaitsForFirstDuration(t *testing.T) {
+	started := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	state := newProgressState(2, 0, started, []string{"a", "b"})
+	state.Start(started)
+	now := started.Add(3 * time.Second)
+
+	if got, ok := state.estimate(now); ok || got != 0 {
+		t.Fatalf("estimate = %s, %v; want 0s, false", got, ok)
+	}
+	if got := state.Snapshot(now).status; got != "estimating ... · 3s elapsed" {
+		t.Fatalf("status = %q", got)
+	}
+}
+
+func TestProgressStateCompletionUpdatesPointAverage(t *testing.T) {
+	started := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	state := newProgressState(3, 1, started, []string{"point", "point"})
+	state.AddDuration("point", 4*time.Second)
+	state.Start(started)
+	state.Complete(6 * time.Second)
+
+	if got, ok := state.estimate(started.Add(6 * time.Second)); !ok || got != 5*time.Second {
+		t.Fatalf("estimate = %s, %v; want 5s, true", got, ok)
+	}
+	state.Start(started.Add(6 * time.Second))
+	state.Complete(5 * time.Second)
+	if got := state.Snapshot(started.Add(11 * time.Second)).status; got != "done in 11s" {
+		t.Fatalf("status = %q", got)
 	}
 }
 

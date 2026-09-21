@@ -25,6 +25,7 @@ import (
 	"github.com/felixge/doe/internal/model"
 	"github.com/felixge/doe/internal/snapshot"
 	"github.com/felixge/doe/internal/version"
+	"golang.org/x/term"
 )
 
 const resultsMarker = "doe results\n"
@@ -269,20 +270,40 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 	}
 	schedule := design.Schedule(len(points), d.Replicates)
 	reused := 0
-	var doneDuration time.Duration
+	remaining := make([]string, 0, len(points)*d.Replicates)
+	for replicate, row := range schedule {
+		for _, pointIndex := range row {
+			key := replicateKey(pointKeys[pointIndex], replicate+1)
+			if _, ok := results.runs[key]; ok {
+				reused++
+			} else {
+				remaining = append(remaining, pointKeys[pointIndex])
+			}
+		}
+	}
+	state := newProgressState(len(points)*d.Replicates, reused, time.Now(), remaining)
 	for replicate, row := range schedule {
 		for _, pointIndex := range row {
 			key := replicateKey(pointKeys[pointIndex], replicate+1)
 			if duration, ok := results.runs[key]; ok {
-				reused++
-				doneDuration += duration
+				state.AddDuration(pointKeys[pointIndex], duration)
 			}
 		}
 	}
-	progress := newProgress(env.Stderr, d.Path, len(points)*d.Replicates, reused, doneDuration)
-	defer progress.Close()
-	runEnv := *env
-	runEnv.Stderr = progress
+
+	var progress *progressBar
+	var ticks <-chan time.Time
+	var ticker *time.Ticker
+	if isTerminal(env.Stderr) {
+		progress = newProgress(env.Stderr, d.Path)
+		progress.Render(state.Snapshot(time.Now()))
+		ticker = time.NewTicker(time.Second)
+		ticks = ticker.C
+		defer func() {
+			ticker.Stop()
+			progress.Close()
+		}()
+	}
 
 	for replicate, row := range schedule {
 		for _, pointIndex := range row {
@@ -292,8 +313,11 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 				continue
 			}
 			runStart := time.Now()
-			progress.StartRun()
-			last, err := commandOutput(ctx, &runEnv, root, commands[pointIndex])
+			state.Start(runStart)
+			if progress != nil {
+				progress.Render(state.Snapshot(runStart))
+			}
+			last, err := commandOutputWithProgress(ctx, env, root, commands[pointIndex], progress, state, ticks)
 			if err != nil {
 				return fmt.Errorf("replicate %d point #%d: %w", replicate+1, pointIndex+1, err)
 			}
@@ -323,10 +347,81 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 			}
 			duration := run.End.Sub(run.Start)
 			results.runs[key] = duration
-			progress.Complete(duration)
+			state.Complete(duration)
+			if progress != nil {
+				progress.Render(state.Snapshot(run.End))
+			}
 		}
 	}
 	return nil
+}
+
+func isTerminal(writer io.Writer) bool {
+	file, ok := writer.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+type commandResult struct {
+	last string
+	err  error
+}
+
+type channelWriter struct {
+	ctx     context.Context
+	outputs chan<- []byte
+}
+
+func (w *channelWriter) Write(data []byte) (int, error) {
+	copy := bytes.Clone(data)
+	select {
+	case w.outputs <- copy:
+		return len(data), nil
+	case <-w.ctx.Done():
+		return 0, w.ctx.Err()
+	}
+}
+
+func commandOutputWithProgress(
+	ctx context.Context,
+	env *cli.Env,
+	root, script string,
+	progress *progressBar,
+	state *progressState,
+	ticks <-chan time.Time,
+) (string, error) {
+	commandCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	outputs := make(chan []byte)
+	result := make(chan commandResult, 1)
+	runEnv := *env
+	runEnv.Stderr = &channelWriter{ctx: commandCtx, outputs: outputs}
+	go func() {
+		last, err := commandOutput(commandCtx, &runEnv, root, script)
+		result <- commandResult{last: last, err: err}
+	}()
+
+	ctxDone := ctx.Done()
+	for {
+		select {
+		case data := <-outputs:
+			if progress != nil {
+				progress.Clear()
+			}
+			if _, err := env.Stderr.Write(data); err != nil {
+				cancel()
+				<-result
+				return "", err
+			}
+		case completed := <-result:
+			return completed.last, completed.err
+		case now := <-ticks:
+			progress.Render(state.Snapshot(now))
+		case <-ctxDone:
+			cancel()
+			ctxDone = nil
+		}
+	}
 }
 
 func commandOutput(ctx context.Context, env *cli.Env, root, script string) (string, error) {

@@ -223,10 +223,12 @@ func TestCommandOutputOnlyClearsProgressForLogs(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			progress := &progressBar{output: &stderr, writer: &stderr, total: 1, shown: true}
+			progress := newProgress(&stderr, "design.yaml")
+			progress.Render(progressSnapshot{total: 1, status: "estimating ..."})
+			state := newProgressState(1, 0, time.Now(), []string{"point"})
+			state.Start(time.Now())
 			env := testEnv(new(bytes.Buffer), &stderr)
-			env.Stderr = progress
-			if _, err := commandOutput(context.Background(), env, t.TempDir(), test.script); err != nil {
+			if _, err := commandOutputWithProgress(context.Background(), env, t.TempDir(), test.script, progress, state, nil); err != nil {
 				t.Fatal(err)
 			}
 			if got := !progress.shown; got != test.wantCleared {

@@ -3,84 +3,42 @@ package runner
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
-	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
 const progressWidth = 24
 
+type progressSnapshot struct {
+	total  int
+	done   int
+	status string
+}
+
 type progressBar struct {
-	mu           sync.Mutex
-	output       io.Writer
-	writer       io.Writer
-	label        string
-	total        int
-	done         int
-	doneDuration time.Duration
-	started      time.Time
-	runStarted   time.Time
-	now          func() time.Time
-	shown        bool
-	stop         chan struct{}
-	stopped      chan struct{}
+	writer io.Writer
+	label  string
+	shown  bool
 }
 
-func newProgress(writer io.Writer, label string, total, done int, doneDuration time.Duration) *progressBar {
-	bar := &progressBar{
-		output:       writer,
-		writer:       io.Discard,
-		label:        label,
-		total:        total,
-		done:         done,
-		doneDuration: doneDuration,
-		started:      time.Now(),
-		now:          time.Now,
+func newProgress(writer io.Writer, label string) *progressBar {
+	return &progressBar{writer: writer, label: label}
+}
+
+func (p *progressBar) Render(snapshot progressSnapshot) {
+	bar := strings.Repeat("=", progressWidth)
+	if snapshot.done < snapshot.total {
+		filled := 0
+		if snapshot.total > 0 {
+			filled = snapshot.done * progressWidth / snapshot.total
+		}
+		bar = strings.Repeat("=", filled) + ">" + strings.Repeat(" ", progressWidth-filled-1)
 	}
-	if isTerminal(writer) {
-		bar.writer = writer
-	}
-	bar.render()
-	if bar.writer != io.Discard {
-		bar.stop = make(chan struct{})
-		bar.stopped = make(chan struct{})
-		go bar.refresh()
-	}
-	return bar
+	_, _ = fmt.Fprintf(p.writer, "\r\x1b[2K%s [%s] %d/%d · %s", p.label, bar, snapshot.done, snapshot.total, snapshot.status)
+	p.shown = true
 }
 
-func isTerminal(writer io.Writer) bool {
-	file, ok := writer.(*os.File)
-	return ok && term.IsTerminal(int(file.Fd()))
-}
-
-func (p *progressBar) StartRun() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.runStarted = p.now()
-	p.renderLocked()
-}
-
-func (p *progressBar) Complete(duration time.Duration) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.done++
-	p.doneDuration += duration
-	p.runStarted = time.Time{}
-	p.renderLocked()
-}
-
-func (p *progressBar) Write(data []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.clearLocked()
-	return p.output.Write(data)
-}
-
-func (p *progressBar) clearLocked() {
+func (p *progressBar) Clear() {
 	if p.shown {
 		_, _ = fmt.Fprint(p.writer, "\r\x1b[2K")
 		p.shown = false
@@ -88,75 +46,95 @@ func (p *progressBar) clearLocked() {
 }
 
 func (p *progressBar) Close() {
-	if p.stop != nil {
-		close(p.stop)
-		<-p.stopped
-		p.stop = nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.shown {
 		_, _ = fmt.Fprintln(p.writer)
 		p.shown = false
 	}
 }
 
-func (p *progressBar) render() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.renderLocked()
+type durationStats struct {
+	count int
+	total time.Duration
 }
 
-func (p *progressBar) renderLocked() {
-	bar := strings.Repeat("=", progressWidth)
-	if p.done < p.total {
-		filled := 0
-		if p.total > 0 {
-			filled = p.done * progressWidth / p.total
-		}
-		bar = strings.Repeat("=", filled) + ">" + strings.Repeat(" ", progressWidth-filled-1)
-	}
-	status := "estimating ..."
-	if p.done == p.total {
-		status = "done in " + formatDuration(p.now().Sub(p.started))
-	} else if estimate, ok := p.estimate(); ok {
-		status = "~" + formatDuration(estimate) + " remaining"
-	} else if !p.runStarted.IsZero() {
-		status = "estimating ... · " + formatDuration(p.now().Sub(p.runStarted)) + " elapsed"
-	}
-	_, _ = fmt.Fprintf(p.writer, "\r\x1b[2K%s [%s] %d/%d · %s", p.label, bar, p.done, p.total, status)
-	p.shown = true
+func (s *durationStats) Add(duration time.Duration) {
+	s.count++
+	s.total += duration
 }
 
-func (p *progressBar) estimate() (time.Duration, bool) {
-	if p.done == 0 {
+func (s durationStats) Average() (time.Duration, bool) {
+	if s.count == 0 {
 		return 0, false
 	}
-	average := p.doneDuration / time.Duration(p.done)
-	remaining := time.Duration(p.total-p.done) * average
-	if !p.runStarted.IsZero() {
-		remaining -= p.now().Sub(p.runStarted)
-	}
-	if remaining < 0 {
-		remaining = 0
-	}
-	return remaining, true
+	return s.total / time.Duration(s.count), true
 }
 
-func (p *progressBar) refresh() {
-	ticker := time.NewTicker(time.Second)
-	defer func() {
-		ticker.Stop()
-		close(p.stopped)
-	}()
-	for {
-		select {
-		case <-ticker.C:
-			p.render()
-		case <-p.stop:
-			return
-		}
+type progressState struct {
+	total         int
+	done          int
+	started       time.Time
+	activeStarted time.Time
+	remaining     []string
+	next          int
+	all           durationStats
+	points        map[string]durationStats
+}
+
+func newProgressState(total, done int, started time.Time, remaining []string) *progressState {
+	return &progressState{
+		total: total, done: done, started: started, remaining: remaining,
+		points: make(map[string]durationStats),
 	}
+}
+
+func (p *progressState) AddDuration(point string, duration time.Duration) {
+	p.all.Add(duration)
+	stats := p.points[point]
+	stats.Add(duration)
+	p.points[point] = stats
+}
+
+func (p *progressState) Start(now time.Time) {
+	p.activeStarted = now
+}
+
+func (p *progressState) Complete(duration time.Duration) {
+	p.AddDuration(p.remaining[p.next], duration)
+	p.next++
+	p.done++
+	p.activeStarted = time.Time{}
+}
+
+func (p *progressState) Snapshot(now time.Time) progressSnapshot {
+	snapshot := progressSnapshot{total: p.total, done: p.done, status: "estimating ..."}
+	if p.done == p.total {
+		snapshot.status = "done in " + formatDuration(now.Sub(p.started))
+		return snapshot
+	}
+	if estimate, ok := p.estimate(now); ok {
+		snapshot.status = "~" + formatDuration(estimate) + " remaining"
+	} else if !p.activeStarted.IsZero() {
+		snapshot.status += " · " + formatDuration(now.Sub(p.activeStarted)) + " elapsed"
+	}
+	return snapshot
+}
+
+func (p *progressState) estimate(now time.Time) (time.Duration, bool) {
+	var remaining time.Duration
+	for index, point := range p.remaining[p.next:] {
+		estimate, ok := p.points[point].Average()
+		if !ok {
+			estimate, ok = p.all.Average()
+		}
+		if !ok {
+			return 0, false
+		}
+		if index == 0 && !p.activeStarted.IsZero() {
+			estimate -= now.Sub(p.activeStarted)
+		}
+		remaining += max(estimate, 0)
+	}
+	return remaining, true
 }
 
 func formatDuration(duration time.Duration) string {
