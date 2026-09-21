@@ -234,26 +234,24 @@ func Schedule(pointCount, replicates int) [][]int {
 			base[column] = pointCount - column/2
 		}
 	}
-	complete := make([][]int, 0, pointCount*2)
-	for shift := range pointCount {
-		row := make([]int, pointCount)
-		for column, point := range base {
-			row[column] = (point + shift) % pointCount
-		}
-		complete = append(complete, row)
-	}
+	period := pointCount
 	if pointCount%2 == 1 && pointCount > 1 {
-		for shift := range pointCount {
-			row := make([]int, pointCount)
-			for column := range row {
-				row[column] = complete[shift][pointCount-1-column]
-			}
-			complete = append(complete, row)
-		}
+		period *= 2
 	}
 	rows := make([][]int, replicates)
 	for replicate := range rows {
-		rows[replicate] = append([]int(nil), complete[replicate%len(complete)]...)
+		designRow := replicate % period
+		shift := designRow % pointCount
+		reversed := designRow >= pointCount
+		row := make([]int, pointCount)
+		for column := range row {
+			baseColumn := column
+			if reversed {
+				baseColumn = pointCount - 1 - column
+			}
+			row[column] = (base[baseColumn] + shift) % pointCount
+		}
+		rows[replicate] = row
 	}
 	return rows
 }

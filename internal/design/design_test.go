@@ -172,6 +172,28 @@ func TestScheduleOdd(t *testing.T) {
 	assertBalancedCarryover(t, got[:6])
 }
 
+func TestScheduleLargeSingleReplicate(t *testing.T) {
+	const pointCount = 100_000
+	rows := Schedule(pointCount, 1)
+	if len(rows) != 1 {
+		t.Fatalf("Schedule(%d, 1) row count = %d, want 1", pointCount, len(rows))
+	}
+	if len(rows[0]) != pointCount {
+		t.Fatalf("Schedule(%d, 1) column count = %d, want %d", pointCount, len(rows[0]), pointCount)
+	}
+	if got, want := rows[0][:6], []int{0, 1, pointCount - 1, 2, pointCount - 2, 3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Schedule(%d, 1) prefix = %v, want %v", pointCount, got, want)
+	}
+}
+
+func TestScheduleRowsAreIndependent(t *testing.T) {
+	rows := Schedule(3, 7)
+	rows[0][0] = -1
+	if got, want := rows[6][0], 0; got != want {
+		t.Fatalf("mutating row 0 changed repeated row 6: got %d, want %d", got, want)
+	}
+}
+
 func TestScheduleInvalidOrSinglePoint(t *testing.T) {
 	if got := Schedule(0, 2); got != nil {
 		t.Fatalf("Schedule(0, 2) = %v, want nil", got)
