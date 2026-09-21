@@ -239,10 +239,7 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 		}
 	}
 
-	experimentID, err := newID()
-	if err != nil {
-		return err
-	}
+	experimentID := rand.Text()
 	experiment := model.Experiment{
 		ID: experimentID, Start: started, Design: d.Path,
 		Factors: d.FactorNames, Files: snap.Files, FilesHash: snap.Hash,
@@ -255,14 +252,16 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 	pointKeys := make([]string, len(points))
 	commands := make([]string, len(points))
 	for i, point := range points {
-		pointKeys[i], err = pointKey(d.Path, point)
+		key, err := pointKey(d.Path, point)
 		if err != nil {
 			return err
 		}
-		commands[i], err = interpolate(d.Run, point)
+		pointKeys[i] = key
+		command, err := interpolate(d.Run, point)
 		if err != nil {
 			return err
 		}
+		commands[i] = command
 	}
 	schedule := design.Schedule(len(points), d.Replicates)
 	reused := 0
@@ -310,10 +309,7 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 					return fmt.Errorf("response name %q is also a factor", name)
 				}
 			}
-			runID, err := newID()
-			if err != nil {
-				return err
-			}
+			runID := rand.Text()
 			run := model.Run{
 				ID: runID, ExperimentID: experiment.ID, Replicate: replicate + 1,
 				Start: runStart, End: time.Now(), Inputs: inputs, Outputs: outputs,
@@ -485,14 +481,6 @@ func appendJSON(path string, value any) error {
 		return err
 	}
 	return file.Close()
-}
-
-func newID() (string, error) {
-	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes[:]), nil
 }
 
 func writeResultsReadme(output string, source []byte) error {
