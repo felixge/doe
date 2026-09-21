@@ -161,7 +161,7 @@ The study root is the parent directory of its design files. All designs passed t
 
 ### Reserved Keywords
 
-Within a study directory, `results` is a reserved directory name. A results directory may be contained within a study, but is not part of the study itself. See the Results Format description below for more information.
+Within a study, `results` and `work` are reserved directory names.
 
 For factors and responses, all field names defined in the `runs.jsonl` section below are considered reserved keywords. 
 
@@ -186,7 +186,11 @@ Typically the inline scripts just shell out to a script file in the study. Those
 
 Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For both `setup` and `run`, doe treats the last line of stdout as the result and streams earlier output to stderr while the experiment runs. The result must be a flat JSON object whose values are JSON scalars. Empty setup output is treated as `{}`; a run must produce a result.
 
-## Results
+### Work Directory
+
+Temporary files as well as a expensive setup state that may be reused between runs can be stored in a directory called `work`.
+
+### Results Directory
 
 Results are stored in the `results` directory of the study being executed. It contains a record of all experiments and runs, along with this `README.md` file.
 
@@ -248,6 +252,7 @@ This project aims to use the following terminology consistently.
 | output       | A response and measurement combination. E.g. `cpu_seconds=0.025 peak_rss_bytes=493894`. |
 | experiment   | A single doe invocation of a design. Resuming the execution of a design produces another experiment. |
 | run          | A single execution at a design point and the outputs it produced. |
+| work         | The directory within a study that contains temporary outputs as well as reusable setup state. |
 | results      | The directory within a study that contains its experiment and run records. |
 | dirty        | A study is considered to be dirty if it contains results with different `files_hash` values. The use case is adding additional settings to a design after its first execution. |
 
