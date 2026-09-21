@@ -1,8 +1,11 @@
 package snapshot
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +53,23 @@ func TestCapture(t *testing.T) {
 		if _, ok := s.Files[path]; ok {
 			t.Errorf("did not expect %s in snapshot", path)
 		}
+	}
+}
+
+func TestCaptureHashesRegularFileContents(t *testing.T) {
+	root := t.TempDir()
+	content := strings.Repeat("large file content\n", 1<<16)
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Capture(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256([]byte(content))
+	if got := s.Files["large.txt"]; got != hex.EncodeToString(want[:]) {
+		t.Fatalf("large.txt hash = %q, want %q", got, hex.EncodeToString(want[:]))
 	}
 }
 
