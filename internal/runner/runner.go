@@ -342,8 +342,6 @@ func commandOutput(ctx context.Context, env *cli.Env, root, script string) (stri
 	if err := command.Start(); err != nil {
 		return "", err
 	}
-	stopProcessWatch := watchProcessGroup(ctx, command)
-	defer stopProcessWatch()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	last := ""
@@ -358,7 +356,7 @@ func commandOutput(ctx context.Context, env *cli.Env, root, script string) (stri
 	scanErr := scanner.Err()
 	if scanErr != nil {
 		_ = stdout.Close()
-		killProcessGroup(command)
+		_ = command.Cancel()
 	}
 	waitErr := command.Wait()
 	if scanErr != nil {
