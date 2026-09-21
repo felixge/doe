@@ -27,11 +27,6 @@ import (
 	"github.com/felixge/doe/internal/version"
 )
 
-var reserved = map[string]bool{
-	"run_id": true, "experiment_id": true, "replicate": true,
-	"start": true, "end": true,
-}
-
 const resultsMarker = "doe results\n"
 
 // Options contains the validated command-line arguments for doe run.
@@ -302,7 +297,7 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 			}
 			inputs := pointMap(point)
 			for name := range outputs {
-				if reserved[name] {
+				if model.IsReservedRunField(name) {
 					return fmt.Errorf("response name %q is reserved", name)
 				}
 				if _, exists := inputs[name]; exists {

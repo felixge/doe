@@ -3,6 +3,16 @@ package model
 
 import "time"
 
+// IsReservedRunField reports whether name is owned by the runs.jsonl format.
+func IsReservedRunField(name string) bool {
+	switch name {
+	case "run_id", "experiment_id", "replicate", "start", "end":
+		return true
+	default:
+		return false
+	}
+}
+
 // Scalar is a JSON scalar: nil, a bool, a string, or a number.
 //
 // Design parsing normalizes YAML numbers to int64, uint64, or float64.

@@ -104,6 +104,17 @@ replicates: 2
 	}
 }
 
+func TestExecuteRejectsReservedResponseName(t *testing.T) {
+	root := t.TempDir()
+	designPath := filepath.Join(root, "design.yaml")
+	writeFile(t, designPath, "factors: [{value: [x]}]\nrun: echo '{\"end\":1}'\n")
+
+	err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}})
+	if err == nil || !strings.Contains(err.Error(), `response name "end" is reserved`) {
+		t.Fatalf("Execute() error = %v, want reserved response error", err)
+	}
+}
+
 func TestExecutePlan(t *testing.T) {
 	root := t.TempDir()
 	designPath := filepath.Join(root, "design.yaml")

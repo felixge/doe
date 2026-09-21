@@ -14,14 +14,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var reservedFactorNames = map[string]bool{
-	"run_id":        true,
-	"experiment_id": true,
-	"replicate":     true,
-	"start":         true,
-	"end":           true,
-}
-
 // Load reads and validates a design YAML file.
 func Load(path string) (model.Design, error) {
 	data, err := os.ReadFile(path)
@@ -126,7 +118,7 @@ func parseFactorGroups(node *yaml.Node) ([]factorGroup, []string, error) {
 			if entry.key == "" {
 				return nil, nil, nodeError(entry.keyNode, "factor name must not be empty")
 			}
-			if reservedFactorNames[entry.key] {
+			if model.IsReservedRunField(entry.key) {
 				return nil, nil, nodeError(entry.keyNode, "factor name %q is reserved", entry.key)
 			}
 			if entry.value.Kind != yaml.SequenceNode || len(entry.value.Content) == 0 {
