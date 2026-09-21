@@ -128,7 +128,7 @@ replicates: 2
 	if err := Execute(context.Background(), testEnv(stdout, stderr), Options{Designs: []string{designPath}, Plan: true}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"| # | a | b |", "| 1 | x | 1 |", "| replicate | 1 | 2 |", "| 2         | 2 | 1 |"} {
+	for _, want := range []string{"| point | a | b |", "| #1    | x | 1 |", "|       | rep 1 | rep 2 |", "| run 2 | #2    | #1    |"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("output does not contain %q:\n%s", want, stdout.String())
 		}

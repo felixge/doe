@@ -90,7 +90,7 @@ func TestRunPlanIntegration(t *testing.T) {
 	if code := Main(context.Background(), env, []string{"run", design, "--plan"}); code != 0 {
 		t.Fatalf("Main() = %d; stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "| # | value |") {
+	if !strings.Contains(stdout.String(), "| point | value |") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }

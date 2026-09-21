@@ -144,7 +144,7 @@ A run always follows the steps below:
 
 #### Inspect Plan
 
-The `--plan` flag prints a labeled ASCII table of the deterministic design-point order. Its first column is `#`, numbered from 1. Below it, a labeled schedule table has one row per replicate, a leading replicate label, and one data column per design point; its cells use the `#` values to show execution order. The final line reports the total number of scheduled runs.
+The `--plan` flag prints a labeled ASCII table of the deterministic design-point order. Its first column is `point`, with entries numbered `#1`, `#2`, and so on. Below it, a labeled schedule table has one row per run position and one column per replicate; its cells reference the design points by their `#` values. The final line reports the total number of scheduled runs.
 
 ## Studies
 

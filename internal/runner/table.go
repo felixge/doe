@@ -29,10 +29,10 @@ func planStudy(w io.Writer, study model.Study) error {
 			return err
 		}
 		pointRows := make([][]string, 0, len(points)+1)
-		header := append([]string{"#"}, d.FactorNames...)
+		header := append([]string{"point"}, d.FactorNames...)
 		pointRows = append(pointRows, header)
 		for index, point := range points {
-			row := []string{strconv.Itoa(index + 1)}
+			row := []string{"#" + strconv.Itoa(index+1)}
 			for _, value := range point.Values {
 				row = append(row, scalarText(value.Value))
 			}
@@ -49,16 +49,16 @@ func planStudy(w io.Writer, study model.Study) error {
 			return err
 		}
 		schedule := design.Schedule(len(points), d.Replicates)
-		scheduleRows := make([][]string, 0, len(schedule)+1)
-		header = []string{"replicate"}
-		for position := range points {
-			header = append(header, strconv.Itoa(position+1))
+		scheduleRows := make([][]string, 0, len(points)+1)
+		header = []string{""}
+		for replicate := range schedule {
+			header = append(header, "rep "+strconv.Itoa(replicate+1))
 		}
 		scheduleRows = append(scheduleRows, header)
-		for replicate, row := range schedule {
-			values := []string{strconv.Itoa(replicate + 1)}
-			for _, point := range row {
-				values = append(values, strconv.Itoa(point+1))
+		for position := range points {
+			values := []string{"run " + strconv.Itoa(position+1)}
+			for _, row := range schedule {
+				values = append(values, "#"+strconv.Itoa(row[position]+1))
 			}
 			scheduleRows = append(scheduleRows, values)
 		}
