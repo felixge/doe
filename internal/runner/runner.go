@@ -247,10 +247,7 @@ func validateManagedPaths(output string) error {
 }
 
 func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snapshot.Snapshot, d model.Design, results *resultIndex) error {
-	points, err := design.Points(d)
-	if err != nil {
-		return err
-	}
+	points := d.Points
 	started := time.Now()
 	environment := map[string]model.Scalar{}
 	// setup must run in the live study, not the immutable snapshot.
@@ -273,7 +270,7 @@ func conductDesign(ctx context.Context, env *cli.Env, output string, snap *snaps
 	}
 	experiment := model.Experiment{
 		ID: experimentID, Start: started, Design: d.Path,
-		Factors: design.FactorNames(d), Files: snap.Files, FilesHash: snap.Hash,
+		Factors: d.FactorNames, Files: snap.Files, FilesHash: snap.Hash,
 		Env: environment, EnvHash: objectHash(environment),
 	}
 	if err := appendJSON(filepath.Join(output, "experiments.jsonl"), experiment); err != nil {

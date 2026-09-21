@@ -18,12 +18,9 @@ func planStudy(w io.Writer, study model.Study) error {
 			}
 			_, _ = fmt.Fprintln(w, d.Path)
 		}
-		points, err := design.Points(d)
-		if err != nil {
-			return err
-		}
+		points := d.Points
 		pointRows := make([][]string, 0, len(points)+1)
-		header := append([]string{"#"}, design.FactorNames(d)...)
+		header := append([]string{"#"}, d.FactorNames...)
 		pointRows = append(pointRows, header)
 		for index, point := range points {
 			row := []string{strconv.Itoa(index + 1)}

@@ -14,24 +14,14 @@ type Value struct {
 	Value Scalar
 }
 
-// Factor is a named input variable and its possible settings.
-type Factor struct {
-	Name     string
-	Settings []Scalar
-}
-
-// FactorGroup contributes the Cartesian product of its factors to a design.
-type FactorGroup struct {
-	Factors []Factor
-}
-
 // Design describes the work planned by one YAML design file.
 type Design struct {
-	Path       string
-	Setup      string
-	Factors    []FactorGroup
-	Run        string
-	Replicates int
+	Path        string
+	Setup       string
+	FactorNames []string
+	Points      []Point
+	Run         string
+	Replicates  int
 }
 
 // Point is one unique combination of factor settings. Values are kept in the

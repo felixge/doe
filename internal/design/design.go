@@ -8,8 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"reflect"
-	"sort"
 	"strings"
 
 	"github.com/felixge/doe/internal/model"
@@ -86,103 +84,86 @@ func Parse(path string, data []byte) (model.Design, error) {
 		}
 	}
 	if node := fields["factors"]; node != nil {
-		if d.Factors, err = parseFactorGroups(node); err != nil {
-			return model.Design{}, err
+		groups, names, parseErr := parseFactorGroups(node)
+		if parseErr != nil {
+			return model.Design{}, parseErr
+		}
+		d.FactorNames = names
+		d.Points, err = expandPoints(groups, names)
+		if err != nil {
+			return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
 		}
 	} else {
 		return model.Design{}, fmt.Errorf("parse %s: missing required field factors", path)
 	}
-
-	if _, err := Points(d); err != nil {
-		return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
-	}
 	return d, nil
 }
 
-func parseFactorGroups(node *yaml.Node) ([]model.FactorGroup, error) {
+type factor struct {
+	name     string
+	settings []model.Scalar
+}
+
+type factorGroup []factor
+
+func parseFactorGroups(node *yaml.Node) ([]factorGroup, []string, error) {
 	if node.Kind != yaml.SequenceNode || len(node.Content) == 0 {
-		return nil, nodeError(node, "factors must be a non-empty sequence")
+		return nil, nil, nodeError(node, "factors must be a non-empty sequence")
 	}
-	groups := make([]model.FactorGroup, 0, len(node.Content))
+	groups := make([]factorGroup, 0, len(node.Content))
 	var expected []string
 	for groupIndex, groupNode := range node.Content {
 		entries, err := mappingEntries(groupNode, fmt.Sprintf("factor group %d", groupIndex+1))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(entries) == 0 {
-			return nil, nodeError(groupNode, "factor group %d must not be empty", groupIndex+1)
+			return nil, nil, nodeError(groupNode, "factor group %d must not be empty", groupIndex+1)
 		}
-		group := model.FactorGroup{Factors: make([]model.Factor, 0, len(entries))}
+		group := make(factorGroup, 0, len(entries))
 		names := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			if entry.key == "" {
-				return nil, nodeError(entry.keyNode, "factor name must not be empty")
+				return nil, nil, nodeError(entry.keyNode, "factor name must not be empty")
 			}
 			if reservedFactorNames[entry.key] {
-				return nil, nodeError(entry.keyNode, "factor name %q is reserved", entry.key)
+				return nil, nil, nodeError(entry.keyNode, "factor name %q is reserved", entry.key)
 			}
 			if entry.value.Kind != yaml.SequenceNode || len(entry.value.Content) == 0 {
-				return nil, nodeError(entry.value, "settings for factor %q must be a non-empty sequence", entry.key)
+				return nil, nil, nodeError(entry.value, "settings for factor %q must be a non-empty sequence", entry.key)
 			}
-			factor := model.Factor{Name: entry.key, Settings: make([]model.Scalar, 0, len(entry.value.Content))}
+			f := factor{name: entry.key, settings: make([]model.Scalar, 0, len(entry.value.Content))}
 			for _, settingNode := range entry.value.Content {
 				setting, err := scalar(settingNode)
 				if err != nil {
-					return nil, nodeError(settingNode, "setting for factor %q: %v", entry.key, err)
+					return nil, nil, nodeError(settingNode, "setting for factor %q: %v", entry.key, err)
 				}
-				factor.Settings = append(factor.Settings, setting)
+				f.settings = append(f.settings, setting)
 			}
-			group.Factors = append(group.Factors, factor)
+			group = append(group, f)
 			names = append(names, entry.key)
 		}
 		if groupIndex == 0 {
 			expected = names
 		} else if !sameNames(expected, names) {
-			return nil, nodeError(groupNode, "factor group %d must contain the same factors as factor group 1", groupIndex+1)
+			return nil, nil, nodeError(groupNode, "factor group %d must contain the same factors as factor group 1", groupIndex+1)
 		}
 		groups = append(groups, group)
 	}
-	return groups, nil
+	return groups, expected, nil
 }
 
-// FactorNames returns the canonical factor order established by the first
-// factor group.
-func FactorNames(d model.Design) []string {
-	if len(d.Factors) == 0 {
-		return nil
-	}
-	names := make([]string, len(d.Factors[0].Factors))
-	for i, factor := range d.Factors[0].Factors {
-		names[i] = factor.Name
-	}
-	return names
-}
-
-// Points expands each factor group into its Cartesian product and concatenates
-// the products in declaration order. The last declared factor varies fastest.
-func Points(d model.Design) ([]model.Point, error) {
-	names := FactorNames(d)
-	if len(names) == 0 {
-		return nil, errors.New("design has no factors")
-	}
+func expandPoints(groups []factorGroup, names []string) ([]model.Point, error) {
 	points := make([]model.Point, 0)
 	seen := make(map[string]int)
-	for groupIndex, group := range d.Factors {
-		byName := make(map[string]model.Factor, len(group.Factors))
-		for _, factor := range group.Factors {
-			byName[factor.Name] = factor
+	for groupIndex, group := range groups {
+		byName := make(map[string]factor, len(group))
+		for _, factor := range group {
+			byName[factor.name] = factor
 		}
-		ordered := make([]model.Factor, len(names))
+		ordered := make([]factor, len(names))
 		for i, name := range names {
-			factor, ok := byName[name]
-			if !ok {
-				return nil, fmt.Errorf("factor group %d is missing factor %q", groupIndex+1, name)
-			}
-			if len(factor.Settings) == 0 {
-				return nil, fmt.Errorf("factor %q has no settings", name)
-			}
-			ordered[i] = factor
+			ordered[i] = byName[name]
 		}
 		var expand func(int, []model.Value) error
 		expand = func(factorIndex int, values []model.Value) error {
@@ -200,11 +181,8 @@ func Points(d model.Design) ([]model.Point, error) {
 				return nil
 			}
 			factor := ordered[factorIndex]
-			for _, setting := range factor.Settings {
-				if !validScalar(setting) {
-					return fmt.Errorf("setting for factor %q is not a JSON scalar", factor.Name)
-				}
-				if err := expand(factorIndex+1, append(values, model.Value{Name: factor.Name, Value: setting})); err != nil {
+			for _, setting := range factor.settings {
+				if err := expand(factorIndex+1, append(values, model.Value{Name: factor.name, Value: setting})); err != nil {
 					return err
 				}
 			}
@@ -353,19 +331,6 @@ func scalar(node *yaml.Node) (model.Scalar, error) {
 	}
 }
 
-func validScalar(value model.Scalar) bool {
-	switch value := value.(type) {
-	case nil, bool, string, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
-		return true
-	case float32:
-		return !math.IsInf(float64(value), 0) && !math.IsNaN(float64(value))
-	case float64:
-		return !math.IsInf(value, 0) && !math.IsNaN(value)
-	default:
-		return false
-	}
-}
-
 func pointKey(point model.Point) (string, error) {
 	values := make([]any, len(point.Values))
 	for i, value := range point.Values {
@@ -379,11 +344,19 @@ func pointKey(point model.Point) (string, error) {
 }
 
 func sameNames(want, got []string) bool {
-	want = append([]string(nil), want...)
-	got = append([]string(nil), got...)
-	sort.Strings(want)
-	sort.Strings(got)
-	return reflect.DeepEqual(want, got)
+	if len(want) != len(got) {
+		return false
+	}
+	names := make(map[string]bool, len(want))
+	for _, name := range want {
+		names[name] = true
+	}
+	for _, name := range got {
+		if !names[name] {
+			return false
+		}
+	}
+	return true
 }
 
 func nodeError(node *yaml.Node, format string, args ...any) error {

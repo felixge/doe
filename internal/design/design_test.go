@@ -1,7 +1,6 @@
 package design
 
 import (
-	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -31,14 +30,11 @@ replicates: 7
 	if d.Path != "study/design.yaml" || d.Setup != "./setup.bash" || d.Run != "./run.bash {file} {level}" || d.Replicates != 7 {
 		t.Fatalf("design = %+v", d)
 	}
-	if got, want := FactorNames(d), []string{"file", "level", "enabled", "note"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("FactorNames() = %v, want %v", got, want)
+	if got, want := d.FactorNames, []string{"file", "level", "enabled", "note"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("FactorNames = %v, want %v", got, want)
 	}
 
-	points, err := Points(d)
-	if err != nil {
-		t.Fatal(err)
-	}
+	points := d.Points
 	want := []model.Point{
 		{Values: []model.Value{{Name: "file", Value: "a.txt"}, {Name: "level", Value: int64(1)}, {Name: "enabled", Value: true}, {Name: "note", Value: nil}}},
 		{Values: []model.Value{{Name: "file", Value: "a.txt"}, {Name: "level", Value: 2.5}, {Name: "enabled", Value: true}, {Name: "note", Value: nil}}},
@@ -122,17 +118,14 @@ func TestParseRejectsDuplicatePoints(t *testing.T) {
 	}
 }
 
-func TestPointsRejectsNonScalarProgrammaticSetting(t *testing.T) {
-	d := model.Design{Factors: []model.FactorGroup{{Factors: []model.Factor{{Name: "a", Settings: []model.Scalar{map[string]string{"not": "scalar"}}}}}}}
-	_, err := Points(d)
-	if err == nil || !strings.Contains(err.Error(), "not a JSON scalar") {
-		t.Fatalf("Points() error = %v", err)
+func TestParsedPointValuesAreIndependent(t *testing.T) {
+	d, err := Parse("design.yaml", []byte("factors: [{a: [x, y], b: [1]}]\nrun: ok\n"))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	d.Factors[0].Factors[0].Settings = []model.Scalar{math.Inf(1)}
-	_, err = Points(d)
-	if err == nil || !strings.Contains(err.Error(), "not a JSON scalar") {
-		t.Fatalf("Points() error for infinity = %v", err)
+	d.Points[0].Values[0].Value = "changed"
+	if got, want := d.Points[1].Values[0].Value, "y"; got != want {
+		t.Fatalf("mutating point 1 changed point 2: got %v, want %v", got, want)
 	}
 }
 
