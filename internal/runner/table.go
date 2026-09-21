@@ -11,6 +11,7 @@ import (
 )
 
 func planStudy(w io.Writer, study model.Study) error {
+	totalRuns := 0
 	for designIndex, d := range study.Designs {
 		if len(study.Designs) > 1 {
 			if designIndex > 0 {
@@ -23,6 +24,10 @@ func planStudy(w io.Writer, study model.Study) error {
 			}
 		}
 		points := d.Points
+		totalRuns += len(points) * d.Replicates
+		if _, err := fmt.Fprintln(w, "Design points:"); err != nil {
+			return err
+		}
 		pointRows := make([][]string, 0, len(points)+1)
 		header := append([]string{"#"}, d.FactorNames...)
 		pointRows = append(pointRows, header)
@@ -40,6 +45,9 @@ func planStudy(w io.Writer, study model.Study) error {
 			return err
 		}
 
+		if _, err := fmt.Fprintln(w, "Schedule:"); err != nil {
+			return err
+		}
 		schedule := design.Schedule(len(points), d.Replicates)
 		scheduleRows := make([][]string, 0, len(schedule)+1)
 		header = []string{"replicate"}
@@ -58,7 +66,8 @@ func planStudy(w io.Writer, study model.Study) error {
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintf(w, "\nTotal runs: %d\n", totalRuns)
+	return err
 }
 
 func scalarText(value model.Scalar) string {

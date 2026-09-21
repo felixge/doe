@@ -49,6 +49,29 @@ func TestWriteTableStopsOnWriteError(t *testing.T) {
 	}
 }
 
+func TestPlanStudyOutput(t *testing.T) {
+	var output bytes.Buffer
+	study := model.Study{Designs: []model.Design{{
+		FactorNames: []string{"value"},
+		Points: []model.Point{
+			{Values: []model.Value{{Name: "value", Value: "one"}}},
+			{Values: []model.Value{{Name: "value", Value: "two"}}},
+		},
+		Replicates: 2,
+	}}}
+	if err := planStudy(&output, study); err != nil {
+		t.Fatal(err)
+	}
+	const want = "Design points:\n" +
+		"+---+-------+\n| # | value |\n+---+-------+\n| 1 | one   |\n| 2 | two   |\n+---+-------+\n\n" +
+		"Schedule:\n" +
+		"+-----------+---+---+\n| replicate | 1 | 2 |\n+-----------+---+---+\n| 1         | 1 | 2 |\n| 2         | 2 | 1 |\n+-----------+---+---+\n\n" +
+		"Total runs: 4\n"
+	if got := output.String(); got != want {
+		t.Fatalf("planStudy() output = %q, want %q", got, want)
+	}
+}
+
 func TestPlanStudyReturnsWriteError(t *testing.T) {
 	writer := &failingWriter{failAt: 1}
 	study := model.Study{Designs: []model.Design{{
