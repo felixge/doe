@@ -14,9 +14,13 @@ func planStudy(w io.Writer, study model.Study) error {
 	for designIndex, d := range study.Designs {
 		if len(study.Designs) > 1 {
 			if designIndex > 0 {
-				_, _ = fmt.Fprintln(w)
+				if _, err := fmt.Fprintln(w); err != nil {
+					return err
+				}
 			}
-			_, _ = fmt.Fprintln(w, d.Path)
+			if _, err := fmt.Fprintln(w, d.Path); err != nil {
+				return err
+			}
 		}
 		points := d.Points
 		pointRows := make([][]string, 0, len(points)+1)
@@ -29,8 +33,12 @@ func planStudy(w io.Writer, study model.Study) error {
 			}
 			pointRows = append(pointRows, row)
 		}
-		writeTable(w, pointRows)
-		_, _ = fmt.Fprintln(w)
+		if err := writeTable(w, pointRows); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
 
 		schedule := design.Schedule(len(points), d.Replicates)
 		scheduleRows := make([][]string, 0, len(schedule)+1)
@@ -46,7 +54,9 @@ func planStudy(w io.Writer, study model.Study) error {
 			}
 			scheduleRows = append(scheduleRows, values)
 		}
-		writeTable(w, scheduleRows)
+		if err := writeTable(w, scheduleRows); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -61,9 +71,9 @@ func scalarText(value model.Scalar) string {
 	return fmt.Sprint(value)
 }
 
-func writeTable(w io.Writer, rows [][]string) {
+func writeTable(w io.Writer, rows [][]string) error {
 	if len(rows) == 0 {
-		return
+		return nil
 	}
 	widths := make([]int, len(rows[0]))
 	for _, row := range rows {
@@ -73,23 +83,38 @@ func writeTable(w io.Writer, rows [][]string) {
 			}
 		}
 	}
-	border := func() {
-		_, _ = fmt.Fprint(w, "+")
+	border := func() error {
+		if _, err := fmt.Fprint(w, "+"); err != nil {
+			return err
+		}
 		for _, width := range widths {
-			_, _ = fmt.Fprint(w, "-"+strings.Repeat("-", width)+"-+")
+			if _, err := fmt.Fprint(w, "-"+strings.Repeat("-", width)+"-+"); err != nil {
+				return err
+			}
 		}
-		_, _ = fmt.Fprintln(w)
+		_, err := fmt.Fprintln(w)
+		return err
 	}
-	border()
+	if err := border(); err != nil {
+		return err
+	}
 	for rowIndex, row := range rows {
-		_, _ = fmt.Fprint(w, "|")
-		for column, cell := range row {
-			_, _ = fmt.Fprintf(w, " %-*s |", widths[column], cell)
+		if _, err := fmt.Fprint(w, "|"); err != nil {
+			return err
 		}
-		_, _ = fmt.Fprintln(w)
+		for column, cell := range row {
+			if _, err := fmt.Fprintf(w, " %-*s |", widths[column], cell); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
 		if rowIndex == 0 {
-			border()
+			if err := border(); err != nil {
+				return err
+			}
 		}
 	}
-	border()
+	return border()
 }
