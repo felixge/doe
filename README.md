@@ -149,6 +149,8 @@ A run always follows the steps below:
 
 The `--plan` flag prints a labeled ASCII table of the deterministic design-point order. Its first column is `point`, with entries numbered `#1`, `#2`, and so on. Below it, a labeled schedule table has one row per run position and one column per replicate. Its `run/rep` header identifies the row/column axes, and its cells reference design points by their `#` values. The final line reports the total number of scheduled runs.
 
+With concurrency, the plan also reports the per-group limit, group count, and maximum total active runs. When `concurrency_by` is nonempty, each group gets its own schedule table labeled with its factor settings. The point table is unchanged. Read each replicate column top to bottom, then move right. These tables describe dispatch priority, not execution timing; groups execute independently, without row or replicate barriers.
+
 ## Studies
 
 A study is a directory that contains one or more designs, scripts, and other assets needed to conduct experiments. It usually looks like this:
@@ -178,8 +180,25 @@ Designs are defined as YAML files and must be placed at the top level of the stu
 | factors    | A required list of factor groups. Each group maps the same set of factors to lists of settings and produces their Cartesian product. Settings must be JSON scalars: strings, numbers, booleans, or null. The union of these products forms the design points and must not contain duplicates. |
 | run        | A required string holding a Bourne shell command that is invoked `replicates` times at every design point. Must produce a JSON object containing the outputs of the run. See Commands & Scripts for more information. See the `runs.jsonl` description below for reserved field names. |
 | replicates | An optional integer defining the number of runs to perform at each design point. Defaults to 1. |
+| concurrency | An optional positive integer limiting active runs per concurrency group. Defaults to 1. |
+| concurrency_by | An optional list of factor names defining concurrency groups. Omitted or empty means all runs share one group. |
 
 doe places design points in a deterministic order that can be inspected with `--plan`. Replicates are numbered from 1. For replicate `r`, doe orders the design points using row `r-1` of a repeating Williams design derived from that order. A complete schedule has `n` rows for an even number of points and `2n` rows for an odd number, then repeats as needed. This balances execution position and first-order carryover effects.
+
+#### Concurrency
+
+Allow two active runs per host:
+
+```yaml
+concurrency: 2
+concurrency_by: [host]
+```
+
+Matching `concurrency_by` settings define groups across replicates. Each group follows its filtered schedule, skipping reused runs and filling available slots without replicate barriers. Groups execute independently with no global limit: three hosts allow six active runs. Setup finishes first; designs remain sequential.
+
+Results are saved in completion order and reused on resume. Failures or interruptions stop dispatching, cancel active runs, and preserve recorded results.
+
+Scripts must avoid shared-file conflicts. Concurrency can distort measurements and invalidate serial carryover balancing.
 
 ### Scripts
 
