@@ -23,11 +23,13 @@ factors:
     enabled: [false]
 run: ./run.bash {file} {level}
 replicates: 7
+concurrency: 3
+concurrency_by: [file, enabled]
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Path != "study/design.yaml" || d.Setup != "./setup.bash" || d.Run != "./run.bash {file} {level}" || d.Replicates != 7 {
+	if d.Path != "study/design.yaml" || d.Setup != "./setup.bash" || d.Run != "./run.bash {file} {level}" || d.Replicates != 7 || d.Concurrency != 3 || !reflect.DeepEqual(d.ConcurrencyBy, []string{"file", "enabled"}) {
 		t.Fatalf("design = %+v", d)
 	}
 	if got, want := d.FactorNames, []string{"file", "level", "enabled", "note"}; !reflect.DeepEqual(got, want) {
@@ -52,8 +54,8 @@ func TestParseDefaultsReplicates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Replicates != 1 {
-		t.Fatalf("Replicates = %d, want 1", d.Replicates)
+	if d.Replicates != 1 || d.Concurrency != 1 || d.ConcurrencyBy != nil {
+		t.Fatalf("defaults = replicates %d, concurrency %d, concurrency_by %v", d.Replicates, d.Concurrency, d.ConcurrencyBy)
 	}
 }
 
@@ -83,6 +85,10 @@ func TestParseRejectsInvalidDesigns(t *testing.T) {
 		{"different factors", "factors:\n  - a: [x]\n    b: [y]\n  - a: [z]\nrun: ok\n", "factor group 2 must contain the same factors"},
 		{"zero replicates", "factors: [{a: [x]}]\nrun: ok\nreplicates: 0\n", "replicates must be a positive integer"},
 		{"float replicates", "factors: [{a: [x]}]\nrun: ok\nreplicates: 1.5\n", "replicates must be a positive integer"},
+		{"zero concurrency", "factors: [{a: [x]}]\nrun: ok\nconcurrency: 0\n", "concurrency must be a positive integer"},
+		{"concurrency by wrong type", "factors: [{a: [x]}]\nrun: ok\nconcurrency_by: a\n", "concurrency_by must be a sequence"},
+		{"unknown concurrency factor", "factors: [{a: [x]}]\nrun: ok\nconcurrency_by: [b]\n", "concurrency_by factor \"b\" is not defined"},
+		{"duplicate concurrency factor", "factors: [{a: [x]}]\nrun: ok\nconcurrency_by: [a, a]\n", "duplicate concurrency_by factor \"a\""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

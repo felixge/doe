@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/felixge/doe/internal/cli"
@@ -69,6 +70,48 @@ func TestPlanStudyOutput(t *testing.T) {
 		"Total runs: 4\n"
 	if got := output.String(); got != want {
 		t.Fatalf("planStudy() output = %q, want %q", got, want)
+	}
+}
+
+func TestPlanStudyConcurrencyGroups(t *testing.T) {
+	var output bytes.Buffer
+	study := model.Study{Designs: []model.Design{{
+		FactorNames:   []string{"host", "size"},
+		Concurrency:   2,
+		ConcurrencyBy: []string{"host"},
+		Points: []model.Point{
+			{Values: []model.Value{{Name: "host", Value: "a"}, {Name: "size", Value: int64(1)}}},
+			{Values: []model.Value{{Name: "host", Value: "b"}, {Name: "size", Value: int64(1)}}},
+			{Values: []model.Value{{Name: "host", Value: "a"}, {Name: "size", Value: int64(2)}}},
+			{Values: []model.Value{{Name: "host", Value: "b"}, {Name: "size", Value: int64(2)}}},
+		},
+		Replicates: 4,
+	}}}
+	if err := planStudy(&output, study); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"| point | host | size |",
+		"Concurrency: 2 per group, 2 groups, 4 maximum active runs",
+		`Schedule (host=a):
++---------+----+----+----+----+
+| run/rep | 1  | 2  | 3  | 4  |
++---------+----+----+----+----+
+| 1       | #1 | #3 | #3 | #1 |
+| 2       | #3 | #1 | #1 | #3 |
++---------+----+----+----+----+`,
+		`Schedule (host=b):
++---------+----+----+----+----+
+| run/rep | 1  | 2  | 3  | 4  |
++---------+----+----+----+----+
+| 1       | #2 | #2 | #4 | #4 |
+| 2       | #4 | #4 | #2 | #2 |
++---------+----+----+----+----+`,
+		"Total runs: 16",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("output does not contain %q:\n%s", want, output.String())
+		}
 	}
 }
 

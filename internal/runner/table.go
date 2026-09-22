@@ -45,29 +45,80 @@ func planStudy(w io.Writer, study model.Study) error {
 			return err
 		}
 
-		if _, err := fmt.Fprintln(w, "Schedule:"); err != nil {
-			return err
+		groups := planGroups(d)
+		limit := max(d.Concurrency, 1)
+		if d.Concurrency > 1 || len(d.ConcurrencyBy) > 0 {
+			if _, err := fmt.Fprintf(w, "Concurrency: %d per group, %d groups, %d maximum active runs\n\n", limit, len(groups), limit*len(groups)); err != nil {
+				return err
+			}
 		}
 		schedule := design.Schedule(len(points), d.Replicates)
-		scheduleRows := make([][]string, 0, len(points)+1)
-		header = []string{"run/rep"}
-		for replicate := range schedule {
-			header = append(header, strconv.Itoa(replicate+1))
-		}
-		scheduleRows = append(scheduleRows, header)
-		for position := range points {
-			values := []string{strconv.Itoa(position + 1)}
-			for _, row := range schedule {
-				values = append(values, "#"+strconv.Itoa(row[position]+1))
+		for groupIndex, group := range groups {
+			if groupIndex > 0 {
+				if _, err := fmt.Fprintln(w); err != nil {
+					return err
+				}
 			}
-			scheduleRows = append(scheduleRows, values)
-		}
-		if err := writeTable(w, scheduleRows); err != nil {
-			return err
+			label := "Schedule:"
+			if len(d.ConcurrencyBy) > 0 {
+				settings := make([]string, len(d.ConcurrencyBy))
+				values := pointMap(points[group[0]])
+				for i, name := range d.ConcurrencyBy {
+					settings[i] = name + "=" + scalarText(values[name])
+				}
+				label = "Schedule (" + strings.Join(settings, ", ") + "):"
+			}
+			if _, err := fmt.Fprintln(w, label); err != nil {
+				return err
+			}
+			included := make(map[int]bool, len(group))
+			for _, pointIndex := range group {
+				included[pointIndex] = true
+			}
+			filteredSchedule := make([][]int, len(schedule))
+			for replicate, row := range schedule {
+				for _, pointIndex := range row {
+					if included[pointIndex] {
+						filteredSchedule[replicate] = append(filteredSchedule[replicate], pointIndex)
+					}
+				}
+			}
+			scheduleRows := make([][]string, 0, len(group)+1)
+			header = []string{"run/rep"}
+			for replicate := range schedule {
+				header = append(header, strconv.Itoa(replicate+1))
+			}
+			scheduleRows = append(scheduleRows, header)
+			for position := range group {
+				rowValues := []string{strconv.Itoa(position + 1)}
+				for _, row := range filteredSchedule {
+					rowValues = append(rowValues, "#"+strconv.Itoa(row[position]+1))
+				}
+				scheduleRows = append(scheduleRows, rowValues)
+			}
+			if err := writeTable(w, scheduleRows); err != nil {
+				return err
+			}
 		}
 	}
 	_, err := fmt.Fprintf(w, "\nTotal runs: %d\n", totalRuns)
 	return err
+}
+
+func planGroups(d model.Design) [][]int {
+	groups := make([][]int, 0)
+	indexes := make(map[string]int)
+	for pointIndex, point := range d.Points {
+		key := concurrencyGroupKey(point, d.ConcurrencyBy)
+		groupIndex, ok := indexes[key]
+		if !ok {
+			groupIndex = len(groups)
+			indexes[key] = groupIndex
+			groups = append(groups, nil)
+		}
+		groups[groupIndex] = append(groups[groupIndex], pointIndex)
+	}
+	return groups
 }
 
 func scalarText(value model.Scalar) string {

@@ -26,12 +26,14 @@ type Value struct {
 
 // Design describes the work planned by one YAML design file.
 type Design struct {
-	Path        string
-	Setup       string
-	FactorNames []string
-	Points      []Point
-	Run         string
-	Replicates  int
+	Path          string
+	Setup         string
+	FactorNames   []string
+	Points        []Point
+	Run           string
+	Replicates    int
+	Concurrency   int
+	ConcurrencyBy []string
 }
 
 // Point is one unique combination of factor settings. Values are kept in the

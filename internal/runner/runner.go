@@ -307,6 +307,9 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 			}
 		}
 	}
+	if d.Concurrency > 1 || len(d.ConcurrencyBy) > 0 {
+		return conductConcurrent(ctx, env, root, output, d, experiment, results, pointKeys, commands, schedule, reused)
+	}
 	state := newProgressState(len(points)*d.Replicates, reused, time.Now(), remaining)
 	for replicate, row := range schedule {
 		for _, pointIndex := range row {
@@ -333,7 +336,6 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 
 	for replicate, row := range schedule {
 		for _, pointIndex := range row {
-			point := points[pointIndex]
 			key := replicateKey(pointKeys[pointIndex], replicate+1)
 			if _, ok := results.runs[key]; ok {
 				continue
@@ -347,39 +349,220 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 			if err != nil {
 				return fmt.Errorf("replicate %d point #%d: %w", replicate+1, pointIndex+1, err)
 			}
-			if last == "" {
-				return fmt.Errorf("replicate %d point #%d: run produced no result", replicate+1, pointIndex+1)
+			completion := runCompletion{
+				task:  runTask{pointIndex: pointIndex, replicate: replicate + 1},
+				start: runStart, end: time.Now(), last: last,
 			}
-			outputs, err := parseFlatObject(last)
-			if err != nil {
-				return fmt.Errorf("replicate %d point #%d result: %w", replicate+1, pointIndex+1, err)
-			}
-			inputs := pointMap(point)
-			for name := range outputs {
-				if model.IsReservedRunField(name) {
-					return fmt.Errorf("response name %q is reserved", name)
-				}
-				if _, exists := inputs[name]; exists {
-					return fmt.Errorf("response name %q is also a factor", name)
-				}
-			}
-			runID := rand.Text()
-			run := model.Run{
-				ID: runID, ExperimentID: experiment.ID, Replicate: replicate + 1,
-				Start: runStart, End: time.Now(), Inputs: inputs, Outputs: outputs,
-			}
-			if err := appendJSON(filepath.Join(output, "runs.jsonl"), flattenRun(run)); err != nil {
+			if err := saveCompletion(output, d, experiment, results, pointKeys, completion); err != nil {
 				return err
 			}
-			duration := run.End.Sub(run.Start)
-			results.runs[key] = duration
-			state.Complete(duration)
+			state.Complete(completion.end.Sub(completion.start))
 			if progress != nil {
-				progress.Render(state.Snapshot(run.End))
+				progress.Render(state.Snapshot(completion.end))
 			}
 		}
 	}
 	return nil
+}
+
+type runTask struct {
+	pointIndex int
+	replicate  int
+}
+
+type runCompletion struct {
+	task       runTask
+	start, end time.Time
+	last       string
+	err        error
+}
+
+func conductConcurrent(
+	ctx context.Context,
+	env *cli.Env,
+	root, output string,
+	d model.Design,
+	experiment model.Experiment,
+	results *resultIndex,
+	pointKeys, commands []string,
+	schedule [][]int,
+	reused int,
+) error {
+	groupNames := make([]string, 0)
+	groupQueues := make(map[string][]runTask)
+	for replicate, row := range schedule {
+		for _, pointIndex := range row {
+			key := replicateKey(pointKeys[pointIndex], replicate+1)
+			if _, ok := results.runs[key]; ok {
+				continue
+			}
+			group := concurrencyGroupKey(d.Points[pointIndex], d.ConcurrencyBy)
+			if _, ok := groupQueues[group]; !ok {
+				groupNames = append(groupNames, group)
+			}
+			groupQueues[group] = append(groupQueues[group], runTask{pointIndex: pointIndex, replicate: replicate + 1})
+		}
+	}
+	if len(groupNames) == 0 {
+		return nil
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	logs := make(chan []byte)
+	completed := make(chan runCompletion)
+	sharedEnv := *env
+	if env.Stdin != nil {
+		if _, ok := env.Stdin.(*os.File); !ok {
+			sharedEnv.Stdin = &lockedReader{reader: env.Stdin}
+		}
+	}
+	active := make(map[string]int, len(groupNames))
+	next := make(map[string]int, len(groupNames))
+	activeTotal := 0
+	stopped := false
+	var firstErr error
+
+	var progress *progressBar
+	if isTerminal(env.Stderr) {
+		progress = newProgress(env.Stderr, d.Path)
+		defer progress.Close()
+	}
+
+	dispatch := func() {
+		if stopped || runCtx.Err() != nil {
+			return
+		}
+		for _, group := range groupNames {
+			queue := groupQueues[group]
+			for active[group] < d.Concurrency && next[group] < len(queue) {
+				task := queue[next[group]]
+				next[group]++
+				active[group]++
+				activeTotal++
+				go func() {
+					start := time.Now()
+					runEnv := sharedEnv
+					runEnv.Stderr = &channelWriter{ctx: runCtx, outputs: logs}
+					last, err := commandOutput(runCtx, &runEnv, root, commands[task.pointIndex])
+					completed <- runCompletion{task: task, start: start, end: time.Now(), last: last, err: err}
+				}()
+			}
+		}
+	}
+	dispatch()
+	if activeTotal == 0 && runCtx.Err() != nil {
+		return runCtx.Err()
+	}
+	if progress != nil {
+		progress.Render(progressSnapshot{total: len(d.Points) * d.Replicates, done: reused, status: fmt.Sprintf("%d active", activeTotal)})
+	}
+	done := reused
+	ctxDone := ctx.Done()
+	for activeTotal > 0 {
+		select {
+		case data := <-logs:
+			if progress != nil {
+				progress.Clear()
+			}
+			if _, err := env.Stderr.Write(data); err != nil && firstErr == nil {
+				firstErr = err
+				stopped = true
+				cancel()
+			}
+		case completion := <-completed:
+			group := concurrencyGroupKey(d.Points[completion.task.pointIndex], d.ConcurrencyBy)
+			active[group]--
+			activeTotal--
+			if completion.err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("replicate %d point #%d: %w", completion.task.replicate, completion.task.pointIndex+1, completion.err)
+				}
+				stopped = true
+				cancel()
+			} else if err := saveCompletion(output, d, experiment, results, pointKeys, completion); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				stopped = true
+				cancel()
+			} else {
+				done++
+			}
+			dispatch()
+			if progress != nil {
+				status := fmt.Sprintf("%d active", activeTotal)
+				if done == len(d.Points)*d.Replicates {
+					status = "done"
+				}
+				progress.Render(progressSnapshot{total: len(d.Points) * d.Replicates, done: done, status: status})
+			}
+		case <-ctxDone:
+			if firstErr == nil {
+				firstErr = ctx.Err()
+			}
+			stopped = true
+			cancel()
+			ctxDone = nil
+		}
+	}
+	if firstErr == nil && runCtx.Err() != nil {
+		return runCtx.Err()
+	}
+	return firstErr
+}
+
+func saveCompletion(output string, d model.Design, experiment model.Experiment, results *resultIndex, pointKeys []string, completion runCompletion) error {
+	if completion.last == "" {
+		return fmt.Errorf("replicate %d point #%d: run produced no result", completion.task.replicate, completion.task.pointIndex+1)
+	}
+	outputs, err := parseFlatObject(completion.last)
+	if err != nil {
+		return fmt.Errorf("replicate %d point #%d result: %w", completion.task.replicate, completion.task.pointIndex+1, err)
+	}
+	inputs := pointMap(d.Points[completion.task.pointIndex])
+	for name := range outputs {
+		if model.IsReservedRunField(name) {
+			return fmt.Errorf("response name %q is reserved", name)
+		}
+		if _, exists := inputs[name]; exists {
+			return fmt.Errorf("response name %q is also a factor", name)
+		}
+	}
+	run := model.Run{
+		ID: rand.Text(), ExperimentID: experiment.ID, Replicate: completion.task.replicate,
+		Start: completion.start, End: completion.end, Inputs: inputs, Outputs: outputs,
+	}
+	if err := appendJSON(filepath.Join(output, "runs.jsonl"), flattenRun(run)); err != nil {
+		return err
+	}
+	key := replicateKey(pointKeys[completion.task.pointIndex], completion.task.replicate)
+	results.runs[key] = run.End.Sub(run.Start)
+	return nil
+}
+
+func concurrencyGroupKey(point model.Point, names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	values := pointMap(point)
+	selected := make([]model.Scalar, len(names))
+	for i, name := range names {
+		selected[i] = values[name]
+	}
+	encoded, _ := json.Marshal(selected)
+	return string(encoded)
+}
+
+type lockedReader struct {
+	mu     sync.Mutex
+	reader io.Reader
+}
+
+func (r *lockedReader) Read(data []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.reader.Read(data)
 }
 
 func isTerminal(writer io.Writer) bool {
@@ -452,6 +635,8 @@ func commandOutputWithProgress(
 
 func commandOutput(ctx context.Context, env *cli.Env, root, script string) (string, error) {
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", script)
+	// Bound pipe waits if cancellation races with a child process starting.
+	command.WaitDelay = time.Second
 	command.Dir = root
 	command.Stdin = env.Stdin
 	stderr := &lockedWriter{writer: env.Stderr}

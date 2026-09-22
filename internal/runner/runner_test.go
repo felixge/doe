@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,6 +102,159 @@ replicates: 2
 	}
 	if _, err := os.Stat(filepath.Join(root, "work")); !os.IsNotExist(err) {
 		t.Fatalf("clean left work directory: %v", err)
+	}
+}
+
+func TestExecuteConcurrencyLimitsGroupsAndResumes(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, filepath.Join(root, "concurrency.sh"), `#!/bin/sh
+set -eu
+group=$1 id=$2 limit=$3 barrier=$4
+mkdir -p work/state
+slot=
+i=1
+while [ "$i" -le "$limit" ]; do
+  if mkdir "work/state/slot-$group-$i" 2>/dev/null; then slot="work/state/slot-$group-$i"; break; fi
+  i=$((i+1))
+done
+if [ -z "$slot" ]; then touch "work/state/violation-$group-$id"; exit 1; fi
+trap 'rmdir "$slot" 2>/dev/null || true' EXIT
+: >"work/state/started-$group-$id"
+i=0
+while :; do
+  set -- work/state/started-*
+  if [ -e "$1" ] && [ "$#" -ge "$barrier" ]; then break; fi
+  i=$((i+1)); [ "$i" -lt 100 ] || exit 2
+  sleep 0.05
+done
+printf 'run log\n{"ok":true}\n'
+`)
+	designPath := filepath.Join(root, "design.yaml")
+	writeFile(t, designPath, "factors:\n  - group: [a, b]\n    id: [1, 2, 3]\nrun: './concurrency.sh {group} {id} 2 4'\nreplicates: 2\nconcurrency: 2\nconcurrency_by: [group]\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stdout, stderr := newBuffers()
+	env := testEnv(stdout, stderr)
+	if err := Execute(ctx, env, Options{Designs: []string{designPath}}); err != nil {
+		t.Fatal(err)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(root, "work", "state", "violation-*")); len(matches) != 0 {
+		t.Fatalf("per-group concurrency cap exceeded: %v", matches)
+	}
+	if got := lineCount(t, filepath.Join(root, "results", "runs.jsonl")); got != 12 {
+		t.Fatalf("run count = %d, want 12", got)
+	}
+	if got := strings.Count(stderr.String(), "run log"); got != 12 {
+		t.Fatalf("run log count = %d, want 12", got)
+	}
+	stderr.Reset()
+	if err := Execute(ctx, env, Options{Designs: []string{designPath}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lineCount(t, filepath.Join(root, "results", "runs.jsonl")); got != 12 {
+		t.Fatalf("resume run count = %d, want 12", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("resume executed runs: %s", stderr)
+	}
+}
+
+func TestExecuteConcurrencyUngroupedCap(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, filepath.Join(root, "concurrency.sh"), `#!/bin/sh
+set -eu
+id=$1
+mkdir -p work/state
+slot=
+for i in 1 2; do
+  if mkdir "work/state/slot-$i" 2>/dev/null; then slot="work/state/slot-$i"; break; fi
+done
+if [ -z "$slot" ]; then touch "work/state/violation-$id"; exit 1; fi
+trap 'rmdir "$slot" 2>/dev/null || true' EXIT
+: >"work/state/started-$id"
+i=0
+while :; do
+  set -- work/state/started-*
+  if [ -e "$1" ] && [ "$#" -ge 2 ]; then break; fi
+  i=$((i+1)); [ "$i" -lt 100 ] || exit 2
+  sleep 0.05
+done
+printf '{"ok":true}\n'
+`)
+	designPath := filepath.Join(root, "design.yaml")
+	writeFile(t, designPath, "factors: [{id: [1, 2, 3, 4]}]\nrun: './concurrency.sh {id}'\nconcurrency: 2\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := Execute(ctx, testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err != nil {
+		t.Fatal(err)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(root, "work", "state", "violation-*")); len(matches) != 0 {
+		t.Fatalf("ungrouped concurrency cap exceeded: %v", matches)
+	}
+}
+
+func TestExecuteConcurrencyFailureCancelsAndPreservesResults(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, filepath.Join(root, "failure.sh"), `#!/bin/sh
+set -eu
+group=$1 id=$2
+mkdir -p work/state
+: >"work/state/started-$group-$id"
+case "$group:$id" in
+  success:1) printf '{"ok":true}\n' ;;
+  fail:1)
+    i=0
+    while [ ! -s results/runs.jsonl ] || [ ! -e work/state/active ]; do
+      i=$((i+1)); [ "$i" -lt 100 ] || exit 2; sleep 0.05
+    done
+    exit 1 ;;
+  active:*) touch work/state/active; sleep 30; printf '{"ok":true}\n' ;;
+  *) touch "work/state/queued-$group-$id"; printf '{"ok":true}\n' ;;
+esac
+`)
+	designPath := filepath.Join(root, "design.yaml")
+	writeFile(t, designPath, "factors:\n  - group: [success, fail, active]\n    id: [1, 2]\nrun: './failure.sh {group} {id}'\nconcurrency: 1\nconcurrency_by: [group]\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := Execute(ctx, testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}})
+	if err == nil {
+		t.Fatal("Execute() succeeded, want run failure")
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("active run was not canceled before the deadline: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "work", "state", "queued-fail-2")); !os.IsNotExist(err) {
+		t.Fatalf("queued run was dispatched: %v", err)
+	}
+	if got := lineCount(t, filepath.Join(root, "results", "runs.jsonl")); got < 1 {
+		t.Fatalf("saved successful runs = %d, want at least 1", got)
+	}
+}
+
+func TestExecuteConcurrencyCanceled(t *testing.T) {
+	for _, beforeStart := range []bool{true, false} {
+		name := "during run"
+		if beforeStart {
+			name = "before start"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			designPath := filepath.Join(root, "design.yaml")
+			writeFile(t, designPath, "factors: [{id: [1, 2, 3]}]\nrun: printf 'started\\nwaiting\\n'; sleep 30; echo '{}'\nconcurrency: 2\n")
+			deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			ctx, cancel := context.WithCancel(deadline)
+			defer cancel()
+			if beforeStart {
+				cancel()
+			}
+			env := testEnv(new(bytes.Buffer), new(bytes.Buffer))
+			env.Stderr = &cancelWriter{cancel: cancel}
+			err := Execute(ctx, env, Options{Designs: []string{designPath}})
+			if err == nil || !errors.Is(ctx.Err(), context.Canceled) {
+				t.Fatalf("Execute() = %v, context = %v; want cancellation", err, ctx.Err())
+			}
+		})
 	}
 }
 
@@ -324,6 +478,22 @@ func testEnv(stdout, stderr *bytes.Buffer) *cli.Env {
 
 func newBuffers() (*bytes.Buffer, *bytes.Buffer) {
 	return new(bytes.Buffer), new(bytes.Buffer)
+}
+
+type cancelWriter struct {
+	cancel context.CancelFunc
+}
+
+func (w *cancelWriter) Write(data []byte) (int, error) {
+	w.cancel()
+	return len(data), nil
+}
+
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeFile(t *testing.T, path, content string) {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/felixge/doe/internal/model"
@@ -48,13 +49,13 @@ func Parse(path string, data []byte) (model.Design, error) {
 	}
 	for name, node := range fields {
 		switch name {
-		case "setup", "factors", "run", "replicates":
+		case "setup", "factors", "run", "replicates", "concurrency", "concurrency_by":
 		default:
 			return model.Design{}, nodeError(node, "unknown design field %q", name)
 		}
 	}
 
-	d := model.Design{Path: path, Replicates: 1}
+	d := model.Design{Path: path, Replicates: 1, Concurrency: 1}
 	if node := fields["setup"]; node != nil {
 		if d.Setup, err = stringValue(node, "setup"); err != nil {
 			return model.Design{}, err
@@ -75,6 +76,11 @@ func Parse(path string, data []byte) (model.Design, error) {
 			return model.Design{}, err
 		}
 	}
+	if node := fields["concurrency"]; node != nil {
+		if d.Concurrency, err = positiveInt(node, "concurrency"); err != nil {
+			return model.Design{}, err
+		}
+	}
 	if node := fields["factors"]; node != nil {
 		groups, names, parseErr := parseFactorGroups(node)
 		if parseErr != nil {
@@ -87,6 +93,26 @@ func Parse(path string, data []byte) (model.Design, error) {
 		}
 	} else {
 		return model.Design{}, fmt.Errorf("parse %s: missing required field factors", path)
+	}
+	if node := fields["concurrency_by"]; node != nil {
+		if node.Kind != yaml.SequenceNode {
+			return model.Design{}, nodeError(node, "concurrency_by must be a sequence")
+		}
+		seen := make(map[string]bool, len(node.Content))
+		for _, nameNode := range node.Content {
+			name, nameErr := stringValue(nameNode, "concurrency_by entry")
+			if nameErr != nil {
+				return model.Design{}, nameErr
+			}
+			if !slices.Contains(d.FactorNames, name) {
+				return model.Design{}, nodeError(nameNode, "concurrency_by factor %q is not defined", name)
+			}
+			if seen[name] {
+				return model.Design{}, nodeError(nameNode, "duplicate concurrency_by factor %q", name)
+			}
+			seen[name] = true
+			d.ConcurrencyBy = append(d.ConcurrencyBy, name)
+		}
 	}
 	return d, nil
 }
