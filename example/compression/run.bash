@@ -31,7 +31,7 @@ gzip)
   command=(gzip -c "-$level" "${inputs[@]}")
   ;;
 zstd)
-  command=(zstd -qc "-$level" "${inputs[@]}")
+  command=(zstd -qc --ultra "-$level" "${inputs[@]}")
   ;;
 esac
 
