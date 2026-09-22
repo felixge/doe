@@ -1,5 +1,5 @@
-// Package design loads designs and derives their points and run schedules.
-package design
+// Package study loads study protocols and derives design points and schedules.
+package study
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -15,62 +17,107 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Load reads and validates a design YAML file.
-func Load(path string) (model.Design, error) {
+// Load reads and validates a study YAML file.
+func Load(path string) (model.Study, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return model.Design{}, err
+		return model.Study{}, err
 	}
 	return Parse(path, data)
 }
 
-// Parse validates design YAML from data. Path is retained on the returned
-// design and is only used to make errors and persisted records meaningful.
-func Parse(path string, data []byte) (model.Design, error) {
+var validName = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+
+// Parse validates a study and all its named designs.
+func Parse(path string, data []byte) (model.Study, error) {
+	name := strings.TrimSuffix(filepath.Base(path), ".study.yaml")
+	if !strings.HasSuffix(path, ".study.yaml") || !validName.MatchString(name) {
+		return model.Study{}, fmt.Errorf("study filename %q must be <lowercase-kebab-case>.study.yaml", path)
+	}
 	var document yaml.Node
 	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
 	if err := decoder.Decode(&document); err != nil {
-		return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
+		return model.Study{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return model.Design{}, fmt.Errorf("parse %s: multiple YAML documents", path)
+			return model.Study{}, fmt.Errorf("parse %s: multiple YAML documents", path)
 		}
-		return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
+		return model.Study{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
-		return model.Design{}, fmt.Errorf("parse %s: design must be a mapping", path)
+		return model.Study{}, fmt.Errorf("parse %s: study must be a mapping", path)
 	}
 
-	fields, err := mapping(document.Content[0], "design")
+	fields, err := mapping(document.Content[0], "study")
 	if err != nil {
-		return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
+		return model.Study{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	for name, node := range fields {
 		switch name {
-		case "setup", "factors", "run", "replicates", "concurrency", "concurrency_by":
+		case "setup", "run", "designs":
+		default:
+			return model.Study{}, nodeError(node, "unknown study field %q", name)
+		}
+	}
+
+	s := model.Study{Name: name, Path: filepath.Base(path)}
+	if node := fields["setup"]; node != nil {
+		if s.Setup, err = stringValue(node, "setup"); err != nil {
+			return model.Study{}, err
+		}
+	}
+	if node := fields["run"]; node != nil {
+		if s.Run, err = stringValue(node, "run"); err != nil {
+			return model.Study{}, err
+		}
+		if strings.TrimSpace(s.Run) == "" {
+			return model.Study{}, nodeError(node, "run must not be empty")
+		}
+	} else {
+		return model.Study{}, fmt.Errorf("parse %s: missing required field run", path)
+	}
+	node := fields["designs"]
+	if node == nil {
+		return model.Study{}, fmt.Errorf("parse %s: missing required field designs", path)
+	}
+	entries, err := mappingEntries(node, "designs")
+	if err != nil {
+		return model.Study{}, err
+	}
+	if len(entries) == 0 {
+		return model.Study{}, nodeError(node, "designs must not be empty")
+	}
+	for _, entry := range entries {
+		if !validName.MatchString(entry.key) {
+			return model.Study{}, nodeError(entry.keyNode, "design name %q must use lowercase kebab-case", entry.key)
+		}
+		d, err := parseDesign(entry.key, entry.value)
+		if err != nil {
+			return model.Study{}, fmt.Errorf("%s/%s: %w", name, entry.key, err)
+		}
+		if len(s.Designs) > 0 && !sameNames(s.Designs[0].FactorNames, d.FactorNames) {
+			return model.Study{}, nodeError(entry.value, "every design in study %q must have the same factor names", name)
+		}
+		s.Designs = append(s.Designs, d)
+	}
+	return s, nil
+}
+
+func parseDesign(name string, node *yaml.Node) (model.Design, error) {
+	fields, err := mapping(node, "design")
+	if err != nil {
+		return model.Design{}, err
+	}
+	for name, node := range fields {
+		switch name {
+		case "factors", "replicates", "concurrency", "concurrency_by":
 		default:
 			return model.Design{}, nodeError(node, "unknown design field %q", name)
 		}
 	}
-
-	d := model.Design{Path: path, Replicates: 1, Concurrency: 1}
-	if node := fields["setup"]; node != nil {
-		if d.Setup, err = stringValue(node, "setup"); err != nil {
-			return model.Design{}, err
-		}
-	}
-	if node := fields["run"]; node != nil {
-		if d.Run, err = stringValue(node, "run"); err != nil {
-			return model.Design{}, err
-		}
-		if d.Run == "" {
-			return model.Design{}, nodeError(node, "run must not be empty")
-		}
-	} else {
-		return model.Design{}, fmt.Errorf("parse %s: missing required field run", path)
-	}
+	d := model.Design{Name: name, Replicates: 1, Concurrency: 1}
 	if node := fields["replicates"]; node != nil {
 		if d.Replicates, err = positiveInt(node, "replicates"); err != nil {
 			return model.Design{}, err
@@ -82,17 +129,16 @@ func Parse(path string, data []byte) (model.Design, error) {
 		}
 	}
 	if node := fields["factors"]; node != nil {
-		groups, names, parseErr := parseFactorGroups(node)
+		factors, parseErr := parseFactors(node)
 		if parseErr != nil {
 			return model.Design{}, parseErr
 		}
-		d.FactorNames = names
-		d.Points, err = expandPoints(groups, names)
-		if err != nil {
-			return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
+		for _, factor := range factors {
+			d.FactorNames = append(d.FactorNames, factor.name)
 		}
+		d.Points = expandPoints(factors)
 	} else {
-		return model.Design{}, fmt.Errorf("parse %s: missing required field factors", path)
+		return model.Design{}, fmt.Errorf("design %s: missing required field factors", name)
 	}
 	if node := fields["concurrency_by"]; node != nil {
 		if node.Kind != yaml.SequenceNode {
@@ -122,95 +168,62 @@ type factor struct {
 	settings []model.Scalar
 }
 
-type factorGroup []factor
-
-func parseFactorGroups(node *yaml.Node) ([]factorGroup, []string, error) {
-	if node.Kind != yaml.SequenceNode || len(node.Content) == 0 {
-		return nil, nil, nodeError(node, "factors must be a non-empty sequence")
+func parseFactors(node *yaml.Node) ([]factor, error) {
+	entries, err := mappingEntries(node, "factors")
+	if err != nil {
+		return nil, err
 	}
-	groups := make([]factorGroup, 0, len(node.Content))
-	var expected []string
-	for groupIndex, groupNode := range node.Content {
-		entries, err := mappingEntries(groupNode, fmt.Sprintf("factor group %d", groupIndex+1))
-		if err != nil {
-			return nil, nil, err
-		}
-		if len(entries) == 0 {
-			return nil, nil, nodeError(groupNode, "factor group %d must not be empty", groupIndex+1)
-		}
-		group := make(factorGroup, 0, len(entries))
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			if entry.key == "" {
-				return nil, nil, nodeError(entry.keyNode, "factor name must not be empty")
-			}
-			if model.IsReservedRunField(entry.key) {
-				return nil, nil, nodeError(entry.keyNode, "factor name %q is reserved", entry.key)
-			}
-			if entry.value.Kind != yaml.SequenceNode || len(entry.value.Content) == 0 {
-				return nil, nil, nodeError(entry.value, "settings for factor %q must be a non-empty sequence", entry.key)
-			}
-			f := factor{name: entry.key, settings: make([]model.Scalar, 0, len(entry.value.Content))}
-			for _, settingNode := range entry.value.Content {
-				setting, err := scalar(settingNode)
-				if err != nil {
-					return nil, nil, nodeError(settingNode, "setting for factor %q: %v", entry.key, err)
-				}
-				f.settings = append(f.settings, setting)
-			}
-			group = append(group, f)
-			names = append(names, entry.key)
-		}
-		if groupIndex == 0 {
-			expected = names
-		} else if !sameNames(expected, names) {
-			return nil, nil, nodeError(groupNode, "factor group %d must contain the same factors as factor group 1", groupIndex+1)
-		}
-		groups = append(groups, group)
+	if len(entries) == 0 {
+		return nil, nodeError(node, "factors must not be empty")
 	}
-	return groups, expected, nil
+	factors := make([]factor, 0, len(entries))
+	for _, entry := range entries {
+		if entry.key == "" {
+			return nil, nodeError(entry.keyNode, "factor name must not be empty")
+		}
+		if model.IsReservedRunField(entry.key) {
+			return nil, nodeError(entry.keyNode, "factor name %q is reserved", entry.key)
+		}
+		if entry.value.Kind != yaml.SequenceNode || len(entry.value.Content) == 0 {
+			return nil, nodeError(entry.value, "settings for factor %q must be a non-empty sequence", entry.key)
+		}
+		f := factor{name: entry.key, settings: make([]model.Scalar, 0, len(entry.value.Content))}
+		seen := make(map[string]bool, len(entry.value.Content))
+		for _, settingNode := range entry.value.Content {
+			setting, err := scalar(settingNode)
+			if err != nil {
+				return nil, nodeError(settingNode, "setting for factor %q: %v", entry.key, err)
+			}
+			key, err := json.Marshal(setting)
+			if err != nil {
+				return nil, err
+			}
+			if seen[string(key)] {
+				return nil, nodeError(settingNode, "duplicate setting for factor %q: %s", entry.key, key)
+			}
+			seen[string(key)] = true
+			f.settings = append(f.settings, setting)
+		}
+		factors = append(factors, f)
+	}
+	return factors, nil
 }
 
-func expandPoints(groups []factorGroup, names []string) ([]model.Point, error) {
-	points := make([]model.Point, 0)
-	seen := make(map[string]int)
-	for groupIndex, group := range groups {
-		byName := make(map[string]factor, len(group))
-		for _, factor := range group {
-			byName[factor.name] = factor
+func expandPoints(factors []factor) []model.Point {
+	var points []model.Point
+	var expand func(int, []model.Value)
+	expand = func(factorIndex int, values []model.Value) {
+		if factorIndex == len(factors) {
+			points = append(points, model.Point{Values: append([]model.Value(nil), values...)})
+			return
 		}
-		ordered := make([]factor, len(names))
-		for i, name := range names {
-			ordered[i] = byName[name]
-		}
-		var expand func(int, []model.Value) error
-		expand = func(factorIndex int, values []model.Value) error {
-			if factorIndex == len(ordered) {
-				point := model.Point{Values: append([]model.Value(nil), values...)}
-				key, err := pointKey(point)
-				if err != nil {
-					return err
-				}
-				if previous, ok := seen[key]; ok {
-					return fmt.Errorf("duplicate design point in factor group %d (already produced by factor group %d)", groupIndex+1, previous)
-				}
-				seen[key] = groupIndex + 1
-				points = append(points, point)
-				return nil
-			}
-			factor := ordered[factorIndex]
-			for _, setting := range factor.settings {
-				if err := expand(factorIndex+1, append(values, model.Value{Name: factor.name, Value: setting})); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		if err := expand(0, make([]model.Value, 0, len(ordered))); err != nil {
-			return nil, err
+		factor := factors[factorIndex]
+		for _, setting := range factor.settings {
+			expand(factorIndex+1, append(values, model.Value{Name: factor.name, Value: setting}))
 		}
 	}
-	return points, nil
+	expand(0, make([]model.Value, 0, len(factors)))
+	return points
 }
 
 // Schedule returns one row of point indexes per replicate. Replicate 1 uses
@@ -347,18 +360,6 @@ func scalar(node *yaml.Node) (model.Scalar, error) {
 	default:
 		return nil, errors.New("must be a JSON scalar")
 	}
-}
-
-func pointKey(point model.Point) (string, error) {
-	values := make([]any, len(point.Values))
-	for i, value := range point.Values {
-		values[i] = value.Value
-	}
-	data, err := json.Marshal(values)
-	if err != nil {
-		return "", fmt.Errorf("encode design point: %w", err)
-	}
-	return string(data), nil
 }
 
 func sameNames(want, got []string) bool {

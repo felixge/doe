@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,483 +17,342 @@ import (
 	"github.com/felixge/doe/internal/model"
 )
 
-func TestExecuteResumeAndForce(t *testing.T) {
-	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, `setup: 'printf ''setup log\n{"host":"test"}\n'''
-factors:
-  - value: ['one two', "quote'it"]
-run: 'printf ''run log\n''; printf ''{"seen":"%s"}\n'' {value}'
-replicates: 2
-`)
+const overlappingStudy = `setup: mkdir -p work; echo setup >> work/order; echo '{"host":{"name":"test"},"labels":["local"]}'
+run: printf '%s\n' {value} >> work/order; printf '{"seen":"%s"}\n' {value}
+designs:
+  smoke:
+    factors: {value: ['one two', "quote'it"]}
+  full:
+    factors: {value: ['one two', "quote'it", three]}
+    replicates: 2
+    concurrency: 2
+`
 
-	firstOut, firstErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(firstOut, firstErr), Options{Designs: []string{designPath}}); err != nil {
-		t.Fatal(err)
+func TestExecuteReuseAcrossDesignsAndResume(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "compression.study.yaml"), overlappingStudy)
+	output := filepath.Join(root, "results", "compression")
+	run := func(selectors ...string) {
+		t.Helper()
+		stdout, stderr := newBuffers()
+		if err := Execute(context.Background(), testEnv(stdout, stderr), Options{Project: root, Designs: selectors}); err != nil {
+			t.Fatal(err)
+		}
+		if stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+		}
 	}
-	output, err := canonicalPath(filepath.Join(root, "results"))
+	run("smoke")
+	original, err := os.ReadFile(filepath.Join(output, "runs.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := firstOut.String(), output+"\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	first := readRecords[model.Experiment](t, filepath.Join(output, "experiments.jsonl"))[0]
+	run("full")
+	run("compression/smoke", "full")
+	runs := readRecords[map[string]any](t, filepath.Join(output, "runs.jsonl"))
+	if len(runs) != 6 {
+		t.Fatalf("runs=%d, want 6", len(runs))
 	}
-	if firstErr.Len() != 0 {
-		t.Fatalf("command output streamed to stderr: %q", firstErr.String())
-	}
-	if got := lineCount(t, filepath.Join(output, "experiments.jsonl")); got != 1 {
-		t.Fatalf("experiment count = %d, want 1", got)
-	}
-	if got := lineCount(t, filepath.Join(output, "runs.jsonl")); got != 4 {
-		t.Fatalf("run count = %d, want 4", got)
-	}
-	if _, err := os.Stat(filepath.Join(output, "study")); !os.IsNotExist(err) {
-		t.Fatalf("results contains a study copy: %v", err)
-	}
-
-	if err := os.Mkdir(filepath.Join(root, "work"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(root, "work", "temporary.txt"), "ignored work")
-	secondOut, secondErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(secondOut, secondErr), Options{Designs: []string{designPath}}); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(secondErr.String(), "run log") {
-		t.Fatalf("resumed invocation executed a run:\n%s", secondErr.String())
-	}
-	if secondErr.Len() != 0 {
-		t.Fatalf("setup output streamed to stderr: %q", secondErr.String())
-	}
-	if got := lineCount(t, filepath.Join(output, "experiments.jsonl")); got != 2 {
-		t.Fatalf("experiment count = %d, want 2", got)
-	}
-
-	writeFile(t, designPath, `setup: 'printf ''{"host":"test"}\n'''
-factors:
-  - value: ['one two', "quote'it", three]
-run: 'printf ''run log\n''; printf ''{"seen":"%s"}\n'' {value}'
-replicates: 2
-`)
-	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err == nil || !strings.Contains(err.Error(), "--dirty") || !strings.Contains(err.Error(), "clear the results directory") {
-		t.Fatalf("changed study error = %v", err)
-	}
-	dirtyOut, dirtyErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(dirtyOut, dirtyErr), Options{Designs: []string{designPath}, Dirty: true}); err != nil {
-		t.Fatal(err)
-	}
-	if dirtyErr.Len() != 0 {
-		t.Fatalf("command output streamed to stderr: %q", dirtyErr.String())
-	}
-	if got := lineCount(t, filepath.Join(output, "runs.jsonl")); got != 6 {
-		t.Fatalf("run count = %d, want 6", got)
-	}
-
-	cleanOut, cleanErr := newBuffers()
-	if err := Execute(context.Background(), testEnv(cleanOut, cleanErr), Options{Designs: []string{designPath}, Clean: true}); err != nil {
-		t.Fatal(err)
-	}
-	if cleanErr.Len() != 0 {
-		t.Fatalf("command output streamed to stderr: %q", cleanErr.String())
-	}
-	if got := lineCount(t, filepath.Join(output, "experiments.jsonl")); got != 1 {
-		t.Fatalf("clean experiment count = %d, want 1", got)
-	}
-	if got := lineCount(t, filepath.Join(output, "runs.jsonl")); got != 6 {
-		t.Fatalf("clean run count = %d, want 6", got)
-	}
-	if _, err := os.Stat(filepath.Join(root, "work")); !os.IsNotExist(err) {
-		t.Fatalf("clean left work directory: %v", err)
-	}
-}
-
-func TestExecuteConcurrencyLimitsGroupsAndResumes(t *testing.T) {
-	root := t.TempDir()
-	writeExecutable(t, filepath.Join(root, "concurrency.sh"), `#!/bin/sh
-set -eu
-group=$1 id=$2 limit=$3 barrier=$4
-mkdir -p work/state
-slot=
-i=1
-while [ "$i" -le "$limit" ]; do
-  if mkdir "work/state/slot-$group-$i" 2>/dev/null; then slot="work/state/slot-$group-$i"; break; fi
-  i=$((i+1))
-done
-if [ -z "$slot" ]; then touch "work/state/violation-$group-$id"; exit 1; fi
-trap 'rmdir "$slot" 2>/dev/null || true' EXIT
-: >"work/state/started-$group-$id"
-i=0
-while :; do
-  set -- work/state/started-*
-  if [ -e "$1" ] && [ "$#" -ge "$barrier" ]; then break; fi
-  i=$((i+1)); [ "$i" -lt 100 ] || exit 2
-  sleep 0.05
-done
-printf 'run log\n{"ok":true}\n'
-`)
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "factors:\n  - group: [a, b]\n    id: [1, 2, 3]\nrun: './concurrency.sh {group} {id} 2 4'\nreplicates: 2\nconcurrency: 2\nconcurrency_by: [group]\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	stdout, stderr := newBuffers()
-	env := testEnv(stdout, stderr)
-	if err := Execute(ctx, env, Options{Designs: []string{designPath}}); err != nil {
-		t.Fatal(err)
-	}
-	if matches, _ := filepath.Glob(filepath.Join(root, "work", "state", "violation-*")); len(matches) != 0 {
-		t.Fatalf("per-group concurrency cap exceeded: %v", matches)
-	}
-	if got := lineCount(t, filepath.Join(root, "results", "runs.jsonl")); got != 12 {
-		t.Fatalf("run count = %d, want 12", got)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("command output streamed to stderr: %q", stderr.String())
-	}
-	stderr.Reset()
-	if err := Execute(ctx, env, Options{Designs: []string{designPath}}); err != nil {
-		t.Fatal(err)
-	}
-	if got := lineCount(t, filepath.Join(root, "results", "runs.jsonl")); got != 12 {
-		t.Fatalf("resume run count = %d, want 12", got)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("resume executed runs: %s", stderr)
-	}
-}
-
-func TestExecuteConcurrencyUngroupedCap(t *testing.T) {
-	root := t.TempDir()
-	writeExecutable(t, filepath.Join(root, "concurrency.sh"), `#!/bin/sh
-set -eu
-id=$1
-mkdir -p work/state
-slot=
-for i in 1 2; do
-  if mkdir "work/state/slot-$i" 2>/dev/null; then slot="work/state/slot-$i"; break; fi
-done
-if [ -z "$slot" ]; then touch "work/state/violation-$id"; exit 1; fi
-trap 'rmdir "$slot" 2>/dev/null || true' EXIT
-: >"work/state/started-$id"
-i=0
-while :; do
-  set -- work/state/started-*
-  if [ -e "$1" ] && [ "$#" -ge 2 ]; then break; fi
-  i=$((i+1)); [ "$i" -lt 100 ] || exit 2
-  sleep 0.05
-done
-printf '{"ok":true}\n'
-`)
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "factors: [{id: [1, 2, 3, 4]}]\nrun: './concurrency.sh {id}'\nconcurrency: 2\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := Execute(ctx, testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err != nil {
-		t.Fatal(err)
-	}
-	if matches, _ := filepath.Glob(filepath.Join(root, "work", "state", "violation-*")); len(matches) != 0 {
-		t.Fatalf("ungrouped concurrency cap exceeded: %v", matches)
-	}
-}
-
-func TestExecuteConcurrencyFailureCancelsAndPreservesResults(t *testing.T) {
-	root := t.TempDir()
-	writeExecutable(t, filepath.Join(root, "failure.sh"), `#!/bin/sh
-set -eu
-group=$1 id=$2
-mkdir -p work/state
-: >"work/state/started-$group-$id"
-case "$group:$id" in
-  success:1) printf '{"ok":true}\n' ;;
-  fail:1)
-    i=0
-    while [ ! -s results/runs.jsonl ] || [ ! -e work/state/active ]; do
-      i=$((i+1)); [ "$i" -lt 100 ] || exit 2; sleep 0.05
-    done
-    exit 1 ;;
-  active:*) touch work/state/active; sleep 30; printf '{"ok":true}\n' ;;
-  *) touch "work/state/queued-$group-$id"; printf '{"ok":true}\n' ;;
-esac
-`)
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "factors:\n  - group: [success, fail, active]\n    id: [1, 2]\nrun: './failure.sh {group} {id}'\nconcurrency: 1\nconcurrency_by: [group]\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err := Execute(ctx, testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}})
-	if err == nil {
-		t.Fatal("Execute() succeeded, want run failure")
-	}
-	if ctx.Err() != nil {
-		t.Fatalf("active run was not canceled before the deadline: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "work", "state", "queued-fail-2")); !os.IsNotExist(err) {
-		t.Fatalf("queued run was dispatched: %v", err)
-	}
-	if got := lineCount(t, filepath.Join(root, "results", "runs.jsonl")); got < 1 {
-		t.Fatalf("saved successful runs = %d, want at least 1", got)
-	}
-}
-
-func TestExecuteConcurrencyCanceled(t *testing.T) {
-	for _, beforeStart := range []bool{true, false} {
-		name := "during run"
-		if beforeStart {
-			name = "before start"
+	for i, value := range []string{"one two", "quote'it"} {
+		if runs[i]["experiment_id"] != first.ID || runs[i]["value"] != value || runs[i]["seen"] != value {
+			t.Fatalf("original run lost provenance or shell escaping: %v", runs[i])
 		}
-		t.Run(name, func(t *testing.T) {
+	}
+	data, err := os.ReadFile(filepath.Join(output, "runs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, original) {
+		t.Fatal("reused records changed")
+	}
+	experiments := readRecords[model.Experiment](t, filepath.Join(output, "experiments.jsonl"))
+	if len(experiments) != 3 || !reflect.DeepEqual(experiments[2].Designs, []string{"smoke", "full"}) {
+		t.Fatalf("experiments=%+v", experiments)
+	}
+	for _, e := range experiments {
+		if e.Study != "compression" || e.Env["host"].(map[string]any)["name"] != "test" {
+			t.Fatalf("experiment=%+v", e)
+		}
+		assertFileContains(t, filepath.Join(output, e.ID, "setup.txt"), `"host"`)
+	}
+	if got := lineCount(t, filepath.Join(root, "work", "order")); got != 9 {
+		t.Fatalf("setup/run invocations=%d, want 9", got)
+	}
+}
+
+func TestExecuteReusesEarlierDesignWithReorderedFactors(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.study.yaml"), `setup: mkdir -p work; echo setup >> work/order
+run: echo run >> work/order; echo '{}'
+designs:
+  smoke:
+    factors: {a: [1], b: [2]}
+  full:
+    factors: {b: [2], a: [1, 3]}
+    replicates: 2
+    concurrency: 2
+`)
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: []string{"smoke", "full"}}); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "results", "a")
+	experiments := readRecords[model.Experiment](t, filepath.Join(output, "experiments.jsonl"))
+	if len(experiments) != 1 || !reflect.DeepEqual(experiments[0].Designs, []string{"smoke", "full"}) {
+		t.Fatalf("experiments=%+v", experiments)
+	}
+	runs := readRecords[map[string]any](t, filepath.Join(output, "runs.jsonl"))
+	if len(runs) != 4 || lineCount(t, filepath.Join(root, "work", "order")) != 5 {
+		t.Fatalf("runs=%v; wanted four runs and one setup", runs)
+	}
+	seen := map[string]bool{}
+	for _, run := range runs {
+		key := fmt.Sprint(run["a"], "/", run["b"], "/", run["replicate"])
+		if seen[key] || run["experiment_id"] != experiments[0].ID {
+			t.Fatalf("duplicate or wrong provenance: %v", run)
+		}
+		seen[key] = true
+	}
+}
+
+func TestExecuteInterleavedStudies(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a", "b"} {
+		writeFile(t, filepath.Join(root, name+".study.yaml"), fmt.Sprintf(`setup: mkdir -p work; echo setup-%s >> work/order; echo '{"study":"%s"}'
+run: echo %s-{value} >> work/order; echo '{}'
+designs:
+  x: {factors: {value: [1]}}
+  y: {factors: {value: [2]}}
+`, name, name, name))
+	}
+	err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: []string{"a/y", "b/x", "a/x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "work", "order"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "setup-a\na-2\nsetup-b\nb-1\na-1\n" {
+		t.Fatalf("order=%q", data)
+	}
+	for _, name := range []string{"a", "b"} {
+		output := filepath.Join(root, "results", name)
+		experiments := readRecords[model.Experiment](t, filepath.Join(output, "experiments.jsonl"))
+		if len(experiments) != 1 {
+			t.Fatalf("%s experiments=%+v", name, experiments)
+		}
+		e := experiments[0]
+		if _, ok := e.Files[name+".study.yaml"]; !ok {
+			t.Fatal("selected study missing from snapshot")
+		}
+		if len(e.Files) != 1 {
+			t.Fatalf("snapshot includes other studies or work: %v", e.Files)
+		}
+		want := 1
+		if name == "a" {
+			want = 2
+		}
+		if got := lineCount(t, filepath.Join(output, "runs.jsonl")); got != want {
+			t.Fatalf("%s runs=%d want %d", name, got, want)
+		}
+	}
+}
+
+func TestExecutePreflightHasNoSideEffects(t *testing.T) {
+	for _, kind := range []string{"unknown", "duplicate", "ambiguous", "missing", "invalid study", "dirty later study", "snapshot symlink"} {
+		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
-			designPath := filepath.Join(root, "design.yaml")
-			writeFile(t, designPath, "factors: [{id: [1, 2, 3]}]\nrun: printf 'started\\nwaiting\\n'; sleep 30; echo '{}'\nconcurrency: 2\n")
-			deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
-			defer stop()
-			ctx, cancel := context.WithCancel(deadline)
-			defer cancel()
-			if beforeStart {
-				cancel()
+			for _, name := range []string{"a", "b"} {
+				writeFile(t, filepath.Join(root, name+".study.yaml"), overlappingStudy)
 			}
-			env := testEnv(new(bytes.Buffer), new(bytes.Buffer))
-			if !beforeStart {
-				time.AfterFunc(100*time.Millisecond, cancel)
+			selectors := []string{"a/smoke", "b/full"}
+			var partial string
+			switch kind {
+			case "unknown":
+				selectors[1] = "wat"
+			case "duplicate":
+				selectors[1] = "a/smoke"
+			case "ambiguous":
+				selectors[1] = "full"
+			case "missing":
+				selectors = nil
+			case "invalid study":
+				writeFile(t, filepath.Join(root, "c.study.yaml"), "invalid")
+			case "snapshot symlink":
+				if err := os.Symlink("missing", filepath.Join(root, "input")); err != nil {
+					t.Fatal(err)
+				}
+			case "dirty later study":
+				output := filepath.Join(root, "results", "b")
+				if err := os.MkdirAll(output, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, filepath.Join(output, ".doe"), resultsMarker)
+				partial = filepath.Join(output, "experiments.jsonl")
+				writeFile(t, partial, "{\"experiment_id\":\"previous\",\"files_hash\":\"changed\"}\n{\"partial\":")
 			}
-			err := Execute(ctx, env, Options{Designs: []string{designPath}})
-			if err == nil || !errors.Is(ctx.Err(), context.Canceled) {
-				t.Fatalf("Execute() = %v, context = %v; want cancellation", err, ctx.Err())
+			for _, plan := range []bool{false, true} {
+				err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: selectors, Plan: plan})
+				if err == nil {
+					t.Fatal("expected preflight error")
+				}
+				for _, path := range []string{"work", "results/a"} {
+					if _, err := os.Stat(filepath.Join(root, path)); !os.IsNotExist(err) {
+						t.Fatalf("preflight created %s", path)
+					}
+				}
+				if partial != "" {
+					assertFileContains(t, partial, `{"partial":`)
+				}
 			}
 		})
 	}
 }
 
-func TestExecutePersistsSetupAndRunLogs(t *testing.T) {
+func TestDirtyStateIsPerStudy(t *testing.T) {
 	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "setup: printf 'setup out\\n'; printf 'setup err\\n' >&2; printf '{\"host\":\"test\"}\\n'\nfactors: [{value: [x]}]\nrun: printf 'run out\\n'; printf 'run err\\n' >&2; printf '{\"ok\":true}\\n'\n")
-	stdout, stderr := newBuffers()
-	if err := Execute(context.Background(), testEnv(stdout, stderr), Options{Designs: []string{designPath}}); err != nil {
+	for _, name := range []string{"a", "b"} {
+		writeFile(t, filepath.Join(root, name+".study.yaml"), overlappingStudy)
+	}
+	opts := Options{Project: root, Designs: []string{"a/smoke"}}
+	execute := func() error {
+		return Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), opts)
+	}
+	if err := execute(); err != nil {
 		t.Fatal(err)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("command output streamed to stderr: %q", stderr.String())
+	writeFile(t, filepath.Join(root, "b.study.yaml"), overlappingStudy+"# changed other study\n")
+	if err := execute(); err != nil {
+		t.Fatalf("other study dirtied a: %v", err)
 	}
-	experiment := readJSONLine(t, filepath.Join(root, "results", "experiments.jsonl"))
-	run := readJSONLine(t, filepath.Join(root, "results", "runs.jsonl"))
-	logDir := filepath.Join(root, "results", experiment["experiment_id"].(string))
-	assertFileContains(t, filepath.Join(logDir, "setup.txt"), "setup out\n", "setup err\n", `{"host":"test"}`+"\n")
-	assertFileContains(t, filepath.Join(logDir, run["run_id"].(string)+".txt"), "run out\n", "run err\n", `{"ok":true}`+"\n")
-}
-
-func TestExecuteRetainsFailedSetupLog(t *testing.T) {
-	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "setup: printf 'setup failed\\n'; exit 9\nfactors: [{value: [x]}]\nrun: echo '{}'\n")
-	err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}})
-	if err == nil {
-		t.Fatal("Execute() succeeded")
+	writeFile(t, filepath.Join(root, "a.study.yaml"), overlappingStudy+"# changed selected study\n")
+	if err := execute(); err == nil || !strings.Contains(err.Error(), "--dirty") {
+		t.Fatalf("error=%v", err)
 	}
-	logs, globErr := filepath.Glob(filepath.Join(root, "results", "*", "setup.txt"))
-	if globErr != nil || len(logs) != 1 {
-		t.Fatalf("logs = %v, error = %v", logs, globErr)
+	opts.Dirty = true
+	if err := execute(); err != nil {
+		t.Fatal(err)
 	}
-	assertFileContains(t, logs[0], "setup failed\n")
-	if !strings.Contains(err.Error(), logs[0]) {
-		t.Fatalf("error %q does not contain log path %q", err, logs[0])
+	if got := lineCount(t, filepath.Join(root, "results", "a", "runs.jsonl")); got != 2 {
+		t.Fatalf("runs=%d", got)
+	}
+	writeFile(t, filepath.Join(root, "shared.txt"), "shared input")
+	opts.Dirty = false
+	if err := execute(); err == nil {
+		t.Fatal("shared input did not dirty a")
 	}
 }
 
-func TestExecuteRetainsFailedAndInterruptedRunLogs(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		script string
-		cancel bool
-	}{
-		{name: "failed", script: "printf 'failed output\\n'; exit 7"},
-		{name: "interrupted", script: "printf 'interrupted output\\n'; sleep 30", cancel: true},
+func TestExecuteFailFastRetainsLogsAndResults(t *testing.T) {
+	for _, setupFailure := range []bool{false, true} {
+		t.Run(fmt.Sprint(setupFailure), func(t *testing.T) {
+			root := t.TempDir()
+			setup := "mkdir -p work; echo setup"
+			if setupFailure {
+				setup += "; exit 9"
+			}
+			writeFile(t, filepath.Join(root, "a.study.yaml"), "setup: "+setup+"\nrun: echo run; [ {value} != fail ] || exit 7; echo '{}'\ndesigns:\n  full: {factors: {value: [ok, fail]}}\n  later: {factors: {value: [later]}}\n")
+			writeFile(t, filepath.Join(root, "b.study.yaml"), overlappingStudy)
+			err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: []string{"a/full", "b/full", "a/later"}})
+			if err == nil || !strings.Contains(err.Error(), "log:") {
+				t.Fatalf("error=%v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "results", "b")); !os.IsNotExist(err) {
+				t.Fatal("later study started")
+			}
+			logs, err := filepath.Glob(filepath.Join(root, "results", "a", "*", "*.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 3
+			if setupFailure {
+				want = 1
+			} else if got := lineCount(t, filepath.Join(root, "results", "a", "runs.jsonl")); got != 1 {
+				t.Fatalf("completed runs=%d", got)
+			}
+			if len(logs) != want {
+				t.Fatalf("logs=%v", logs)
+			}
+		})
+	}
+}
+
+func TestExecuteEnvironmentResponsesAndLogs(t *testing.T) {
+	for _, test := range []struct{ name, setup, run, wantError string }{
+		{"nested", `printf 'out\n'; echo err >&2; echo '{"host":{"name":"test"}}'`, `echo log; echo err >&2; echo '{"summary":{"n":2},"samples":[1,null]}'`, ""},
+		{"no env", "echo setup done", "echo '{}'", ""},
+		{"reserved response", "", `echo '{"end":1}'`, `response name "end" is reserved`},
+		{"factor response", "", `echo '{"value":1}'`, `response name "value" is also a factor`},
+		{"no result", "", "true", "run produced no result"},
+		{"bad result", "", "echo '[]'", "cannot unmarshal array"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			designPath := filepath.Join(root, "design.yaml")
-			writeFile(t, designPath, "factors: [{value: [x]}]\nrun: \""+test.script+"\"\n")
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			if test.cancel {
-				time.AfterFunc(100*time.Millisecond, cancel)
+			writeFile(t, filepath.Join(root, "a.study.yaml"), fmt.Sprintf("setup: %q\nrun: %q\ndesigns:\n  full: {factors: {value: [x]}}\n", test.setup, test.run))
+			stdout, stderr := newBuffers()
+			err := Execute(context.Background(), testEnv(stdout, stderr), Options{Project: root, Designs: []string{"full"}})
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("error=%v", err)
+				}
+				return
 			}
-			err := Execute(ctx, testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}})
-			if err == nil {
-				t.Fatal("Execute() succeeded")
+			if err != nil {
+				t.Fatal(err)
 			}
-			logs, globErr := filepath.Glob(filepath.Join(root, "results", "*", "*.txt"))
-			if globErr != nil || len(logs) != 1 {
-				t.Fatalf("logs = %v, error = %v", logs, globErr)
+			if stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
 			}
-			assertFileContains(t, logs[0], test.name+" output\n")
-			if !strings.Contains(err.Error(), logs[0]) {
-				t.Fatalf("error %q does not contain log path %q", err, logs[0])
+			output := filepath.Join(root, "results", "a")
+			e := readRecords[model.Experiment](t, filepath.Join(output, "experiments.jsonl"))[0]
+			r := readRecords[map[string]any](t, filepath.Join(output, "runs.jsonl"))[0]
+			if test.name == "nested" {
+				if e.Env["host"].(map[string]any)["name"] != "test" || r["summary"].(map[string]any)["n"] != float64(2) {
+					t.Fatalf("env=%v run=%v", e.Env, r)
+				}
+				assertFileContains(t, filepath.Join(output, e.ID, "setup.txt"), "out\n", "err\n", `"host"`)
+				assertFileContains(t, filepath.Join(output, e.ID, r["run_id"].(string)+".txt"), "log\n", "err\n", `"samples"`)
+			} else if len(e.Env) != 0 {
+				t.Fatalf("env=%v", e.Env)
 			}
 		})
 	}
 }
 
-func TestExecuteSetupOnlyDiscardsOutputAndCreatesNoResults(t *testing.T) {
-	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "setup: printf 'setup output\\n'\nfactors: [{value: [x]}]\nrun: echo '{}'\n")
-	stdout, stderr := newBuffers()
-	if err := Execute(context.Background(), testEnv(stdout, stderr), Options{Designs: []string{designPath}, Setup: true}); err != nil {
-		t.Fatal(err)
-	}
-	if stdout.Len() != 0 || stderr.Len() != 0 {
-		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(root, "results")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("results exists after setup-only: %v", err)
-	}
-}
-
-func TestExecuteSetupUsesOnlyJSONFinalLineAsEnvironment(t *testing.T) {
-	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "setup: printf 'setup complete\\n'\nfactors: [{value: [x]}]\nrun: echo '{}'\n")
-	stdout, stderr := newBuffers()
-	if err := Execute(context.Background(), testEnv(stdout, stderr), Options{Designs: []string{designPath}}); err != nil {
-		t.Fatal(err)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("setup output streamed to stderr: %q", stderr.String())
-	}
-	data, err := os.ReadFile(filepath.Join(root, "results", "experiments.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"env":{}`) {
-		t.Fatalf("experiment = %s, want empty environment", data)
-	}
-}
-
-func TestExecutePersistsNestedSetupEnvironment(t *testing.T) {
-	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, `setup: 'printf ''{"host":{"name":"test"},"labels":["fast","local"]}\n'''
-factors: [{value: [x]}]
-run: echo '{}'
-`)
-
-	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err != nil {
-		t.Fatal(err)
-	}
-	experiment := readJSONLine(t, filepath.Join(root, "results", "experiments.jsonl"))
-	environment, ok := experiment["env"].(map[string]any)
-	if !ok {
-		t.Fatalf("env = %#v", experiment["env"])
-	}
-	host, ok := environment["host"].(map[string]any)
-	if !ok || host["name"] != "test" {
-		t.Fatalf("host = %#v", environment["host"])
-	}
-	labels, ok := environment["labels"].([]any)
-	if !ok || len(labels) != 2 {
-		t.Fatalf("labels = %#v", environment["labels"])
-	}
-}
-
-func TestExecuteRejectsReservedResponseName(t *testing.T) {
-	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "factors: [{value: [x]}]\nrun: echo '{\"end\":1}'\n")
-
-	err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}})
-	if err == nil || !strings.Contains(err.Error(), `response name "end" is reserved`) {
-		t.Fatalf("Execute() error = %v, want reserved response error", err)
-	}
-}
-
-func TestExecutePersistsNestedOutputs(t *testing.T) {
-	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, `factors: [{value: [x]}]
-run: 'printf ''{"summary":{"count":2},"samples":[{"t":0,"value":1},{"t":1,"value":3}]}\n'''
-`)
-
-	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err != nil {
-		t.Fatal(err)
-	}
-	run := readJSONLine(t, filepath.Join(root, "results", "runs.jsonl"))
-	summary, ok := run["summary"].(map[string]any)
-	if !ok || summary["count"] != float64(2) {
-		t.Fatalf("summary = %#v", run["summary"])
-	}
-	samples, ok := run["samples"].([]any)
-	if !ok || len(samples) != 2 {
-		t.Fatalf("samples = %#v", run["samples"])
-	}
-}
-
-func TestExecutePlan(t *testing.T) {
-	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, `factors:
-  - a: [x, y]
-    b: [1]
-run: echo '{}'
-replicates: 2
-`)
-	stdout, stderr := newBuffers()
-	if err := Execute(context.Background(), testEnv(stdout, stderr), Options{Designs: []string{designPath}, Plan: true}); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"| point | a | b |", "| #1    | x | 1 |", "| run/rep | 1  | 2  |", "| 2       | #2 | #1 |"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Errorf("output does not contain %q:\n%s", want, stdout.String())
+func TestExecuteCancellation(t *testing.T) {
+	for _, concurrency := range []int{1, 2} {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "a.study.yaml"), fmt.Sprintf("run: echo interrupted; sleep 30; echo '{}'\ndesigns:\n  full:\n    factors: {value: [1, 2]}\n    concurrency: %d\n", concurrency))
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		err := Execute(ctx, testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: []string{"full"}})
+		cancel()
+		if err == nil || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("error=%v context=%v", err, ctx.Err())
 		}
-	}
-	if _, err := os.Stat(filepath.Join(root, "results")); !os.IsNotExist(err) {
-		t.Fatalf("plan created results: %v", err)
+		logs, err := filepath.Glob(filepath.Join(root, "results", "a", "*", "*.txt"))
+		if err != nil || len(logs) != concurrency {
+			t.Fatalf("logs=%v err=%v", logs, err)
+		}
+		for _, path := range logs {
+			assertFileContains(t, path, "interrupted\n")
+		}
 	}
 }
 
 func TestCanonicalPath(t *testing.T) {
 	real := t.TempDir()
-	link := filepath.Join(t.TempDir(), "study")
+	link := filepath.Join(t.TempDir(), "project")
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-
 	want, err := filepath.EvalSymlinks(real)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := canonicalPath(link)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("canonicalPath() = %q, want %q", got, want)
-	}
-	if _, err := canonicalPath(filepath.Join(real, "missing")); err == nil {
-		t.Fatal("canonicalPath() succeeded for missing path")
-	}
-}
-
-func TestLoadStudyRequiresSharedRoot(t *testing.T) {
-	first := filepath.Join(t.TempDir(), "a.yaml")
-	second := filepath.Join(t.TempDir(), "b.yaml")
-	for _, path := range []string{first, second} {
-		writeFile(t, path, "factors:\n  - x: [1]\nrun: echo '{}'\n")
-	}
-	_, err := loadStudy([]string{first, second})
-	if err == nil || !strings.Contains(err.Error(), "same study root") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLoadStudyRejectsDesignSymlink(t *testing.T) {
-	root := t.TempDir()
-	target := filepath.Join(root, "target.yaml")
-	writeFile(t, target, "factors:\n  - x: [1]\nrun: echo '{}'\n")
-	link := filepath.Join(root, "design.yaml")
-	if err := os.Symlink("target.yaml", link); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadStudy([]string{link}); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
-		t.Fatalf("error = %v", err)
+	if err != nil || got != want {
+		t.Fatalf("path=%q err=%v", got, err)
 	}
 }
 
@@ -500,12 +361,8 @@ func TestParseObjectAllowsNestedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nested, ok := object["object"].(map[string]any)
-	if !ok {
-		t.Fatalf("object type = %T", object["object"])
-	}
-	if _, ok := nested["n"].(json.Number); !ok {
-		t.Fatalf("nested number type = %T", nested["n"])
+	if _, ok := object["object"].(map[string]any)["n"].(json.Number); !ok {
+		t.Fatal("number precision lost")
 	}
 	for _, invalid := range []string{`[]`, `null`, `{"x":1} trailing`} {
 		if _, err := parseObject(invalid); err == nil {
@@ -521,82 +378,82 @@ func TestCommandOutputLogsCombinedOutputAndParsesFinalStdout(t *testing.T) {
 		t.Fatal(err)
 	}
 	if last != `{"ok":true}` {
-		t.Fatalf("last = %q", last)
+		t.Fatalf("last=%q", last)
 	}
 	for _, want := range []string{"stdout log\n", "stderr log\n", "{\"ok\":true}\n"} {
 		if !strings.Contains(log.String(), want) {
-			t.Errorf("log %q does not contain %q", log.String(), want)
+			t.Errorf("log %q missing %q", log.String(), want)
 		}
 	}
 }
 
 func TestLoadResultsIndexesRunsByDuration(t *testing.T) {
 	output := t.TempDir()
-	writeFile(t, filepath.Join(output, "experiments.jsonl"), `{"experiment_id":"experiment","design":"design.yaml","factors":["value"]}`+"\n")
+	writeFile(t, filepath.Join(output, "experiments.jsonl"), `{"experiment_id":"experiment","study":"compression","designs":["smoke"],"factors":["value"]}`+"\n")
 	writeFile(t, filepath.Join(output, "runs.jsonl"), `{"experiment_id":"experiment","replicate":1,"start":"2026-09-19T12:00:00Z","end":"2026-09-19T12:00:02.25Z","value":"one"}`+"\n")
 	results, err := loadResults(output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := reuseKey("design.yaml", 1, model.Point{Values: []model.Value{{Name: "value", Value: "one"}}})
+	key, err := reuseKey("compression", 1, model.Point{Values: []model.Value{{Name: "value", Value: "one"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	duration, ok := results.runs[key]
-	if !ok {
-		t.Fatal("run is not indexed")
-	}
-	if duration != 2250*time.Millisecond {
-		t.Fatalf("duration = %v, want 2.25s", duration)
+	if results.runs[key] != 2250*time.Millisecond {
+		t.Fatalf("duration=%v", results.runs[key])
 	}
 }
 
 func TestInterpolateDoesNotRescanValues(t *testing.T) {
-	point := model.Point{Values: []model.Value{
-		{Name: "a", Value: "{b}"},
-		{Name: "b", Value: "; echo injected"},
-	}}
+	point := model.Point{Values: []model.Value{{Name: "a", Value: "{b}"}, {Name: "b", Value: "; echo injected"}}}
 	got, err := interpolate("printf '%s\\n' {a} {b}", point)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `printf '%s\n' '{b}' '; echo injected'`
-	if got != want {
-		t.Fatalf("interpolate() = %q, want %q", got, want)
+	if want := `printf '%s\n' '{b}' '; echo injected'`; got != want {
+		t.Fatalf("got=%q want=%q", got, want)
 	}
 }
 
 func TestOutputSafety(t *testing.T) {
-	unowned := filepath.Join(t.TempDir(), "output")
-	if err := os.Mkdir(unowned, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(unowned, "important.txt"), "keep")
-	if err := ensureOwnedOutput(unowned); err == nil {
-		t.Fatal("ensureOwnedOutput accepted an unrelated nonempty directory")
-	}
-
-	owned := filepath.Join(t.TempDir(), "output")
-	if err := os.Mkdir(owned, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(owned, ".doe"), "not doe\n")
-	if err := ensureOwnedOutput(owned); err == nil {
-		t.Fatal("ensureOwnedOutput accepted an invalid ownership marker")
+	for _, kind := range []string{"unowned", "marker", "symlink", "record symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "a.study.yaml"), overlappingStudy)
+			output := filepath.Join(root, "results", "a")
+			if err := os.MkdirAll(output, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "unowned":
+				writeFile(t, filepath.Join(output, "important"), "keep")
+			case "marker":
+				writeFile(t, filepath.Join(output, ".doe"), "wrong")
+			case "symlink":
+				if err := os.Remove(output); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(t.TempDir(), output); err != nil {
+					t.Fatal(err)
+				}
+			case "record symlink":
+				writeFile(t, filepath.Join(output, ".doe"), resultsMarker)
+				if err := os.Symlink("missing", filepath.Join(output, "runs.jsonl")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: []string{"smoke"}}); err == nil {
+				t.Fatal("unsafe output accepted")
+			}
+		})
 	}
 }
 
 func testEnv(stdout, stderr *bytes.Buffer) *cli.Env {
-	return &cli.Env{
-		Stdin:  strings.NewReader(""),
-		Stdout: stdout,
-		Stderr: stderr,
-	}
+	return &cli.Env{Stdin: strings.NewReader(""), Stdout: stdout, Stderr: stderr}
 }
 
-func newBuffers() (*bytes.Buffer, *bytes.Buffer) {
-	return new(bytes.Buffer), new(bytes.Buffer)
-}
+func newBuffers() (*bytes.Buffer, *bytes.Buffer) { return new(bytes.Buffer), new(bytes.Buffer) }
 
 func writeExecutable(t *testing.T, path, content string) {
 	t.Helper()
@@ -621,17 +478,20 @@ func lineCount(t *testing.T, path string) int {
 	return len(bytes.FieldsFunc(data, func(r rune) bool { return r == '\n' }))
 }
 
-func readJSONLine(t *testing.T, path string) map[string]any {
+func readRecords[T any](t *testing.T, path string) []T {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
+	var records []T
+	if err := readJSONL(path, func(data []byte) error {
+		var record T
+		if err := json.Unmarshal(data, &record); err != nil {
+			return err
+		}
+		records = append(records, record)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	var value map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(data), &value); err != nil {
-		t.Fatal(err)
-	}
-	return value
+	return records
 }
 
 func assertFileContains(t *testing.T, path string, values ...string) {
@@ -642,7 +502,7 @@ func assertFileContains(t *testing.T, path string, values ...string) {
 	}
 	for _, value := range values {
 		if !bytes.Contains(data, []byte(value)) {
-			t.Errorf("%s = %q, want it to contain %q", path, data, value)
+			t.Errorf("%s=%q missing %q", path, data, value)
 		}
 	}
 }

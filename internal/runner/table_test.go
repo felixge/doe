@@ -5,12 +5,15 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/felixge/doe/internal/cli"
 	"github.com/felixge/doe/internal/model"
+	"github.com/felixge/doe/internal/study"
 )
 
 var errPlanWrite = errors.New("plan write failed")
@@ -50,9 +53,10 @@ func TestWriteTableStopsOnWriteError(t *testing.T) {
 	}
 }
 
-func TestPlanStudyOutput(t *testing.T) {
+func TestPlanDesignsOutput(t *testing.T) {
 	var output bytes.Buffer
-	study := model.Study{Designs: []model.Design{{
+	s := model.Study{Name: "compression", Designs: []model.Design{{
+		Name:        "full",
 		FactorNames: []string{"value"},
 		Points: []model.Point{
 			{Values: []model.Value{{Name: "value", Value: "one"}}},
@@ -60,22 +64,23 @@ func TestPlanStudyOutput(t *testing.T) {
 		},
 		Replicates: 2,
 	}}}
-	if err := planStudy(&output, study); err != nil {
+	if err := planDesigns(&output, []study.Selection{{Study: &s, Design: &s.Designs[0]}}, emptyExecutions(s.Name)); err != nil {
 		t.Fatal(err)
 	}
-	const want = "Design points:\n" +
+	const want = "compression/full\nDesign points:\n" +
 		"+-------+-------+\n| point | value |\n+-------+-------+\n| #1    | one   |\n| #2    | two   |\n+-------+-------+\n\n" +
 		"Schedule:\n" +
 		"+---------+----+----+\n| run/rep | 1  | 2  |\n+---------+----+----+\n| 1       | #1 | #2 |\n| 2       | #2 | #1 |\n+---------+----+----+\n\n" +
-		"Total runs: 4\n"
+		"Runs: 4; reusable: 0; new: 4\n\nTotal runs: 4; reusable: 0; new: 4\n* Reusable from existing results or earlier selected designs.\n"
 	if got := output.String(); got != want {
-		t.Fatalf("planStudy() output = %q, want %q", got, want)
+		t.Fatalf("planDesigns() output = %q, want %q", got, want)
 	}
 }
 
-func TestPlanStudyConcurrencyGroups(t *testing.T) {
+func TestPlanDesignsConcurrencyGroups(t *testing.T) {
 	var output bytes.Buffer
-	study := model.Study{Designs: []model.Design{{
+	s := model.Study{Name: "compression", Designs: []model.Design{{
+		Name:          "full",
 		FactorNames:   []string{"host", "size"},
 		Concurrency:   2,
 		ConcurrencyBy: []string{"host"},
@@ -87,7 +92,7 @@ func TestPlanStudyConcurrencyGroups(t *testing.T) {
 		},
 		Replicates: 4,
 	}}}
-	if err := planStudy(&output, study); err != nil {
+	if err := planDesigns(&output, []study.Selection{{Study: &s, Design: &s.Designs[0]}}, emptyExecutions(s.Name)); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
@@ -115,15 +120,16 @@ func TestPlanStudyConcurrencyGroups(t *testing.T) {
 	}
 }
 
-func TestPlanStudyReturnsWriteError(t *testing.T) {
+func TestPlanDesignsReturnsWriteError(t *testing.T) {
 	writer := &failingWriter{failAt: 1}
-	study := model.Study{Designs: []model.Design{{
+	s := model.Study{Name: "compression", Designs: []model.Design{{
+		Name:        "full",
 		FactorNames: []string{"value"},
 		Points:      []model.Point{{Values: []model.Value{{Name: "value", Value: "x"}}}},
 		Replicates:  1,
 	}}}
-	if err := planStudy(writer, study); !errors.Is(err, errPlanWrite) {
-		t.Fatalf("planStudy() error = %v, want %v", err, errPlanWrite)
+	if err := planDesigns(writer, []study.Selection{{Study: &s, Design: &s.Designs[0]}}, emptyExecutions(s.Name)); !errors.Is(err, errPlanWrite) {
+		t.Fatalf("planDesigns() error = %v, want %v", err, errPlanWrite)
 	}
 	if writer.writes != 1 {
 		t.Fatalf("writes after failure: got %d, want 1", writer.writes)
@@ -132,15 +138,54 @@ func TestPlanStudyReturnsWriteError(t *testing.T) {
 
 func TestExecutePlanReturnsWriteError(t *testing.T) {
 	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "factors: [{value: [x]}]\nrun: echo '{}'\n")
+	writeFile(t, filepath.Join(root, "compression.study.yaml"), overlappingStudy)
 	writer := &failingWriter{failAt: 1}
 	env := &cli.Env{Stdin: bytes.NewReader(nil), Stdout: writer, Stderr: io.Discard}
 	err := Execute(context.Background(), env, Options{
-		Designs: []string{designPath},
+		Project: root,
+		Designs: []string{"full"},
 		Plan:    true,
 	})
 	if !errors.Is(err, errPlanWrite) {
 		t.Fatalf("Execute() error = %v, want %v", err, errPlanWrite)
+	}
+}
+
+func emptyExecutions(name string) map[string]*studyExecution {
+	return map[string]*studyExecution{name: {results: &resultIndex{runs: map[string]time.Duration{}}}}
+}
+
+func TestPlanReuseFromEarlierDesignsAndResults(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "compression.study.yaml"), overlappingStudy)
+	opts := Options{Project: root, Designs: []string{"smoke", "full"}, Plan: true}
+	stdout, stderr := newBuffers()
+	if err := Execute(context.Background(), testEnv(stdout, stderr), opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Runs: 2; reusable: 0; new: 2", "Runs: 6; reusable: 2; new: 4", "Total runs: 8; reusable: 2; new: 6", "#1*", "#2*"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("plan missing %q:\n%s", want, stdout)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "results")); !os.IsNotExist(err) {
+		t.Fatal("plan created results")
+	}
+	opts.Plan = false
+	opts.Designs = []string{"smoke"}
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), stderr), opts); err != nil {
+		t.Fatal(err)
+	}
+	opts.Plan = true
+	opts.Designs = []string{"full"}
+	stdout.Reset()
+	if err := Execute(context.Background(), testEnv(stdout, stderr), opts); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "Total runs: 6; reusable: 2; new: 4") {
+		t.Fatalf("plan=%s", stdout)
+	}
+	if got := lineCount(t, filepath.Join(root, "results", "compression", "experiments.jsonl")); got != 1 {
+		t.Fatalf("plan created experiment: %d", got)
 	}
 }

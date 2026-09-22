@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Snapshot contains the files and hash that identify a version of a study.
@@ -17,8 +18,9 @@ type Snapshot struct {
 	Hash  string
 }
 
-// Capture hashes a study before its setup command can change it.
-func Capture(root string) (*Snapshot, error) {
+// Capture hashes the selected study and shared project inputs before setup.
+// Other study files and generated results/work trees are excluded.
+func Capture(root, studyPath string) (*Snapshot, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -39,6 +41,10 @@ func Capture(root string) (*Snapshot, error) {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		if rel == "results" || rel == "work" || entry.Name() == ".git" ||
+			(strings.HasSuffix(rel, ".study.yaml") && rel != studyPath) {
+			return nil
+		}
 		if entry.Type()&fs.ModeSymlink != 0 {
 			return fmt.Errorf("study input must not be a symlink: %s", rel)
 		}

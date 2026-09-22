@@ -66,6 +66,13 @@ func TestReadJSONLRecoversOnlyInvalidUnterminatedFinalRecord(t *testing.T) {
 			if records != test.wantRecords {
 				t.Fatalf("records = %d, want %d", records, test.wantRecords)
 			}
+			before, err := os.ReadFile(path)
+			if err != nil || string(before) != test.content {
+				t.Fatalf("readJSONL modified input: %q, %v", before, err)
+			}
+			if err := repairJSONL(path); err != nil {
+				t.Fatal(err)
+			}
 			content, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -94,13 +101,13 @@ func TestAppendJSONCreatesRecordBoundary(t *testing.T) {
 
 func TestExecuteRecoversPartialExperimentAndRunRecords(t *testing.T) {
 	root := t.TempDir()
-	designPath := filepath.Join(root, "design.yaml")
-	writeFile(t, designPath, "factors: [{value: [x]}]\nrun: echo '{\"result\":1}'\n")
-	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err != nil {
+	writeFile(t, filepath.Join(root, "compression.study.yaml"), "run: echo '{\"result\":1}'\ndesigns:\n  full: {factors: {value: [x]}}\n")
+	opts := Options{Project: root, Designs: []string{"full"}}
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), opts); err != nil {
 		t.Fatal(err)
 	}
 
-	output := filepath.Join(root, "results")
+	output := filepath.Join(root, "results", "compression")
 	for _, name := range []string{"experiments.jsonl", "runs.jsonl"} {
 		path := filepath.Join(output, name)
 		file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
@@ -117,7 +124,7 @@ func TestExecuteRecoversPartialExperimentAndRunRecords(t *testing.T) {
 	}
 
 	stderr := new(bytes.Buffer)
-	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), stderr), Options{Designs: []string{designPath}}); err != nil {
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), stderr), opts); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(stderr.String(), "result") {

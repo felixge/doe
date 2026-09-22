@@ -1,7 +1,0 @@
-setup: './setup.bash'
-factors:
-  - file: [sample.pb, sample.png, sample.txt]
-    algorithm: [gzip, zstd]
-    preset: [min, default, max]
-run: './run.bash {algorithm} {preset} {file}'
-replicates: 6

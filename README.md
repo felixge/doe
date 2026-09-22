@@ -4,34 +4,46 @@
 
 doe is a lightweight CLI for applying [design of experiments](https://en.wikipedia.org/wiki/Design_of_experiments) methodology to software engineering.
 
-The project defines a directory layout for describing study designs and storing their results together with all code needed to reproduce them. The UX balances the needs of fast-paced experimentation with a reasonable level of scientific rigor. <br clear="left" />
+The tool defines a directory layout for study protocols, scripts, and results. The UX balances the needs of fast-paced experimentation with a reasonable level of scientific rigor. <br clear="left" />
 
 ## Install
 
-```
-$ go install github.com/felixge/doe@latest
+```bash
+go install github.com/felixge/doe@latest
 ```
 
 ## Getting Started
 
-Studies are directories containing one or more designs. Here is a study of different compression algorithms:
+Projects are directories containing one or more studies. Here is a study of different compression algorithms:
 
 ```bash
 $ cd ./example/compression
 $ ls
-design.yaml  run.bash  sample.pb  sample.png  sample.txt  setup.bash
+compression.study.yaml  run.bash  sample.pb  sample.png  sample.txt  setup.bash
 ```
 
-The heart is the [design.yaml](./example/compression/design.yaml) file which defines a combination of factors and settings, and their execution:
+The heart is the [compression.study.yaml](./example/compression/compression.study.yaml) file which defines a shared protocol and named designs with combinations of factors and settings:
 
 ```yaml
-setup: './setup.bash'
-factors:
-  - file: [sample.pb, sample.png, sample.txt]
-    algorithm: [gzip, zstd]
-    preset: [min, default, max]
-run: './run.bash {algorithm} {preset} {file}'
-replicates: 6
+setup: ./setup.bash
+run: ./run.bash {algorithm} {preset} {file}
+
+designs:
+  smoke:
+    factors:
+      file: [sample.txt]
+      algorithm: [gzip, zstd]
+      preset: [default]
+    replicates: 1
+
+  full:
+    factors:
+      file: [sample.pb, sample.png, sample.txt]
+      algorithm: [gzip, zstd]
+      preset: [min, default, max]
+    replicates: 6
+    concurrency: 2
+    concurrency_by: [file]
 ```
 
 It uses a [setup.bash](./example/compression/setup.bash) script to install dependencies and to emit a JSON object describing the environment:
@@ -48,18 +60,17 @@ $ ./run.bash zstd default sample.pb
 {"level": 3,"wall_seconds": 0.00039,"cpu_seconds": 0.00036,"peak_rss_bytes": 2588672,"input_size_bytes": 26400,"output_size_bytes": 24243}
 ```
 
-Run an experiment by passing its design path to `doe run`. Incomplete work can be resumed at any time. If any file in the study has changed since the last experiment, doe will refuse to conduct the experiment unless the `-d` flag is provided.
+Run an experiment by passing the project directory and a design name to `doe run`. Incomplete work can be resumed at any time. If any input to the study has changed since the last experiment, doe will refuse to conduct the experiment unless the `-d` flag is provided.
 
 ```bash
-$ doe run design.yaml
+$ doe run . full
 <progress on stderr>
-/home/alice/doe/example/compression/results
 ```
 
-`doe run` prints the results directory to stdout. doe streams one JSON object per run to the `runs.jsonl` file inside that directory. You can analyze this data any way you like, e.g. using DuckDB's `read_json` function:
+`doe run` leaves stdout empty. doe streams one JSON object per run to `results/compression/runs.jsonl`. You can analyze this data any way you like, e.g. using DuckDB's `read_json` function:
 
 ```bash
-$ duckdb -c 'SELECT algorithm, file, level, preset, round(avg(input_size_bytes/output_size_bytes), 2) as ratio, round(avg(input_size_bytes/cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/runs.jsonl') GROUP BY ALL ORDER BY ALL;'
+$ duckdb -c "SELECT algorithm, file, level, preset, round(avg(input_size_bytes/output_size_bytes), 2) as ratio, round(avg(input_size_bytes/cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/compression/runs.jsonl') GROUP BY ALL ORDER BY ALL;"
 ┌───────────┬────────────┬───────┬─────────┬────────┬────────────┬──────────┐
 │ algorithm │    file    │ level │ preset  │ ratio  │ throughput │ count(1) │
 │  varchar  │  varchar   │ int64 │ varchar │ double │   double   │  int64   │
@@ -89,201 +100,146 @@ The rest of this document contains more details on the CLI and doe format.
 
 ## CLI
 
-Below you can find an overview of doe commands.
-
-```
-A lightweight CLI for design of experiments studies.
-
-Usage: doe <command> [command options] [arguments]
-
-Commands:
-	run			Conduct or resume the execution of a study.
-```
-
-### run
-
-```
-Run performs one experiment per design. Previous runs are reused, allowing work to be resumed.
-
-Usage: doe run [options] <design>...
-
-Arguments:
-  <design>...           Paths to one or more design YAML files
+```text
+Usage: doe run [options] <project-directory> <design>...
 
 Options:
-  -p, --plan            Show the design points and schedule. Do not run them.
-  -s, --setup           Run setup without running experiments.
-  -d, --dirty           Run the study even if it will dirty the results.
-  -c, --clean           Remove the results and work directories before running.
-  -h, --help            Print help text.
-
-Examples:
-  # Run a design
-  doe run design.yaml
-  # Run a design, even if it will produce dirty results
-  doe run -d design.yaml
-  # Remove previous results and work before running a design
-  doe run -c design.yaml
-  # Show the plan for the design
-  doe run -p design.yaml
-  # Run setup without running experiments
-  doe run -s design.yaml
+  -p, --plan    Show design points, schedules, and reusable runs; do not execute.
+  -d, --dirty   Allow reuse despite changed study or shared project inputs.
+  -h, --help    Print help.
 ```
 
-A run always follows the steps below:
+doe discovers all top-level `*.study.yaml` files in the project directory. Select designs by qualified `study/design` names or unique short names:
 
-1. If `-c` or `--clean` is provided, remove the study's `results` and `work` directories so the study starts from scratch.
-2. Compute the `files_hash` over all files in the study, excluding the `results` and `work` directories and any `.git` directories.
-3. Check if `results/experiments.jsonl` contains a `files_hash` for a different version of the study. If yes, refuse to resume unless the `-d` flag is provided or until the user clears the `results` directory.
-4. Execute the designs in the order they were listed.
-   1. Invoke the `setup` script and capture the env JSON it emits, if any.
-   2. Record the experiment for the design in `results/experiments.jsonl` along with the env JSON that was captured.
-   3. Expand the `factors` and `replicates` into a list of all runs that need to be performed.
-   4. Reuse `results/runs.jsonl` records that belong to the same design, design point and replicate number.
-   5. Invoke the `run` script for next remaining run and capture the JSON output it emits.
-   6. Record the design point, env and outputs for the run in `results/runs.jsonl`
-   7. Continue with any remaining run.
-5. Output the path to the `results` directory on stdout.
-
-#### Inspect Plan
-
-The `--plan` flag prints a labeled ASCII table of the deterministic design-point order. Its first column is `point`, with entries numbered `#1`, `#2`, and so on. Below it, a labeled schedule table has one row per run position and one column per replicate. Its `run/rep` header identifies the row/column axes, and its cells reference design points by their `#` values. The final line reports the total number of scheduled runs.
-
-With concurrency, the plan also reports the per-group limit, group count, and maximum total active runs. When `concurrency_by` is nonempty, each group gets its own schedule table labeled with its factor settings. The point table is unchanged. Read each replicate column top to bottom, then move right. These tables describe dispatch priority, not execution timing; groups execute independently, without row or replicate barriers.
-
-## Studies
-
-A study is a directory that contains one or more designs, scripts, and other assets needed to conduct experiments. It usually looks like this:
-
-```
-experiment1.yaml
-experiment2.yaml
-setup.bash
-run.bash
+```bash
+doe run . compression/smoke compression/full
+doe run . smoke full
+doe run . compression/smoke latency/full compression/full
 ```
 
-The study root is the parent directory of its design files. All designs passed to one invocation must belong to the same study root.
+Short names must resolve uniquely across all discovered studies. Missing, unknown, or ambiguous selectors report qualified choices. Duplicate selections are errors, including short and qualified aliases of the same design.
 
-### Reserved Keywords
+Before any setup or result writes, doe parses **all** discovered studies, resolves **all** selectors, and captures/checks **each selected study's** snapshot and existing results. Changed inputs require `--dirty`, including with `--plan`, or removal of that study's results by the user.
 
-Within a study, `results` and `work` are reserved directory names.
+Designs execute in the exact selector argument order. Setup runs lazily before a study's first selected design and only once for that study in the invocation. Thus `a/x b/y a/z` executes setup A, design x, setup B, design y, design z. Another study's setup may change shared state between designs: projects must make their setups coexist or group their selectors accordingly.
 
-For factors and responses, all field names defined in the `runs.jsonl` section below are considered reserved keywords. 
+A setup or run failure stops execution, cancels active runs, and retains completed results and command logs. Resuming creates another experiment and reruns setup, even when all requested runs are reusable. Do not run concurrent doe invocations against the same results; there is no process locking.
 
-### Designs
+### Plans and scheduling
 
-Designs are defined as YAML files and must be placed at the top level of the study. The following options exist:
+`--plan` prints each selected design's point table and schedule in selector order. The `point` column labels points `#1`, `#2`, etc. Schedule rows are run positions and columns are replicates: read a column top to bottom, then move right. `*` marks runs reusable from existing results or earlier selected designs. Per-design and total counts report scheduled, reusable, and new runs. Plans do not run setup, write records, or repair interrupted records.
 
-| field      | description                                                  |
-| ---------- | ------------------------------------------------------------ |
-| setup      | An optional string holding a Bourne shell command to run once before the start of an experiment. It is re-executed when incomplete work is resumed because resuming the execution of a design produces another experiment. May output a JSON object describing the experiment's environment. |
-| factors    | A required list of factor groups. Each group maps the same set of factors to lists of settings and produces their Cartesian product. Settings must be JSON scalars: strings, numbers, booleans, or null. The union of these products forms the design points and must not contain duplicates. |
-| run        | A required string holding a Bourne shell command that is invoked `replicates` times at every design point. Must produce a JSON object containing the outputs of the run. See Commands & Scripts for more information. See the `runs.jsonl` description below for reserved field names. |
-| replicates | An optional integer defining the number of runs to perform at each design point. Defaults to 1. |
-| concurrency | An optional positive integer limiting active runs per concurrency group. Defaults to 1. |
-| concurrency_by | An optional list of factor names defining concurrency groups. Omitted or empty means all runs share one group. |
+For replicate `r`, doe uses row `r-1` of a repeating Williams design. A complete schedule has `n` rows for an even number of points and `2n` rows for an odd number greater than one. This balances execution position and first-order carryover effects. The schedule repeats when more replicates are requested.
 
-doe places design points in a deterministic order that can be inspected with `--plan`. Replicates are numbered from 1. For replicate `r`, doe orders the design points using row `r-1` of a repeating Williams design derived from that order. A complete schedule has `n` rows for an even number of points and `2n` rows for an odd number, then repeats as needed. This balances execution position and first-order carryover effects.
+With concurrency, the plan reports the per-group limit, group count, and maximum active runs. Each group gets its own schedule when `concurrency_by` is nonempty. Tables show dispatch priority, not execution timing. Each group fills available slots independently, without row or replicate barriers. Designs remain sequential.
 
-#### Concurrency
+## Study format
 
-Allow two active runs per host:
+A study is a top-level `<name>.study.yaml` file containing a shared experimental protocol and one or more named designs. The filename supplies its identity and results namespace. Renaming a study starts a different namespace. Study and design names use lowercase kebab-case: a lowercase letter followed by lowercase letters/digits, optionally separated by single hyphens; `/` is not part of a name.
 
-```yaml
-concurrency: 2
-concurrency_by: [host]
+| Study field | Description |
+| --- | --- |
+| `setup` | Optional Bourne shell command, run once per experiment before the study's first selected design. May emit a JSON environment object. |
+| `run` | Required nonempty Bourne shell command, shared by all designs. Must emit a JSON result object. |
+| `designs` | Required nonempty mapping from design names to their settings below. |
+
+| Design field | Description |
+| --- | --- |
+| `factors` | Required nonempty mapping from factor names to nonempty lists of distinct settings. Their Cartesian product forms the design points. Settings are JSON scalars: strings, numbers, booleans, or null. |
+| `replicates` | Positive number of runs per point; defaults to 1. Replicates start at 1. |
+| `concurrency` | Positive maximum active runs **per group**; defaults to 1. |
+| `concurrency_by` | List of factor names defining independent concurrency groups. Omitted or empty means one group. |
+
+Every design in a study must use the same factor names. Declaration order may differ. Factor and setting declaration order determines the point order for each design. Unknown fields and duplicate YAML keys are errors.
+
+For example, `concurrency: 2` and `concurrency_by: [host]` allow two active runs per host. Three hosts allow six active runs, with no additional global limit. Scripts must avoid shared-file conflicts. Concurrency can distort measurements and invalidate serial carryover balancing.
+
+### Scripts and shared work
+
+Setup and run commands execute via `/bin/sh` with the **project directory** as their working directory. They can invoke scripts written in any language. Factor placeholders such as `{algorithm}` are replaced with shell-escaped settings; do not add quotes around placeholders.
+
+The final stdout line of each run must be a JSON object. Its response values may include nested objects and arrays. If setup's final stdout line is a JSON object, doe saves it as the environment; otherwise the environment is `{}`. Responses must not collide with factor names or reserved run fields.
+
+Command stdout and stderr are logged together in best-effort arrival order, not streamed to the terminal. Logs include the final JSON line and survive success, failure, and interruption.
+
+`work/` is project-wide and **not namespaced by study**. Scripts can deliberately share build products and expensive setup state there. Put generated files in `work/` or `results/`; other project files contribute to snapshots.
+
+### Snapshots and reuse
+
+Each selected study's snapshot includes its own study file and every other project file, except:
+
+- the project-level `results/` and `work/` trees;
+- `.git` entries;
+- other `*.study.yaml` files.
+
+Ignored Git files are still included. Included inputs must be regular files, not symlinks. Snapshots store content hashes, not copies of files. Keep the project sources in version control to reproduce an experiment.
+
+Completed runs are reused by **study + design point + replicate**. Design names, concurrency settings, scheduling context, and environment hashes are not part of this key. Full can reuse matching smoke runs, and reordered factors do not change identity. Reused records retain their original experiment IDs, environment, timestamps, and logs; no duplicate records are written.
+
+This intentionally permits mixing measurements from different concurrency, scheduling, or setup environments. `--dirty` also permits mixing source versions. Consider these differences when analyzing results; remove a study's results explicitly when a fresh measurement set is needed.
+
+## Results format
+
+```text
+project/
+  compression.study.yaml
+  work/
+  results/
+    compression/
+      .doe
+      experiments.jsonl
+      runs.jsonl
+      <experiment_id>/
+        setup.txt
+        <run_id>.txt
 ```
 
-Matching `concurrency_by` settings define groups across replicates. Each group follows its filtered schedule, skipping reused runs and filling available slots without replicate barriers. Groups execute independently with no global limit: three hosts allow six active runs. Setup finishes first; designs remain sequential.
+Each study has independent experiment/run records. `.doe` marks a managed results directory; doe refuses unrelated nonempty directories or symlinked result paths. `setup.txt` exists when setup is specified. Failed runs have logs but no run record. An invalid, unterminated JSONL tail left by interruption is ignored during preflight and removed before execution resumes; malformed terminated records are errors.
 
-Results are saved in completion order and reused on resume. Failures or interruptions stop dispatching, cancel active runs, and preserve recorded results.
+### experiments.jsonl
 
-Scripts must avoid shared-file conflicts. Concurrency can distort measurements and invalidate serial carryover balancing.
+One JSON object records one invocation of a selected study, including all of its selected designs and one setup environment. It is appended after setup succeeds, before runs start. A failed setup leaves its log but no experiment record. Resuming produces a new experiment.
 
-### Scripts
+| Field | Description |
+| --- | --- |
+| `experiment_id` | Unique experiment identifier. |
+| `start` | RFC3339Nano timestamp before setup starts. |
+| `study` | Study name from the filename. |
+| `designs` | Selected design names in argument order for this study, including designs not reached if execution fails. |
+| `factors` | Factor names, used to distinguish inputs from outputs in run records. |
+| `files` | Map of project-relative included file paths to SHA-256 content hashes. |
+| `files_hash` | SHA-256 over sorted paths and their hashes, each followed by a NUL byte. |
+| `env` | Setup's final JSON object, or `{}`. |
+| `env_hash` | SHA-256 of the JSON environment with object keys sorted. |
 
-The inline Bourne shell scripts invoked by `setup` and `run` are always executed using the study root as their working directory.
+### runs.jsonl
 
-Typically the inline scripts just shell out to a script file in the study. Those scripts can be written in any language. The setup script can install runtime dependencies or perform compilations as needed.
+One JSON object per successfully completed run, appended in completion order:
 
-Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For `run`, doe treats the last line of stdout as the result. The result must be a JSON object; its values may be any JSON values, including nested objects and arrays. If setup's last stdout line is a JSON object, doe uses it as the environment; otherwise, the environment is `{}`. A run must produce a result.
+| Field | Description |
+| --- | --- |
+| `run_id` | Unique run identifier. |
+| `experiment_id` | Original experiment identifier, joining the run to its protocol snapshot and environment. |
+| `replicate` | Replicate number, starting at 1. |
+| `start`, `end` | RFC3339Nano timestamps of run execution. |
+| Other fields | Flattened factor settings and response measurements. |
 
-Setup and run output is not streamed to the terminal. Combined stdout and stderr is retained in best-effort arrival order under the experiment's results directory. This includes the final stdout line parsed as the setup environment or run result. Logs are retained when commands succeed, fail, or are interrupted. `doe run --setup` is not an experiment and does not persist an experiment ID, so its output is discarded and no log is retained.
-
-### Work Directory
-
-Temporary files as well as a expensive setup state that may be reused between runs can be stored in a directory called `work`.
-
-### Results Directory
-
-Results are stored in the `results` directory of the study being executed. It contains a record of all experiments and runs, plus command logs whose paths derive from their IDs.
-
-```
-results
-	experiments.jsonl
-	runs.jsonl
-	<experiment_id>
-		setup.txt
-		<run_id>.txt
-```
-
-`setup.txt` exists when the design has a setup command. Each newly started run has a `<run_id>.txt` log, including runs that do not produce a `runs.jsonl` record because they fail or are interrupted. `--clean` removes these logs with the rest of `results`.
-
-#### runs.jsonl
-
-This file contains Newline-Delimited JSON, with each line holding an object as described below.
-
-| field         | description                                                  |
-| ------------- | ------------------------------------------------------------ |
-| run_id        | A string holding a unique identifier of the run within the study. |
-| experiment_id | A string holding the ID of the experiment the run belongs to. |
-| replicate     | An integer holding the replicate number of the run, starting at 1. |
-| start         | A string holding the [RFC3339Nano](https://pkg.go.dev/time) timestamp that the run was started. |
-| end           | A string holding the [RFC3339Nano](https://pkg.go.dev/time) timestamp that the run was finished. |
-| ...           | The remainder of the object contains the inputs and outputs of the run. |
-
-Before executing a run, doe checks for an existing run with the same design point and replicate number whose experiment references the same design path. If found, the run is reused; otherwise, it is executed.
-
-#### experiments.jsonl
-
-This file contains Newline-Delimited JSON, with each line holding an object as described below. Each invocation of a design, including an invocation that resumes incomplete work, is an experiment and produces a new line.
-
-| field         | description                                                  |
-| ------------- | ------------------------------------------------------------ |
-| experiment_id | A string holding the unique identifier of the experiment within the study. |
-| start         | A string holding the [RFC3339Nano](https://pkg.go.dev/time) timestamp that an experiment was started. |
-| design        | A string holding the path to the YAML file describing the design, relative to the study directory. |
-| factors       | An array of strings listing the factors that are being studied. |
-| files         | An object with one key per included file path in the study. The value is the hash of the file contents at the time the experiment began. |
-| files_hash    | A string holding the hash over all file paths and content hashes in the `files` object, ordered by path in ascending byte order. |
-| env           | An object holding the JSON result of the setup script. If setup produced no result, this is an empty object. |
-| env_hash      | A string holding the hash over all values in the `env` object after sorting them by their keys in ascending byte order. |
+`run_id`, `experiment_id`, `replicate`, `start`, and `end` are reserved names for both factors and responses.
 
 ## Terminology
 
-This project aims to use the following terminology consistently.
-
-| term         | description                                                  |
-| ------------ | ------------------------------------------------------------ |
-| study        | A directory containing one or more designs. It may also contain scripts and other assets. A results directory may be contained within a study, but is not considered to be part of the study itself. |
-| design       | A YAML file describing the planned execution of runs.        |
-| factor       | An input variable in the design. E.g. `algorithm` or `preset`. |
-| setting      | A value associated with a factor. E.g. `gzip` or `low`.      |
-| input        | A factor and setting combination. E.g. `algorithm=gzip` or `preset=low`. |
-| design point | A unique combination of factors and settings in the design. E.g. `algorithm=gzip preset=low`. |
-| response     | An output variable in the design. E.g. `cpu_seconds` or `peak_rss_bytes`. |
-| measurement  | A value associated with a response. E.g. `0.025` or `493894`. |
-| output       | A response and measurement combination. E.g. `cpu_seconds=0.025 peak_rss_bytes=493894`. |
-| experiment   | A single doe invocation of a design. Resuming the execution of a design produces another experiment. |
-| run          | A single execution at a design point and the outputs it produced. |
-| work         | The directory within a study that contains temporary outputs as well as reusable setup state. |
-| results      | The directory within a study that contains its experiment and run records. |
-| dirty        | A study is considered to be dirty if it contains results with different `files_hash` values. The use case is adding additional settings to a design after its first execution. |
+| Term | Meaning |
+| --- | --- |
+| project | Directory containing studies, shared scripts/assets, work, and results. |
+| study | Shared experimental protocol with named designs, defined by one study file. |
+| design | Design points, replication, and scheduling under a study's protocol. |
+| factor / setting | Input variable / its value, such as `algorithm` / `gzip`. |
+| design point | Unique combination of factor settings. |
+| response / measurement | Output variable / its value, such as `cpu_seconds` / `0.025`. |
+| experiment | One invocation of a study's selected designs with one setup environment. |
+| run | One execution at a design point and replicate, with its measurements. |
+| dirty | Current study snapshot differs from a recorded experiment's snapshot. |
 
 ## AI Usage
 
-doe is designed for clankers (agents) and humans.
-
-Given that clankers can easily generate orchestration frameworks like doe on demand, you might be wondering why you'd want to use doe instead. The answer is that clanker-generated studies are difficult to review, reproduce, and maintain.
-
-doe solves this problem by defining a simple study and results format. This allows both humans and clankers to quickly understand the methodology of a study, analyze the results, and reproduce the experiments if needed.
+doe is designed for clankers (agents) and humans. A simple study and results format makes experimental methodology, provenance, and measurements easier to review, analyze, and reproduce than ad hoc orchestration scripts.

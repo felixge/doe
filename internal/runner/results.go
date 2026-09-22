@@ -68,7 +68,7 @@ func loadResults(output string) (*resultIndex, error) {
 			}
 			point.Values = append(point.Values, model.Value{Name: name, Value: value})
 		}
-		key, err := reuseKey(experiment.Design, replicate, point)
+		key, err := reuseKey(experiment.Study, replicate, point)
 		if err != nil {
 			return err
 		}
@@ -108,8 +108,8 @@ func (r *resultIndex) addExperiment(experiment model.Experiment) {
 	r.experiment[experiment.ID] = experiment
 }
 
-func reuseKey(design string, replicate int, point model.Point) (string, error) {
-	key, err := pointKey(design, point)
+func reuseKey(study string, replicate int, point model.Point) (string, error) {
+	key, err := pointKey(study, point)
 	if err != nil {
 		return "", err
 	}
@@ -120,7 +120,7 @@ func replicateKey(pointKey string, replicate int) string {
 	return pointKey + "\x00" + strconv.Itoa(replicate)
 }
 
-func pointKey(design string, point model.Point) (string, error) {
+func pointKey(study string, point model.Point) (string, error) {
 	values := make(map[string]model.Scalar, len(point.Values))
 	for _, value := range point.Values {
 		values[value.Name] = value.Value
@@ -129,7 +129,7 @@ func pointKey(design string, point model.Point) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return design + "\x00" + string(data), nil
+	return study + "\x00" + string(data), nil
 }
 
 func readJSONL(path string, consume func([]byte) error) error {
@@ -142,7 +142,6 @@ func readJSONL(path string, consume func([]byte) error) error {
 	}
 
 	lines := bytes.Split(data, []byte{'\n'})
-	offset := 0
 	for i, line := range lines {
 		terminated := i < len(lines)-1
 		if terminated {
@@ -153,15 +152,7 @@ func readJSONL(path string, consume func([]byte) error) error {
 			var value json.RawMessage
 			if err := decoder.Decode(&value); err != nil {
 				if !terminated {
-					file, openErr := os.OpenFile(path, os.O_WRONLY, 0)
-					if openErr != nil {
-						return openErr
-					}
-					err = file.Truncate(int64(offset))
-					if err == nil {
-						err = file.Sync()
-					}
-					return errors.Join(err, file.Close())
+					return nil
 				}
 				return fmt.Errorf("%s:%d: %w", path, i+1, err)
 			}
@@ -172,7 +163,31 @@ func readJSONL(path string, consume func([]byte) error) error {
 				return fmt.Errorf("%s:%d: %w", path, i+1, err)
 			}
 		}
-		offset += len(lines[i]) + 1
 	}
 	return nil
+}
+
+// repairJSONL removes an incomplete tail only after all preflight checks pass.
+func repairJSONL(path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	offset := bytes.LastIndexByte(data, '\n') + 1
+	tail := bytes.TrimSpace(data[offset:])
+	if len(tail) == 0 || json.Valid(tail) {
+		return nil
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	err = file.Truncate(int64(offset))
+	if err == nil {
+		err = file.Sync()
+	}
+	return errors.Join(err, file.Close())
 }

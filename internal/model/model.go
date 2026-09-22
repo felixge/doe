@@ -24,36 +24,37 @@ type Value struct {
 	Value Scalar
 }
 
-// Design describes the work planned by one YAML design file.
+// Design describes named design points, replication, and scheduling in a study.
 type Design struct {
-	Path          string
-	Setup         string
+	Name          string
 	FactorNames   []string
 	Points        []Point
-	Run           string
 	Replicates    int
 	Concurrency   int
 	ConcurrencyBy []string
 }
 
 // Point is one unique combination of factor settings. Values are kept in the
-// declaration order established by the first factor group in the design.
+// factor declaration order in the design.
 type Point struct {
 	Values []Value
 }
 
-// Study is an in-memory aggregate. Its members are stored by value; persisted
-// records refer to designs and experiments by path or ID instead.
+// Study defines a shared experimental protocol and its named designs.
 type Study struct {
-	Root    string
+	Name    string
+	Path    string
+	Setup   string
+	Run     string
 	Designs []Design
 }
 
-// Experiment is the persisted account of one invocation of a design.
+// Experiment records one invocation of a study's selected designs.
 type Experiment struct {
 	ID        string            `json:"experiment_id"`
 	Start     time.Time         `json:"start"`
-	Design    string            `json:"design"`
+	Study     string            `json:"study"`
+	Designs   []string          `json:"designs"`
 	Factors   []string          `json:"factors"`
 	Files     map[string]string `json:"files"`
 	FilesHash string            `json:"files_hash"`
