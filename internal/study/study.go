@@ -1,5 +1,5 @@
-// Package design loads designs and derives their points and run schedules.
-package design
+// Package study loads study protocols and derives design points and schedules.
+package study
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -15,62 +17,107 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Load reads and validates a design YAML file.
-func Load(path string) (model.Design, error) {
+// Load reads and validates a study YAML file.
+func Load(path string) (model.Study, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return model.Design{}, err
+		return model.Study{}, err
 	}
 	return Parse(path, data)
 }
 
-// Parse validates design YAML from data. Path is retained on the returned
-// design and is only used to make errors and persisted records meaningful.
-func Parse(path string, data []byte) (model.Design, error) {
+var validName = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+
+// Parse validates a study and all its named designs.
+func Parse(path string, data []byte) (model.Study, error) {
+	name := strings.TrimSuffix(filepath.Base(path), ".study.yaml")
+	if !strings.HasSuffix(path, ".study.yaml") || !validName.MatchString(name) {
+		return model.Study{}, fmt.Errorf("study filename %q must be <lowercase-kebab-case>.study.yaml", path)
+	}
 	var document yaml.Node
 	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
 	if err := decoder.Decode(&document); err != nil {
-		return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
+		return model.Study{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return model.Design{}, fmt.Errorf("parse %s: multiple YAML documents", path)
+			return model.Study{}, fmt.Errorf("parse %s: multiple YAML documents", path)
 		}
-		return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
+		return model.Study{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
-		return model.Design{}, fmt.Errorf("parse %s: design must be a mapping", path)
+		return model.Study{}, fmt.Errorf("parse %s: study must be a mapping", path)
 	}
 
-	fields, err := mapping(document.Content[0], "design")
+	fields, err := mapping(document.Content[0], "study")
 	if err != nil {
-		return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
+		return model.Study{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	for name, node := range fields {
 		switch name {
-		case "setup", "factors", "run", "replicates", "concurrency", "concurrency_by":
+		case "setup", "run", "designs":
+		default:
+			return model.Study{}, nodeError(node, "unknown study field %q", name)
+		}
+	}
+
+	s := model.Study{Name: name, Path: filepath.Base(path)}
+	if node := fields["setup"]; node != nil {
+		if s.Setup, err = stringValue(node, "setup"); err != nil {
+			return model.Study{}, err
+		}
+	}
+	if node := fields["run"]; node != nil {
+		if s.Run, err = stringValue(node, "run"); err != nil {
+			return model.Study{}, err
+		}
+		if strings.TrimSpace(s.Run) == "" {
+			return model.Study{}, nodeError(node, "run must not be empty")
+		}
+	} else {
+		return model.Study{}, fmt.Errorf("parse %s: missing required field run", path)
+	}
+	node := fields["designs"]
+	if node == nil {
+		return model.Study{}, fmt.Errorf("parse %s: missing required field designs", path)
+	}
+	entries, err := mappingEntries(node, "designs")
+	if err != nil {
+		return model.Study{}, err
+	}
+	if len(entries) == 0 {
+		return model.Study{}, nodeError(node, "designs must not be empty")
+	}
+	for _, entry := range entries {
+		if !validName.MatchString(entry.key) {
+			return model.Study{}, nodeError(entry.keyNode, "design name %q must use lowercase kebab-case", entry.key)
+		}
+		d, err := parseDesign(entry.key, entry.value)
+		if err != nil {
+			return model.Study{}, fmt.Errorf("%s/%s: %w", name, entry.key, err)
+		}
+		if len(s.Designs) > 0 && !sameNames(s.Designs[0].FactorNames, d.FactorNames) {
+			return model.Study{}, nodeError(entry.value, "every design in study %q must have the same factor names", name)
+		}
+		s.Designs = append(s.Designs, d)
+	}
+	return s, nil
+}
+
+func parseDesign(name string, node *yaml.Node) (model.Design, error) {
+	fields, err := mapping(node, "design")
+	if err != nil {
+		return model.Design{}, err
+	}
+	for name, node := range fields {
+		switch name {
+		case "factors", "replicates", "concurrency", "concurrency_by":
 		default:
 			return model.Design{}, nodeError(node, "unknown design field %q", name)
 		}
 	}
-
-	d := model.Design{Path: path, Replicates: 1, Concurrency: 1}
-	if node := fields["setup"]; node != nil {
-		if d.Setup, err = stringValue(node, "setup"); err != nil {
-			return model.Design{}, err
-		}
-	}
-	if node := fields["run"]; node != nil {
-		if d.Run, err = stringValue(node, "run"); err != nil {
-			return model.Design{}, err
-		}
-		if d.Run == "" {
-			return model.Design{}, nodeError(node, "run must not be empty")
-		}
-	} else {
-		return model.Design{}, fmt.Errorf("parse %s: missing required field run", path)
-	}
+	d := model.Design{Name: name, Replicates: 1, Concurrency: 1}
 	if node := fields["replicates"]; node != nil {
 		if d.Replicates, err = positiveInt(node, "replicates"); err != nil {
 			return model.Design{}, err
@@ -89,10 +136,10 @@ func Parse(path string, data []byte) (model.Design, error) {
 		d.FactorNames = names
 		d.Points, err = expandPoints(groups, names)
 		if err != nil {
-			return model.Design{}, fmt.Errorf("parse %s: %w", path, err)
+			return model.Design{}, err
 		}
 	} else {
-		return model.Design{}, fmt.Errorf("parse %s: missing required field factors", path)
+		return model.Design{}, fmt.Errorf("design %s: missing required field factors", name)
 	}
 	if node := fields["concurrency_by"]; node != nil {
 		if node.Kind != yaml.SequenceNode {

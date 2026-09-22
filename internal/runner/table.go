@@ -6,22 +6,21 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/felixge/doe/internal/design"
 	"github.com/felixge/doe/internal/model"
+	"github.com/felixge/doe/internal/study"
 )
 
-func planStudy(w io.Writer, study model.Study) error {
-	totalRuns := 0
-	for designIndex, d := range study.Designs {
-		if len(study.Designs) > 1 {
-			if designIndex > 0 {
-				if _, err := fmt.Fprintln(w); err != nil {
-					return err
-				}
-			}
-			if _, err := fmt.Fprintln(w, d.Path); err != nil {
+func planDesigns(w io.Writer, selected []study.Selection, executions map[string]*studyExecution) error {
+	totalRuns, totalReused := 0, 0
+	for designIndex, selection := range selected {
+		d := *selection.Design
+		if designIndex > 0 {
+			if _, err := fmt.Fprintln(w); err != nil {
 				return err
 			}
+		}
+		if _, err := fmt.Fprintln(w, selection); err != nil {
+			return err
 		}
 		points := d.Points
 		totalRuns += len(points) * d.Replicates
@@ -52,7 +51,22 @@ func planStudy(w io.Writer, study model.Study) error {
 				return err
 			}
 		}
-		schedule := design.Schedule(len(points), d.Replicates)
+		schedule := study.Schedule(len(points), d.Replicates)
+		reused := map[string]bool{}
+		results := executions[selection.Study.Name].results
+		for replicate, row := range schedule {
+			for _, pointIndex := range row {
+				key, err := reuseKey(selection.Study.Name, replicate+1, points[pointIndex])
+				if err != nil {
+					return err
+				}
+				if _, ok := results.runs[key]; ok {
+					reused[key] = true
+				}
+				results.runs[key] = 0
+			}
+		}
+		totalReused += len(reused)
 		for groupIndex, group := range groups {
 			if groupIndex > 0 {
 				if _, err := fmt.Fprintln(w); err != nil {
@@ -91,8 +105,16 @@ func planStudy(w io.Writer, study model.Study) error {
 			scheduleRows = append(scheduleRows, header)
 			for position := range group {
 				rowValues := []string{strconv.Itoa(position + 1)}
-				for _, row := range filteredSchedule {
-					rowValues = append(rowValues, "#"+strconv.Itoa(row[position]+1))
+				for replicate, row := range filteredSchedule {
+					cell := "#" + strconv.Itoa(row[position]+1)
+					key, err := reuseKey(selection.Study.Name, replicate+1, points[row[position]])
+					if err != nil {
+						return err
+					}
+					if reused[key] {
+						cell += "*"
+					}
+					rowValues = append(rowValues, cell)
 				}
 				scheduleRows = append(scheduleRows, rowValues)
 			}
@@ -100,8 +122,11 @@ func planStudy(w io.Writer, study model.Study) error {
 				return err
 			}
 		}
+		if _, err := fmt.Fprintf(w, "\nRuns: %d; reusable: %d; new: %d\n", len(points)*d.Replicates, len(reused), len(points)*d.Replicates-len(reused)); err != nil {
+			return err
+		}
 	}
-	_, err := fmt.Fprintf(w, "\nTotal runs: %d\n", totalRuns)
+	_, err := fmt.Fprintf(w, "\nTotal runs: %d; reusable: %d; new: %d\n* Reusable from existing results or earlier selected designs.\n", totalRuns, totalReused, totalRuns-totalReused)
 	return err
 }
 

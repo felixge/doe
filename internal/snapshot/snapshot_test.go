@@ -29,8 +29,10 @@ func TestCapture(t *testing.T) {
 	write(".git/config", "git")
 	write("results/runs.jsonl", "result")
 	write("work/output.txt", "work")
+	write("compression.study.yaml", "selected")
+	write("other.study.yaml", "excluded")
 
-	s, err := Capture(root)
+	s, err := Capture(root, "compression.study.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,12 +42,13 @@ func TestCapture(t *testing.T) {
 		"drop.tmp",
 		"nested/ignored/file",
 		"nested/work/file",
+		"compression.study.yaml",
 	} {
 		if _, ok := s.Files[path]; !ok {
 			t.Errorf("expected %s in snapshot", path)
 		}
 	}
-	for _, path := range []string{".git/config", "results/runs.jsonl", "work/output.txt"} {
+	for _, path := range []string{".git/config", "results/runs.jsonl", "work/output.txt", "other.study.yaml"} {
 		if _, ok := s.Files[path]; ok {
 			t.Errorf("did not expect %s in snapshot", path)
 		}
@@ -59,7 +62,7 @@ func TestCaptureHashesRegularFileContents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Capture(root)
+	s, err := Capture(root, "compression.study.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +118,7 @@ func TestCaptureRejectsSymlinks(t *testing.T) {
 			if err := os.Symlink(test.target(t, root), link); err != nil {
 				t.Fatal(err)
 			}
-			_, err := Capture(root)
+			_, err := Capture(root, "compression.study.yaml")
 			if err == nil || err.Error() != "study input must not be a symlink: nested/input" {
 				t.Fatalf("error = %v", err)
 			}
@@ -134,7 +137,7 @@ func TestCaptureIgnoresSymlinksInExcludedTrees(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Capture(root); err != nil {
+	if _, err := Capture(root, "compression.study.yaml"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -157,7 +160,7 @@ func TestCaptureHashIgnoresResultsAndWork(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	first, err := Capture(root)
+	first, err := Capture(root, "compression.study.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +169,7 @@ func TestCaptureHashIgnoresResultsAndWork(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	second, err := Capture(root)
+	second, err := Capture(root, "compression.study.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

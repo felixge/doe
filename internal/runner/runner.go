@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/felixge/doe/internal/cli"
-	"github.com/felixge/doe/internal/design"
 	"github.com/felixge/doe/internal/model"
 	"github.com/felixge/doe/internal/snapshot"
+	"github.com/felixge/doe/internal/study"
 	"golang.org/x/term"
 )
 
@@ -31,111 +31,90 @@ const resultsMarker = "doe results\n"
 
 // Options contains the validated command-line arguments for doe run.
 type Options struct {
+	Project string
 	Designs []string
 	Plan    bool
-	Setup   bool
 	Dirty   bool
-	Clean   bool
+}
+
+type studyExecution struct {
+	snapshot   *snapshot.Snapshot
+	results    *resultIndex
+	designs    []string
+	experiment model.Experiment
 }
 
 // Execute loads, lists, or conducts the designs selected by doe run.
 func Execute(ctx context.Context, env *cli.Env, opts Options) error {
-	study, err := loadStudy(opts.Designs)
+	root, err := canonicalPath(opts.Project)
 	if err != nil {
 		return err
+	}
+	studies, err := study.Discover(root)
+	if err != nil {
+		return err
+	}
+	selected, err := study.Resolve(studies, opts.Designs)
+	if err != nil {
+		return err
+	}
+	if info, err := os.Lstat(filepath.Join(root, "results")); err == nil {
+		if !info.IsDir() {
+			return errors.New("results path must be a directory, not a file or symlink")
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	// Preflight is read-only, including loading partial JSONL tails.
+	executions := map[string]*studyExecution{}
+	for _, selection := range selected {
+		s := selection.Study
+		if execution := executions[s.Name]; execution != nil {
+			execution.designs = append(execution.designs, selection.Design.Name)
+			continue
+		}
+		output := filepath.Join(root, "results", s.Name)
+		if err := checkOwnedOutput(output); err != nil {
+			return err
+		}
+		if err := validateManagedPaths(output); err != nil {
+			return err
+		}
+		snap, err := snapshot.Capture(root, s.Path)
+		if err != nil {
+			return fmt.Errorf("snapshot %s: %w", s.Name, err)
+		}
+		results, err := loadResults(output)
+		if err != nil {
+			return err
+		}
+		for _, experiment := range results.experiments {
+			if experiment.FilesHash != snap.Hash && !opts.Dirty {
+				return fmt.Errorf("study %s files have changed; use --dirty or clear the results directory %s", s.Name, output)
+			}
+		}
+		executions[s.Name] = &studyExecution{snapshot: snap, results: results, designs: []string{selection.Design.Name}}
 	}
 	if opts.Plan {
-		return planStudy(env.Stdout, study)
+		return planDesigns(env.Stdout, selected, executions)
 	}
-	if opts.Clean {
-		for _, name := range []string{"results", "work"} {
-			if err := os.RemoveAll(filepath.Join(study.Root, name)); err != nil {
-				return fmt.Errorf("remove %s directory: %w", name, err)
+	for _, selection := range selected {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		s := selection.Study
+		execution := executions[s.Name]
+		output := filepath.Join(root, "results", s.Name)
+		if execution.experiment.ID == "" {
+			if err := beginExperiment(ctx, env, root, output, *s, execution); err != nil {
+				return fmt.Errorf("%s: %w", s.Name, err)
 			}
 		}
-	}
-	if opts.Setup {
-		for _, d := range study.Designs {
-			if err := runSetup(ctx, env, study.Root, d); err != nil {
-				return fmt.Errorf("%s: %w", d.Path, err)
-			}
-		}
-		return nil
-	}
-
-	output := filepath.Join(study.Root, "results")
-	if err := ensureOwnedOutput(output); err != nil {
-		return err
-	}
-	if err := validateManagedPaths(output); err != nil {
-		return err
-	}
-	snap, err := snapshot.Capture(study.Root)
-	if err != nil {
-		return fmt.Errorf("snapshot study: %w", err)
-	}
-
-	results, err := loadResults(output)
-	if err != nil {
-		return err
-	}
-	dirty := false
-	for _, experiment := range results.experiments {
-		if experiment.FilesHash != snap.Hash {
-			dirty = true
-			break
+		if err := conductDesign(ctx, env, root, output, s.Run, *selection.Design, execution.experiment, execution.results); err != nil {
+			return fmt.Errorf("%s: %w", selection, err)
 		}
 	}
-	if dirty && !opts.Dirty {
-		return errors.New("study files have changed; use --dirty or clear the results directory")
-	}
-	for _, d := range study.Designs {
-		if err := conductDesign(ctx, env, study.Root, output, snap, d, results); err != nil {
-			return fmt.Errorf("%s: %w", d.Path, err)
-		}
-	}
-	_, err = fmt.Fprintln(env.Stdout, output)
-	return err
-}
-
-func loadStudy(paths []string) (model.Study, error) {
-	var study model.Study
-	seen := map[string]bool{}
-	for _, path := range paths {
-		absolute, err := filepath.Abs(path)
-		if err != nil {
-			return model.Study{}, err
-		}
-		root, err := canonicalPath(filepath.Dir(absolute))
-		if err != nil {
-			return model.Study{}, err
-		}
-		absolute = filepath.Join(root, filepath.Base(absolute))
-		info, err := os.Lstat(absolute)
-		if err != nil {
-			return model.Study{}, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return model.Study{}, fmt.Errorf("design must not be a symlink: %s", path)
-		}
-		if study.Root == "" {
-			study.Root = root
-		} else if root != study.Root {
-			return model.Study{}, errors.New("all designs must have the same study root")
-		}
-		name := filepath.Base(absolute)
-		if seen[name] {
-			return model.Study{}, fmt.Errorf("design %q was specified more than once", name)
-		}
-		seen[name] = true
-		d, err := design.Load(absolute)
-		if err != nil {
-			return model.Study{}, err
-		}
-		d.Path = filepath.ToSlash(name)
-		study.Designs = append(study.Designs, d)
-	}
-	return study, nil
+	return nil
 }
 
 func canonicalPath(path string) (string, error) {
@@ -146,13 +125,10 @@ func canonicalPath(path string) (string, error) {
 	return filepath.EvalSymlinks(absolute)
 }
 
-func ensureOwnedOutput(output string) error {
+func checkOwnedOutput(output string) error {
 	info, err := os.Lstat(output)
 	if os.IsNotExist(err) {
-		if err := os.MkdirAll(output, 0o755); err != nil {
-			return err
-		}
-		return writeMarker(output)
+		return nil
 	}
 	if err != nil {
 		return err
@@ -165,7 +141,7 @@ func ensureOwnedOutput(output string) error {
 		return err
 	}
 	if len(entries) == 0 {
-		return writeMarker(output)
+		return nil
 	}
 	marker := filepath.Join(output, ".doe")
 	info, err = os.Lstat(marker)
@@ -186,11 +162,7 @@ func ensureOwnedOutput(output string) error {
 }
 
 func writeMarker(output string) error {
-	return atomicWrite(output, ".doe-*", ".doe", []byte(resultsMarker), false)
-}
-
-func atomicWrite(dir, pattern, name string, content []byte, durable bool) error {
-	file, err := os.CreateTemp(dir, pattern)
+	file, err := os.CreateTemp(output, ".doe-*")
 	if err != nil {
 		return err
 	}
@@ -200,20 +172,14 @@ func atomicWrite(dir, pattern, name string, content []byte, durable bool) error 
 		_ = file.Close()
 		return err
 	}
-	if _, err := file.Write(content); err != nil {
+	if _, err := file.WriteString(resultsMarker); err != nil {
 		_ = file.Close()
 		return err
-	}
-	if durable {
-		if err := file.Sync(); err != nil {
-			_ = file.Close()
-			return err
-		}
 	}
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, name))
+	return os.Rename(tmp, filepath.Join(output, ".doe"))
 }
 
 func validateManagedPaths(output string) error {
@@ -228,17 +194,6 @@ func validateManagedPaths(output string) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing symlinked results path: %s", filepath.Join(output, name))
 		}
-	}
-	return nil
-}
-
-func runSetup(ctx context.Context, env *cli.Env, root string, d model.Design) error {
-	if d.Setup == "" {
-		return nil
-	}
-	_, err := commandOutput(ctx, env.Stdin, root, d.Setup, io.Discard)
-	if err != nil {
-		return fmt.Errorf("setup: %w", err)
 	}
 	return nil
 }
@@ -258,8 +213,18 @@ func setupOutput(ctx context.Context, stdin io.Reader, root, script, logPath str
 	return environment, nil
 }
 
-func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap *snapshot.Snapshot, d model.Design, results *resultIndex) error {
-	points := d.Points
+func beginExperiment(ctx context.Context, env *cli.Env, root, output string, s model.Study, execution *studyExecution) error {
+	if err := os.MkdirAll(output, 0o755); err != nil {
+		return err
+	}
+	if err := writeMarker(output); err != nil {
+		return err
+	}
+	for _, name := range []string{"experiments.jsonl", "runs.jsonl"} {
+		if err := repairJSONL(filepath.Join(output, name)); err != nil {
+			return err
+		}
+	}
 	started := time.Now()
 	experimentID := rand.Text()
 	logDir := filepath.Join(output, experimentID)
@@ -267,38 +232,44 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 		return fmt.Errorf("create experiment log directory: %w", err)
 	}
 	environment := map[string]any{}
-	if d.Setup != "" {
+	if s.Setup != "" {
 		var err error
-		environment, err = setupOutput(ctx, env.Stdin, root, d.Setup, filepath.Join(logDir, "setup.txt"))
+		environment, err = setupOutput(ctx, env.Stdin, root, s.Setup, filepath.Join(logDir, "setup.txt"))
 		if err != nil {
 			return err
 		}
 	}
 
 	experiment := model.Experiment{
-		ID: experimentID, Start: started, Design: d.Path,
-		Factors: d.FactorNames, Files: snap.Files, FilesHash: snap.Hash,
+		ID: experimentID, Start: started, Study: s.Name, Designs: execution.designs,
+		Factors: s.Designs[0].FactorNames, Files: execution.snapshot.Files, FilesHash: execution.snapshot.Hash,
 		Env: environment, EnvHash: objectHash(environment),
 	}
 	if err := appendJSON(filepath.Join(output, "experiments.jsonl"), experiment); err != nil {
 		return err
 	}
-	results.addExperiment(experiment)
+	execution.results.addExperiment(experiment)
+	execution.experiment = experiment
+	return nil
+}
+
+func conductDesign(ctx context.Context, env *cli.Env, root, output, script string, d model.Design, experiment model.Experiment, results *resultIndex) error {
+	points := d.Points
 	pointKeys := make([]string, len(points))
 	commands := make([]string, len(points))
 	for i, point := range points {
-		key, err := pointKey(d.Path, point)
+		key, err := pointKey(experiment.Study, point)
 		if err != nil {
 			return err
 		}
 		pointKeys[i] = key
-		command, err := interpolate(d.Run, point)
+		command, err := interpolate(script, point)
 		if err != nil {
 			return err
 		}
 		commands[i] = command
 	}
-	schedule := design.Schedule(len(points), d.Replicates)
+	schedule := study.Schedule(len(points), d.Replicates)
 	reused := 0
 	remaining := make([]string, 0, len(points)*d.Replicates)
 	for replicate, row := range schedule {
@@ -328,7 +299,7 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 	var ticks <-chan time.Time
 	var ticker *time.Ticker
 	if isTerminal(env.Stderr) {
-		progress = newProgress(env.Stderr, d.Path)
+		progress = newProgress(env.Stderr, experiment.Study+"/"+d.Name)
 		progress.Render(state.Snapshot(time.Now()))
 		ticker = time.NewTicker(time.Second)
 		ticks = ticker.C
@@ -432,7 +403,7 @@ func conductConcurrent(
 
 	var progress *progressBar
 	if isTerminal(env.Stderr) {
-		progress = newProgress(env.Stderr, d.Path)
+		progress = newProgress(env.Stderr, experiment.Study+"/"+d.Name)
 		defer progress.Close()
 	}
 

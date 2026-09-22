@@ -38,14 +38,14 @@ func TestMainUnknownCommand(t *testing.T) {
 
 func TestParseRunFlagsAnywhere(t *testing.T) {
 	stderr := new(bytes.Buffer)
-	opts, help, err := parseRun(stderr, []string{"first.yaml", "-d", "second.yaml", "--plan", "-c", "-s"})
+	opts, help, err := parseRun(stderr, []string{".", "first/smoke", "-d", "full", "--plan"})
 	if err != nil || help {
 		t.Fatalf("parseRun() = (%+v, %v, %v); stderr = %q", opts, help, err, stderr)
 	}
-	if !opts.Dirty || !opts.Plan || !opts.Clean || !opts.Setup {
+	if !opts.Dirty || !opts.Plan || opts.Project != "." {
 		t.Fatalf("options = %+v", opts)
 	}
-	if got := strings.Join(opts.Designs, ","); got != "first.yaml,second.yaml" {
+	if got := strings.Join(opts.Designs, ","); got != "first/smoke,full" {
 		t.Fatalf("designs = %q", got)
 	}
 }
@@ -69,8 +69,10 @@ func TestRunArgumentErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "missing design", args: []string{"run"}, want: "at least one design is required"},
-		{name: "unknown flag", args: []string{"run", "--wat", "design.yaml"}, want: "unknown flag: --wat"},
+		{name: "missing project", args: []string{"run"}, want: "a project directory is required"},
+		{name: "unknown flag", args: []string{"run", "--wat", "."}, want: "unknown flag: --wat"},
+		{name: "removed clean", args: []string{"run", "--clean", "."}, want: "unknown flag: --clean"},
+		{name: "removed setup", args: []string{"run", "--setup", "."}, want: "unknown flag: --setup"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			env, _, stderr := testEnv()
@@ -85,9 +87,9 @@ func TestRunArgumentErrors(t *testing.T) {
 }
 
 func TestRunPlanIntegration(t *testing.T) {
-	design := writeDesign(t, "run: echo '{}'\nfactors:\n  - value: [one, two]\n")
+	root := writeStudy(t, "run: echo '{}'\ndesigns:\n  full:\n    factors: [{value: [one, two]}]\n")
 	env, stdout, stderr := testEnv()
-	if code := Main(context.Background(), env, []string{"run", design, "--plan"}); code != 0 {
+	if code := Main(context.Background(), env, []string{"run", root, "full", "--plan"}); code != 0 {
 		t.Fatalf("Main() = %d; stderr = %q", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "| point | value |") {
@@ -95,28 +97,11 @@ func TestRunPlanIntegration(t *testing.T) {
 	}
 }
 
-func TestRunSetupIntegration(t *testing.T) {
-	root := t.TempDir()
-	design := filepath.Join(root, "design.yaml")
-	if err := os.WriteFile(design, []byte("setup: echo setup > setup.txt\nfactors: [{value: [one]}]\nrun: echo run > run.txt\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"results", "work"} {
-		if err := os.Mkdir(filepath.Join(root, name), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
+func TestRunEmptyStdout(t *testing.T) {
+	root := writeStudy(t, "setup: echo setup\nrun: echo '{}'\ndesigns:\n  full:\n    factors: [{value: [one]}]\n")
 	env, stdout, stderr := testEnv()
-	if code := Main(context.Background(), env, []string{"run", design, "--clean", "--setup"}); code != 0 {
+	if code := Main(context.Background(), env, []string{"run", root, "full"}); code != 0 {
 		t.Fatalf("Main() = %d; stderr = %q", code, stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(root, "setup.txt")); err != nil {
-		t.Fatalf("setup was not run: %v", err)
-	}
-	for _, name := range []string{"run.txt", "results", "work"} {
-		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
-			t.Fatalf("%s exists after --setup: %v", name, err)
-		}
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q", stdout.String())
@@ -124,9 +109,9 @@ func TestRunSetupIntegration(t *testing.T) {
 }
 
 func TestRunExecutionErrorIntegration(t *testing.T) {
-	design := writeDesign(t, "run: exit 7\nfactors:\n  - value: [one]\n")
+	root := writeStudy(t, "run: exit 7\ndesigns:\n  full:\n    factors: [{value: [one]}]\n")
 	env, _, stderr := testEnv()
-	if code := Main(context.Background(), env, []string{"run", design}); code != 1 {
+	if code := Main(context.Background(), env, []string{"run", root, "full"}); code != 1 {
 		t.Fatalf("Main() = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "exit status 7") {
@@ -135,11 +120,11 @@ func TestRunExecutionErrorIntegration(t *testing.T) {
 }
 
 func TestRunCanceledContext(t *testing.T) {
-	design := writeDesign(t, "run: echo '{}'\nfactors:\n  - value: [one]\n")
+	root := writeStudy(t, "run: echo '{}'\ndesigns:\n  full:\n    factors: [{value: [one]}]\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	env, _, stderr := testEnv()
-	if code := Main(ctx, env, []string{"run", design}); code != 1 {
+	if code := Main(ctx, env, []string{"run", root, "full"}); code != 1 {
 		t.Fatalf("Main() = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), context.Canceled.Error()) {
@@ -155,11 +140,12 @@ func testEnv() (*cli.Env, *bytes.Buffer, *bytes.Buffer) {
 	}, stdout, stderr
 }
 
-func writeDesign(t *testing.T, content string) string {
+func writeStudy(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "design.yaml")
+	root := t.TempDir()
+	path := filepath.Join(root, "compression.study.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	return root
 }

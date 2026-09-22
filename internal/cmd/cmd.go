@@ -53,9 +53,7 @@ func parseRun(stderr io.Writer, args []string) (runner.Options, bool, error) {
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
 	flags.BoolVarP(&opts.Plan, "plan", "p", false, "show design points and their schedule without running them")
-	flags.BoolVarP(&opts.Setup, "setup", "s", false, "run setup without running experiments")
 	flags.BoolVarP(&opts.Dirty, "dirty", "d", false, "run even if this will dirty the results")
-	flags.BoolVarP(&opts.Clean, "clean", "c", false, "remove the results and work directories before running")
 
 	err := flags.Parse(args)
 	if errors.Is(err, pflag.ErrHelp) {
@@ -64,10 +62,11 @@ func parseRun(stderr io.Writer, args []string) (runner.Options, bool, error) {
 	if err != nil {
 		return runner.Options{}, false, err
 	}
-	opts.Designs = append([]string(nil), flags.Args()...)
-	if len(opts.Designs) == 0 {
-		return runner.Options{}, false, errors.New("at least one design is required")
+	if flags.NArg() == 0 {
+		return runner.Options{}, false, errors.New("a project directory is required")
 	}
+	opts.Project = flags.Arg(0)
+	opts.Designs = append([]string(nil), flags.Args()[1:]...)
 	return opts, false, nil
 }
 
@@ -89,30 +88,27 @@ Run "doe <command> -h" for command-specific help.
 }
 
 func runUsage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `Run performs one experiment per design. Previous runs are reused, allowing work to be resumed.
+	_, _ = fmt.Fprint(w, `Run performs one experiment per selected study. Completed runs are reused across designs.
 
-Usage: doe run [options] <design>...
+Usage: doe run [options] <project-directory> <design>...
 
 Arguments:
-  <design>...           Paths to one or more design YAML files
+  <project-directory>  Directory containing top-level *.study.yaml files
+  <design>...           Qualified study/design selectors or unique short names
 
 Options:
   -p, --plan            Show the design points and schedule. Do not run them.
-  -s, --setup           Run setup without running experiments.
   -d, --dirty           Run the study even if it will dirty the results.
-  -c, --clean           Remove the results and work directories before running.
   -h, --help            Print help text.
 
 Examples:
-  # Run a design
-  doe run design.yaml
-  # Run a design, even if it will produce dirty results
-  doe run -d design.yaml
-  # Remove previous results and work before running a design
-  doe run -c design.yaml
-  # Show the plan for the design
-  doe run -p design.yaml
-  # Run setup without running experiments
-  doe run -s design.yaml
+  doe run . compression/smoke compression/full
+  doe run . smoke full
+  doe run --dirty . full
+  doe run --plan . full
+
+Designs execute in argument order. Setup runs once per study, before its first
+selected design. Results are stored under results/<study>/. Normal runs leave
+stdout empty; progress and diagnostics go to stderr.
 `)
 }

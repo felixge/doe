@@ -1,4 +1,4 @@
-package design
+package study
 
 import (
 	"reflect"
@@ -7,29 +7,36 @@ import (
 	"testing"
 
 	"github.com/felixge/doe/internal/model"
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseAndExpandPoints(t *testing.T) {
-	d, err := Parse("study/design.yaml", []byte(`
+	s, err := Parse("project/compression.study.yaml", []byte(`
 setup: ./setup.bash
-factors:
-  - file: [a.txt, b.txt]
-    level: [1, 2.5]
-    enabled: [true]
-    note: [null]
-  - level: [3]
-    note: [later]
-    file: [c.txt]
-    enabled: [false]
 run: ./run.bash {file} {level}
-replicates: 7
-concurrency: 3
-concurrency_by: [file, enabled]
+designs:
+  full:
+    factors:
+      - file: [a.txt, b.txt]
+        level: [1, 2.5]
+        enabled: [true]
+        note: [null]
+      - level: [3]
+        note: [later]
+        file: [c.txt]
+        enabled: [false]
+    replicates: 7
+    concurrency: 3
+    concurrency_by: [file, enabled]
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Path != "study/design.yaml" || d.Setup != "./setup.bash" || d.Run != "./run.bash {file} {level}" || d.Replicates != 7 || d.Concurrency != 3 || !reflect.DeepEqual(d.ConcurrencyBy, []string{"file", "enabled"}) {
+	if s.Name != "compression" || s.Path != "compression.study.yaml" || s.Setup != "./setup.bash" || s.Run != "./run.bash {file} {level}" {
+		t.Fatalf("study = %+v", s)
+	}
+	d := s.Designs[0]
+	if d.Name != "full" || d.Replicates != 7 || d.Concurrency != 3 || !reflect.DeepEqual(d.ConcurrencyBy, []string{"file", "enabled"}) {
 		t.Fatalf("design = %+v", d)
 	}
 	if got, want := d.FactorNames, []string{"file", "level", "enabled", "note"}; !reflect.DeepEqual(got, want) {
@@ -50,7 +57,7 @@ concurrency_by: [file, enabled]
 }
 
 func TestParseDefaultsReplicates(t *testing.T) {
-	d, err := Parse("design.yaml", []byte("factors:\n  - a: [x]\nrun: echo ok\n"))
+	d, err := parseDesignYAML("factors: [{a: [x]}]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,33 +73,31 @@ func TestParseRejectsInvalidDesigns(t *testing.T) {
 		message string
 	}{
 		{"not mapping", "- run\n", "design must be a mapping"},
-		{"multiple documents", "factors: [{a: [x]}]\nrun: ok\n---\nfactors: [{a: [y]}]\nrun: ok\n", "multiple YAML documents"},
-		{"unknown field", "factors: [{a: [x]}]\nrun: ok\nextra: true\n", "unknown design field \"extra\""},
-		{"duplicate field", "run: first\nrun: second\nfactors: [{a: [x]}]\n", "duplicate design key \"run\""},
-		{"missing run", "factors: [{a: [x]}]\n", "missing required field run"},
-		{"empty run", "factors: [{a: [x]}]\nrun: ''\n", "run must not be empty"},
-		{"run wrong type", "factors: [{a: [x]}]\nrun: [no]\n", "run must be a string"},
-		{"missing factors", "run: ok\n", "missing required field factors"},
-		{"empty factors", "factors: []\nrun: ok\n", "factors must be a non-empty sequence"},
-		{"empty group", "factors: [{}]\nrun: ok\n", "factor group 1 must not be empty"},
-		{"empty factor name", "factors:\n  - '': [x]\nrun: ok\n", "factor name must not be empty"},
-		{"reserved factor", "factors:\n  - run_id: [x]\nrun: ok\n", "factor name \"run_id\" is reserved"},
-		{"duplicate factor", "factors:\n  - a: [x]\n    a: [y]\nrun: ok\n", "duplicate factor group 1 key \"a\""},
-		{"empty settings", "factors: [{a: []}]\nrun: ok\n", "settings for factor \"a\" must be a non-empty sequence"},
-		{"object setting", "factors: [{a: [{nested: value}]}]\nrun: ok\n", "setting for factor \"a\": must be a JSON scalar"},
-		{"array setting", "factors: [{a: [[nested]]}]\nrun: ok\n", "setting for factor \"a\": must be a JSON scalar"},
-		{"infinite setting", "factors: [{a: [.inf]}]\nrun: ok\n", "setting for factor \"a\": must be a finite number"},
-		{"different factors", "factors:\n  - a: [x]\n    b: [y]\n  - a: [z]\nrun: ok\n", "factor group 2 must contain the same factors"},
-		{"zero replicates", "factors: [{a: [x]}]\nrun: ok\nreplicates: 0\n", "replicates must be a positive integer"},
-		{"float replicates", "factors: [{a: [x]}]\nrun: ok\nreplicates: 1.5\n", "replicates must be a positive integer"},
-		{"zero concurrency", "factors: [{a: [x]}]\nrun: ok\nconcurrency: 0\n", "concurrency must be a positive integer"},
-		{"concurrency by wrong type", "factors: [{a: [x]}]\nrun: ok\nconcurrency_by: a\n", "concurrency_by must be a sequence"},
-		{"unknown concurrency factor", "factors: [{a: [x]}]\nrun: ok\nconcurrency_by: [b]\n", "concurrency_by factor \"b\" is not defined"},
-		{"duplicate concurrency factor", "factors: [{a: [x]}]\nrun: ok\nconcurrency_by: [a, a]\n", "duplicate concurrency_by factor \"a\""},
+		{"unknown field", "factors: [{a: [x]}]\nextra: true\n", "unknown design field \"extra\""},
+		{"shared run", "factors: [{a: [x]}]\nrun: ok\n", "unknown design field \"run\""},
+		{"shared setup", "factors: [{a: [x]}]\nsetup: ok\n", "unknown design field \"setup\""},
+		{"duplicate field", "replicates: 1\nreplicates: 2\nfactors: [{a: [x]}]\n", "duplicate design key \"replicates\""},
+		{"missing factors", "{}", "missing required field factors"},
+		{"empty factors", "factors: []\n", "factors must be a non-empty sequence"},
+		{"empty group", "factors: [{}]\n", "factor group 1 must not be empty"},
+		{"empty factor name", "factors:\n  - '': [x]\n", "factor name must not be empty"},
+		{"reserved factor", "factors:\n  - run_id: [x]\n", "factor name \"run_id\" is reserved"},
+		{"duplicate factor", "factors:\n  - a: [x]\n    a: [y]\n", "duplicate factor group 1 key \"a\""},
+		{"empty settings", "factors: [{a: []}]\n", "settings for factor \"a\" must be a non-empty sequence"},
+		{"object setting", "factors: [{a: [{nested: value}]}]\n", "setting for factor \"a\": must be a JSON scalar"},
+		{"array setting", "factors: [{a: [[nested]]}]\n", "setting for factor \"a\": must be a JSON scalar"},
+		{"infinite setting", "factors: [{a: [.inf]}]\n", "setting for factor \"a\": must be a finite number"},
+		{"different factors", "factors:\n  - a: [x]\n    b: [y]\n  - a: [z]\n", "factor group 2 must contain the same factors"},
+		{"zero replicates", "factors: [{a: [x]}]\nreplicates: 0\n", "replicates must be a positive integer"},
+		{"float replicates", "factors: [{a: [x]}]\nreplicates: 1.5\n", "replicates must be a positive integer"},
+		{"zero concurrency", "factors: [{a: [x]}]\nconcurrency: 0\n", "concurrency must be a positive integer"},
+		{"concurrency by wrong type", "factors: [{a: [x]}]\nconcurrency_by: a\n", "concurrency_by must be a sequence"},
+		{"unknown concurrency factor", "factors: [{a: [x]}]\nconcurrency_by: [b]\n", "concurrency_by factor \"b\" is not defined"},
+		{"duplicate concurrency factor", "factors: [{a: [x]}]\nconcurrency_by: [a, a]\n", "duplicate concurrency_by factor \"a\""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Parse("design.yaml", []byte(tt.yaml))
+			_, err := parseDesignYAML(tt.yaml)
 			if err == nil || !strings.Contains(err.Error(), tt.message) {
 				t.Fatalf("Parse() error = %v, want containing %q", err, tt.message)
 			}
@@ -107,16 +112,16 @@ func TestParseRejectsDuplicatePoints(t *testing.T) {
 	}{
 		{
 			name: "within group",
-			yaml: "factors: [{a: [x, x]}]\nrun: ok\n",
+			yaml: "factors: [{a: [x, x]}]\n",
 		},
 		{
 			name: "across groups with reordered factors",
-			yaml: "factors:\n  - a: [x]\n    b: [1]\n  - b: [1.0]\n    a: [x]\nrun: ok\n",
+			yaml: "factors:\n  - a: [x]\n    b: [1]\n  - b: [1.0]\n    a: [x]\n",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Parse("design.yaml", []byte(tt.yaml))
+			_, err := parseDesignYAML(tt.yaml)
 			if err == nil || !strings.Contains(err.Error(), "duplicate design point") {
 				t.Fatalf("Parse() error = %v, want duplicate design point", err)
 			}
@@ -125,7 +130,7 @@ func TestParseRejectsDuplicatePoints(t *testing.T) {
 }
 
 func TestParsedPointValuesAreIndependent(t *testing.T) {
-	d, err := Parse("design.yaml", []byte("factors: [{a: [x, y], b: [1]}]\nrun: ok\n"))
+	d, err := parseDesignYAML("factors: [{a: [x, y], b: [1]}]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +138,14 @@ func TestParsedPointValuesAreIndependent(t *testing.T) {
 	if got, want := d.Points[1].Values[0].Value, "y"; got != want {
 		t.Fatalf("mutating point 1 changed point 2: got %v, want %v", got, want)
 	}
+}
+
+func parseDesignYAML(text string) (model.Design, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(text), &document); err != nil {
+		return model.Design{}, err
+	}
+	return parseDesign("full", document.Content[0])
 }
 
 func TestScheduleEven(t *testing.T) {
