@@ -34,14 +34,14 @@ run: './run.bash {algorithm} {preset} {file}'
 replicates: 6
 ```
 
-It uses a [setup.bash](./example/compression/setup.bash) script to install dependencies and to emit a flat JSON object describing the environment:
+It uses a [setup.bash](./example/compression/setup.bash) script to install dependencies and to emit a JSON object describing the environment:
 
 ```bash
 $ ./setup.bash
 {"os":"Darwin","arch":"arm64"}
 ```
 
-The [run.bash](./example/compression/run.bash) script is invoked `replicates` times for each design point (unique combination of factors and settings) and emits a flat JSON object on the last line of stdout containing the outputs of the run:
+The [run.bash](./example/compression/run.bash) script is invoked `replicates` times for each design point (unique combination of factors and settings) and emits a JSON object on the last line of stdout containing the outputs of the run:
 
 ```bash
 $ ./run.bash zstd default sample.pb
@@ -206,7 +206,7 @@ The inline Bourne shell scripts invoked by `setup` and `run` are always executed
 
 Typically the inline scripts just shell out to a script file in the study. Those scripts can be written in any language. The setup script can install runtime dependencies or perform compilations as needed.
 
-Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For `run`, doe treats the last line of stdout as the result. The result must be a flat JSON object whose values are JSON scalars. If setup's last stdout line is a flat JSON object, doe uses it as the environment; otherwise, the environment is `{}`. A run must produce a result.
+Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For `run`, doe treats the last line of stdout as the result. The result must be a JSON object; its values may be any JSON values, including nested objects and arrays. If setup's last stdout line is a JSON object, doe uses it as the environment; otherwise, the environment is `{}`. A run must produce a result.
 
 Setup and run output is not streamed to the terminal. Combined stdout and stderr is retained in best-effort arrival order under the experiment's results directory. This includes the final stdout line parsed as the setup environment or run result. Logs are retained when commands succeed, fail, or are interrupted. `doe run --setup` is not an experiment and does not persist an experiment ID, so its output is discarded and no log is retained.
 

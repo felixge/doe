@@ -243,17 +243,17 @@ func runSetup(ctx context.Context, env *cli.Env, root string, d model.Design) er
 	return nil
 }
 
-func setupOutput(ctx context.Context, stdin io.Reader, root, script, logPath string) (map[string]model.Scalar, error) {
+func setupOutput(ctx context.Context, stdin io.Reader, root, script, logPath string) (map[string]any, error) {
 	last, err := commandOutputToFile(ctx, stdin, root, script, logPath)
 	if err != nil {
 		return nil, fmt.Errorf("setup (log: %s): %w", logPath, err)
 	}
 	if last == "" {
-		return map[string]model.Scalar{}, nil
+		return map[string]any{}, nil
 	}
-	environment, err := parseFlatObject(last)
+	environment, err := parseObject(last)
 	if err != nil {
-		return map[string]model.Scalar{}, nil
+		return map[string]any{}, nil
 	}
 	return environment, nil
 }
@@ -266,7 +266,7 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 	if err := os.Mkdir(logDir, 0o755); err != nil {
 		return fmt.Errorf("create experiment log directory: %w", err)
 	}
-	environment := map[string]model.Scalar{}
+	environment := map[string]any{}
 	if d.Setup != "" {
 		var err error
 		environment, err = setupOutput(ctx, env.Stdin, root, d.Setup, filepath.Join(logDir, "setup.txt"))
@@ -521,7 +521,7 @@ func saveCompletionResult(output string, d model.Design, experiment model.Experi
 	if completion.last == "" {
 		return fmt.Errorf("replicate %d point #%d: run produced no result", completion.task.replicate, completion.task.pointIndex+1)
 	}
-	outputs, err := parseFlatObject(completion.last)
+	outputs, err := parseObject(completion.last)
 	if err != nil {
 		return fmt.Errorf("replicate %d point #%d result: %w", completion.task.replicate, completion.task.pointIndex+1, err)
 	}
@@ -684,7 +684,7 @@ func (w stdoutLog) Write(data []byte) (int, error) {
 	return w.writer.Write(data)
 }
 
-func parseFlatObject(line string) (map[string]model.Scalar, error) {
+func parseObject(line string) (map[string]any, error) {
 	decoder := json.NewDecoder(strings.NewReader(line))
 	decoder.UseNumber()
 	var object map[string]any
@@ -696,13 +696,6 @@ func parseFlatObject(line string) (map[string]model.Scalar, error) {
 	}
 	if err := ensureEOF(decoder); err != nil {
 		return nil, err
-	}
-	for name, value := range object {
-		switch value.(type) {
-		case nil, bool, string, json.Number:
-		default:
-			return nil, fmt.Errorf("field %q must be a JSON scalar", name)
-		}
 	}
 	return object, nil
 }
@@ -741,7 +734,7 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
-func objectHash(object map[string]model.Scalar) string {
+func objectHash(object map[string]any) string {
 	data, _ := json.Marshal(object)
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])

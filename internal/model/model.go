@@ -18,7 +18,7 @@ func IsReservedRunField(name string) bool {
 // Design parsing normalizes YAML numbers to int64, uint64, or float64.
 type Scalar = any
 
-// Value associates a factor or response name with a scalar value.
+// Value associates a factor name with a scalar value.
 type Value struct {
 	Name  string
 	Value Scalar
@@ -57,7 +57,7 @@ type Experiment struct {
 	Factors   []string          `json:"factors"`
 	Files     map[string]string `json:"files"`
 	FilesHash string            `json:"files_hash"`
-	Env       map[string]Scalar `json:"env"`
+	Env       map[string]any    `json:"env"`
 	EnvHash   string            `json:"env_hash"`
 }
 
@@ -70,5 +70,5 @@ type Run struct {
 	Start        time.Time         `json:"start"`
 	End          time.Time         `json:"end"`
 	Inputs       map[string]Scalar `json:"-"`
-	Outputs      map[string]Scalar `json:"-"`
+	Outputs      map[string]any    `json:"-"`
 }

@@ -366,6 +366,32 @@ func TestExecuteSetupUsesOnlyJSONFinalLineAsEnvironment(t *testing.T) {
 	}
 }
 
+func TestExecutePersistsNestedSetupEnvironment(t *testing.T) {
+	root := t.TempDir()
+	designPath := filepath.Join(root, "design.yaml")
+	writeFile(t, designPath, `setup: 'printf ''{"host":{"name":"test"},"labels":["fast","local"]}\n'''
+factors: [{value: [x]}]
+run: echo '{}'
+`)
+
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err != nil {
+		t.Fatal(err)
+	}
+	experiment := readJSONLine(t, filepath.Join(root, "results", "experiments.jsonl"))
+	environment, ok := experiment["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("env = %#v", experiment["env"])
+	}
+	host, ok := environment["host"].(map[string]any)
+	if !ok || host["name"] != "test" {
+		t.Fatalf("host = %#v", environment["host"])
+	}
+	labels, ok := environment["labels"].([]any)
+	if !ok || len(labels) != 2 {
+		t.Fatalf("labels = %#v", environment["labels"])
+	}
+}
+
 func TestExecuteRejectsReservedResponseName(t *testing.T) {
 	root := t.TempDir()
 	designPath := filepath.Join(root, "design.yaml")
@@ -374,6 +400,27 @@ func TestExecuteRejectsReservedResponseName(t *testing.T) {
 	err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}})
 	if err == nil || !strings.Contains(err.Error(), `response name "end" is reserved`) {
 		t.Fatalf("Execute() error = %v, want reserved response error", err)
+	}
+}
+
+func TestExecutePersistsNestedOutputs(t *testing.T) {
+	root := t.TempDir()
+	designPath := filepath.Join(root, "design.yaml")
+	writeFile(t, designPath, `factors: [{value: [x]}]
+run: 'printf ''{"summary":{"count":2},"samples":[{"t":0,"value":1},{"t":1,"value":3}]}\n'''
+`)
+
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Designs: []string{designPath}}); err != nil {
+		t.Fatal(err)
+	}
+	run := readJSONLine(t, filepath.Join(root, "results", "runs.jsonl"))
+	summary, ok := run["summary"].(map[string]any)
+	if !ok || summary["count"] != float64(2) {
+		t.Fatalf("summary = %#v", run["summary"])
+	}
+	samples, ok := run["samples"].([]any)
+	if !ok || len(samples) != 2 {
+		t.Fatalf("samples = %#v", run["samples"])
 	}
 }
 
@@ -448,17 +495,21 @@ func TestLoadStudyRejectsDesignSymlink(t *testing.T) {
 	}
 }
 
-func TestParseFlatObject(t *testing.T) {
-	object, err := parseFlatObject(`{"s":"x","n":1,"b":true,"z":null}`)
+func TestParseObjectAllowsNestedValues(t *testing.T) {
+	object, err := parseObject(`{"object":{"n":1},"array":[true,null]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := object["n"].(json.Number); !ok {
-		t.Fatalf("number type = %T", object["n"])
+	nested, ok := object["object"].(map[string]any)
+	if !ok {
+		t.Fatalf("object type = %T", object["object"])
 	}
-	for _, invalid := range []string{`[]`, `{"nested":{}}`, `{"array":[]}`, `{"x":1} trailing`} {
-		if _, err := parseFlatObject(invalid); err == nil {
-			t.Errorf("parseFlatObject(%q) succeeded", invalid)
+	if _, ok := nested["n"].(json.Number); !ok {
+		t.Fatalf("nested number type = %T", nested["n"])
+	}
+	for _, invalid := range []string{`[]`, `null`, `{"x":1} trailing`} {
+		if _, err := parseObject(invalid); err == nil {
+			t.Errorf("parseObject(%q) succeeded", invalid)
 		}
 	}
 }
