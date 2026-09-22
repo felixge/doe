@@ -206,7 +206,9 @@ The inline Bourne shell scripts invoked by `setup` and `run` are always executed
 
 Typically the inline scripts just shell out to a script file in the study. Those scripts can be written in any language. The setup script can install runtime dependencies or perform compilations as needed.
 
-Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For `run`, doe treats the last line of stdout as the result and streams earlier output to stderr while the experiment runs. The result must be a flat JSON object whose values are JSON scalars. Setup output is streamed to stderr in full. If its last line is a flat JSON object, doe uses it as the environment; otherwise, the environment is `{}`. A run must produce a result.
+Factor placeholders in `run` are replaced with shell-escaped settings; the command should not add quotes around them. For `run`, doe treats the last line of stdout as the result. The result must be a flat JSON object whose values are JSON scalars. If setup's last stdout line is a flat JSON object, doe uses it as the environment; otherwise, the environment is `{}`. A run must produce a result.
+
+Setup and run output is not streamed to the terminal. Combined stdout and stderr is retained in best-effort arrival order under the experiment's results directory. This includes the final stdout line parsed as the setup environment or run result. Logs are retained when commands succeed, fail, or are interrupted. `doe run --setup` is not an experiment and does not persist an experiment ID, so its output is discarded and no log is retained.
 
 ### Work Directory
 
@@ -214,13 +216,18 @@ Temporary files as well as a expensive setup state that may be reused between ru
 
 ### Results Directory
 
-Results are stored in the `results` directory of the study being executed. It contains a record of all experiments and runs.
+Results are stored in the `results` directory of the study being executed. It contains a record of all experiments and runs, plus command logs whose paths derive from their IDs.
 
 ```
 results
 	experiments.jsonl
 	runs.jsonl
+	<experiment_id>
+		setup.txt
+		<run_id>.txt
 ```
+
+`setup.txt` exists when the design has a setup command. Each newly started run has a `<run_id>.txt` log, including runs that do not produce a `runs.jsonl` record because they fail or are interrupted. `--clean` removes these logs with the rest of `results`.
 
 #### runs.jsonl
 

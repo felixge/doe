@@ -236,20 +236,20 @@ func runSetup(ctx context.Context, env *cli.Env, root string, d model.Design) er
 	if d.Setup == "" {
 		return nil
 	}
-	_, err := setupOutput(ctx, env, root, d.Setup)
-	return err
+	_, err := commandOutput(ctx, env.Stdin, root, d.Setup, io.Discard)
+	if err != nil {
+		return fmt.Errorf("setup: %w", err)
+	}
+	return nil
 }
 
-func setupOutput(ctx context.Context, env *cli.Env, root, script string) (map[string]model.Scalar, error) {
-	last, err := commandOutput(ctx, env, root, script)
+func setupOutput(ctx context.Context, stdin io.Reader, root, script, logPath string) (map[string]model.Scalar, error) {
+	last, err := commandOutputToFile(ctx, stdin, root, script, logPath)
 	if err != nil {
-		return nil, fmt.Errorf("setup: %w", err)
+		return nil, fmt.Errorf("setup (log: %s): %w", logPath, err)
 	}
 	if last == "" {
 		return map[string]model.Scalar{}, nil
-	}
-	if _, err := fmt.Fprintln(env.Stderr, last); err != nil {
-		return nil, err
 	}
 	environment, err := parseFlatObject(last)
 	if err != nil {
@@ -261,16 +261,20 @@ func setupOutput(ctx context.Context, env *cli.Env, root, script string) (map[st
 func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap *snapshot.Snapshot, d model.Design, results *resultIndex) error {
 	points := d.Points
 	started := time.Now()
+	experimentID := rand.Text()
+	logDir := filepath.Join(output, experimentID)
+	if err := os.Mkdir(logDir, 0o755); err != nil {
+		return fmt.Errorf("create experiment log directory: %w", err)
+	}
 	environment := map[string]model.Scalar{}
 	if d.Setup != "" {
 		var err error
-		environment, err = setupOutput(ctx, env, root, d.Setup)
+		environment, err = setupOutput(ctx, env.Stdin, root, d.Setup, filepath.Join(logDir, "setup.txt"))
 		if err != nil {
 			return err
 		}
 	}
 
-	experimentID := rand.Text()
 	experiment := model.Experiment{
 		ID: experimentID, Start: started, Design: d.Path,
 		Factors: d.FactorNames, Files: snap.Files, FilesHash: snap.Hash,
@@ -345,13 +349,15 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output string, snap 
 			if progress != nil {
 				progress.Render(state.Snapshot(runStart))
 			}
-			last, err := commandOutputWithProgress(ctx, env, root, commands[pointIndex], progress, state, ticks)
+			runID := rand.Text()
+			logPath := filepath.Join(output, experiment.ID, runID+".txt")
+			last, err := commandOutputWithProgress(ctx, env.Stdin, root, commands[pointIndex], logPath, progress, state, ticks)
 			if err != nil {
-				return fmt.Errorf("replicate %d point #%d: %w", replicate+1, pointIndex+1, err)
+				return fmt.Errorf("replicate %d point #%d (log: %s): %w", replicate+1, pointIndex+1, logPath, err)
 			}
 			completion := runCompletion{
-				task:  runTask{pointIndex: pointIndex, replicate: replicate + 1},
-				start: runStart, end: time.Now(), last: last,
+				task: runTask{pointIndex: pointIndex, replicate: replicate + 1},
+				id:   runID, logPath: logPath, start: runStart, end: time.Now(), last: last,
 			}
 			if err := saveCompletion(output, d, experiment, results, pointKeys, completion); err != nil {
 				return err
@@ -372,6 +378,8 @@ type runTask struct {
 
 type runCompletion struct {
 	task       runTask
+	id         string
+	logPath    string
 	start, end time.Time
 	last       string
 	err        error
@@ -409,7 +417,6 @@ func conductConcurrent(
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	logs := make(chan []byte)
 	completed := make(chan runCompletion)
 	sharedEnv := *env
 	if env.Stdin != nil {
@@ -442,10 +449,10 @@ func conductConcurrent(
 				activeTotal++
 				go func() {
 					start := time.Now()
-					runEnv := sharedEnv
-					runEnv.Stderr = &channelWriter{ctx: runCtx, outputs: logs}
-					last, err := commandOutput(runCtx, &runEnv, root, commands[task.pointIndex])
-					completed <- runCompletion{task: task, start: start, end: time.Now(), last: last, err: err}
+					runID := rand.Text()
+					logPath := filepath.Join(output, experiment.ID, runID+".txt")
+					last, err := commandOutputToFile(runCtx, sharedEnv.Stdin, root, commands[task.pointIndex], logPath)
+					completed <- runCompletion{task: task, id: runID, logPath: logPath, start: start, end: time.Now(), last: last, err: err}
 				}()
 			}
 		}
@@ -461,22 +468,13 @@ func conductConcurrent(
 	ctxDone := ctx.Done()
 	for activeTotal > 0 {
 		select {
-		case data := <-logs:
-			if progress != nil {
-				progress.Clear()
-			}
-			if _, err := env.Stderr.Write(data); err != nil && firstErr == nil {
-				firstErr = err
-				stopped = true
-				cancel()
-			}
 		case completion := <-completed:
 			group := concurrencyGroupKey(d.Points[completion.task.pointIndex], d.ConcurrencyBy)
 			active[group]--
 			activeTotal--
 			if completion.err != nil {
 				if firstErr == nil {
-					firstErr = fmt.Errorf("replicate %d point #%d: %w", completion.task.replicate, completion.task.pointIndex+1, completion.err)
+					firstErr = fmt.Errorf("replicate %d point #%d (log: %s): %w", completion.task.replicate, completion.task.pointIndex+1, completion.logPath, completion.err)
 				}
 				stopped = true
 				cancel()
@@ -513,6 +511,13 @@ func conductConcurrent(
 }
 
 func saveCompletion(output string, d model.Design, experiment model.Experiment, results *resultIndex, pointKeys []string, completion runCompletion) error {
+	if err := saveCompletionResult(output, d, experiment, results, pointKeys, completion); err != nil {
+		return fmt.Errorf("%w (log: %s)", err, completion.logPath)
+	}
+	return nil
+}
+
+func saveCompletionResult(output string, d model.Design, experiment model.Experiment, results *resultIndex, pointKeys []string, completion runCompletion) error {
 	if completion.last == "" {
 		return fmt.Errorf("replicate %d point #%d: run produced no result", completion.task.replicate, completion.task.pointIndex+1)
 	}
@@ -530,7 +535,7 @@ func saveCompletion(output string, d model.Design, experiment model.Experiment, 
 		}
 	}
 	run := model.Run{
-		ID: rand.Text(), ExperimentID: experiment.ID, Replicate: completion.task.replicate,
+		ID: completion.id, ExperimentID: experiment.ID, Replicate: completion.task.replicate,
 		Start: completion.start, End: completion.end, Inputs: inputs, Outputs: outputs,
 	}
 	if err := appendJSON(filepath.Join(output, "runs.jsonl"), flattenRun(run)); err != nil {
@@ -575,120 +580,107 @@ type commandResult struct {
 	err  error
 }
 
-type channelWriter struct {
-	ctx     context.Context
-	outputs chan<- []byte
-}
-
-func (w *channelWriter) Write(data []byte) (int, error) {
-	copy := bytes.Clone(data)
-	select {
-	case w.outputs <- copy:
-		return len(data), nil
-	case <-w.ctx.Done():
-		return 0, w.ctx.Err()
-	}
-}
-
 func commandOutputWithProgress(
 	ctx context.Context,
-	env *cli.Env,
-	root, script string,
+	stdin io.Reader,
+	root, script, logPath string,
 	progress *progressBar,
 	state *progressState,
 	ticks <-chan time.Time,
 ) (string, error) {
-	commandCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	outputs := make(chan []byte)
 	result := make(chan commandResult, 1)
-	runEnv := *env
-	runEnv.Stderr = &channelWriter{ctx: commandCtx, outputs: outputs}
 	go func() {
-		last, err := commandOutput(commandCtx, &runEnv, root, script)
+		last, err := commandOutputToFile(ctx, stdin, root, script, logPath)
 		result <- commandResult{last: last, err: err}
 	}()
-
-	ctxDone := ctx.Done()
 	for {
 		select {
-		case data := <-outputs:
-			if progress != nil {
-				progress.Clear()
-			}
-			if _, err := env.Stderr.Write(data); err != nil {
-				cancel()
-				<-result
-				return "", err
-			}
 		case completed := <-result:
 			return completed.last, completed.err
 		case now := <-ticks:
 			progress.Render(state.Snapshot(now))
-		case <-ctxDone:
-			cancel()
-			ctxDone = nil
 		}
 	}
 }
 
-func commandOutput(ctx context.Context, env *cli.Env, root, script string) (string, error) {
+func commandOutputToFile(ctx context.Context, stdin io.Reader, root, script, path string) (last string, err error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return "", err
+	}
+	last, commandErr := commandOutput(ctx, stdin, root, script, file)
+	if closeErr := file.Close(); commandErr == nil {
+		commandErr = closeErr
+	}
+	return last, commandErr
+}
+
+func commandOutput(ctx context.Context, stdin io.Reader, root, script string, log io.Writer) (string, error) {
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", script)
 	// Bound pipe waits if cancellation races with a child process starting.
 	command.WaitDelay = time.Second
 	command.Dir = root
-	command.Stdin = env.Stdin
-	stderr := &lockedWriter{writer: env.Stderr}
-	command.Stderr = stderr
+	command.Stdin = stdin
+	output := &commandLog{log: log}
+	reader, writer := io.Pipe()
+	command.Stdout = stdoutLog{output: output, writer: writer}
+	command.Stderr = output
 	configureProcessGroup(command)
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	if err := command.Start(); err != nil {
-		return "", err
-	}
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	last := ""
-	haveLine := false
-	for scanner.Scan() {
-		if haveLine {
-			_, _ = fmt.Fprintln(stderr, last)
+
+	parsed := make(chan commandResult, 1)
+	go func() {
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+		last := ""
+		for scanner.Scan() {
+			last = scanner.Text()
 		}
-		last = scanner.Text()
-		haveLine = true
-	}
-	scanErr := scanner.Err()
-	if scanErr != nil {
-		_ = stdout.Close()
-		_ = command.Cancel()
-	}
-	waitErr := command.Wait()
-	if scanErr != nil {
-		return "", scanErr
-	}
-	if waitErr != nil {
-		if haveLine {
-			_, _ = fmt.Fprintln(stderr, last)
+		err := scanner.Err()
+		_ = reader.CloseWithError(err)
+		if err != nil {
+			_ = command.Cancel()
 		}
-		return "", waitErr
+		parsed <- commandResult{last: last, err: err}
+	}()
+
+	runErr := command.Run()
+	_ = writer.Close()
+	result := <-parsed
+	if result.err != nil {
+		return "", result.err
 	}
-	if !haveLine {
-		return "", nil
+	if runErr != nil {
+		return "", runErr
 	}
-	return last, nil
+	return result.last, nil
 }
 
-type lockedWriter struct {
-	mu     sync.Mutex
-	writer io.Writer
+type commandLog struct {
+	mu  sync.Mutex
+	log io.Writer
 }
 
-func (w *lockedWriter) Write(data []byte) (int, error) {
+func (w *commandLog) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	return w.log.Write(data)
+}
+
+type stdoutLog struct {
+	output *commandLog
+	writer *io.PipeWriter
+}
+
+func (w stdoutLog) Write(data []byte) (int, error) {
+	w.output.mu.Lock()
+	defer w.output.mu.Unlock()
+	n, err := w.output.log.Write(data)
+	if err != nil {
+		return n, err
+	}
+	if n != len(data) {
+		return n, io.ErrShortWrite
+	}
 	return w.writer.Write(data)
 }
 

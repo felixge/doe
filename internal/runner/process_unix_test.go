@@ -17,7 +17,7 @@ func TestCommandOutputCancellationKillsDescendants(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		_, err := commandOutput(ctx, testEnv(new(bytes.Buffer), new(bytes.Buffer)), t.TempDir(), "sleep 1000 & echo $! > "+shellQuote(pidFile)+"; wait")
+		_, err := commandOutput(ctx, strings.NewReader(""), t.TempDir(), "sleep 1000 & echo $! > "+shellQuote(pidFile)+"; wait", new(bytes.Buffer))
 		result <- err
 	}()
 
@@ -39,7 +39,7 @@ func TestCommandOutputScannerErrorKillsDescendants(t *testing.T) {
 	script := "sleep 1000 & echo $! > " + shellQuote(pidFile) + "; head -c 16777217 /dev/zero | tr '\\000' x; wait"
 	result := make(chan error, 1)
 	go func() {
-		_, err := commandOutput(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), t.TempDir(), script)
+		_, err := commandOutput(context.Background(), strings.NewReader(""), t.TempDir(), script, new(bytes.Buffer))
 		result <- err
 	}()
 
