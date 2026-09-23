@@ -1,9 +1,12 @@
 package model
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestNewExperiment(t *testing.T) {
@@ -20,6 +23,34 @@ func TestNewExperiment(t *testing.T) {
 	}
 	if !reflect.DeepEqual(study.Factors["foo"], Settings{1}) {
 		t.Errorf("study factors changed: %v", study.Factors)
+	}
+}
+
+func TestDesignSerialization(t *testing.T) {
+	var study Study
+	if err := yaml.Unmarshal([]byte("factors:\n  foo: 1\nrun: echo study\n"), &study); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(study.Factors["foo"], Settings{1}) || study.Run != "echo study" {
+		t.Errorf("study = %+v, want flat YAML design", study)
+	}
+
+	data, err := json.Marshal(NewExperiment(study))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := record["factors"]; ok {
+		t.Errorf("experiment has top-level factors: %s", data)
+	}
+	if _, ok := record["run"]; ok {
+		t.Errorf("experiment has top-level run: %s", data)
+	}
+	if design, ok := record["design"].(map[string]any); !ok || design["run"] != "echo study" || design["factors"] == nil {
+		t.Errorf("experiment has no nested design: %s", data)
 	}
 }
 

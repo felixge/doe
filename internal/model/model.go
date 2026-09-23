@@ -12,8 +12,7 @@ import (
 
 // Study is the YAML protocol for a single experiment.
 type Study struct {
-	Factors Factors `yaml:"factors"`
-	Run     Script  `yaml:"run"`
+	Design `yaml:",inline"`
 }
 
 // Load decodes a study file into the receiver.
@@ -30,6 +29,12 @@ func (s *Study) Load(path string) error {
 	return nil
 }
 
+// Design defines the factors and script for an experiment.
+type Design struct {
+	Factors Factors `json:"factors" yaml:"factors"`
+	Run     Script  `json:"run" yaml:"run"`
+}
+
 // Results holds the experiments recorded by doe.
 type Results struct {
 	Experiments []Experiment `json:"experiments"`
@@ -37,14 +42,17 @@ type Results struct {
 
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
-	ID      uuid.UUID `json:"id"`
-	Factors Factors   `json:"factors" yaml:"factors"`
-	Run     Script    `json:"run" yaml:"run"`
+	ID     uuid.UUID `json:"id"`
+	Design `json:"design"`
 }
 
 // NewExperiment creates an experiment from a study with a UUIDv7 ID.
 func NewExperiment(study Study) Experiment {
-	return Experiment{ID: uuid.NewV7(), Factors: maps.Clone(study.Factors), Run: study.Run}
+	return Experiment{
+		ID:      uuid.NewV7(),
+		Factors: maps.Clone(study.Factors),
+		Run:     study.Run,
+	}
 }
 
 // Factors maps each factor to its possible settings.
