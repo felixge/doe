@@ -10,12 +10,13 @@ The UX balances the needs of fast-paced experimentation with enough scientific r
 
 Doe executes experiments defined via YAML. For example, consider the `sum.study.yaml` file below defining a matrix of factors and a script to invoke for each resulting design point:
 
-````
+```yaml
 factors:
-	foo=[1,2,3]
-	bar=[4,5]
-run: echo '{"sum": '"$((a+b))'}'
-````
+  foo: [1, 2, 3]
+  bar: [4, 5]
+run: |
+  printf '{"sum":%s}\n' "$((foo + bar))"
+```
 
 The study can be executed like shown below:
 
@@ -37,17 +38,18 @@ $ doe results
 
 Alternatively, one can specify all options on the CLI, with each positional argument being interpreted as one line of a YAML file:
 
-```
-doe run "factors:{foo:[1,2,3],bar:[4,5,6]}" 'run:echo {"sum": '$((a+b))'}'
+```sh
+doe run 'factors: {foo: [1, 2, 3], bar: [4, 5]}' \
+  "run: printf '{\"sum\":%s}\n' \"\$((foo + bar))\""
 ```
 
-Files an CLI options can also be combined, with CLI options taking precedence:
+Files and CLI options can also be combined, with CLI options taking precedence:
 
-````
-$ doe run -f echo.study.yaml "factors:{foo=9}"
+```
+$ doe run -f sum.study.yaml 'factors: {foo: 9}'
 {"foo": "9", "bar": "4", "sum": 13}
-{"foo": "9", "bar": "5", "sum": 13}
-````
+{"foo": "9", "bar": "5", "sum": 14}
+```
 
 ## Terminology
 
