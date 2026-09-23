@@ -60,29 +60,30 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 			return fail(env.Stderr, err)
 		}
 	}
+	experiment := model.NewExperiment(s)
 	for _, arg := range flags.Args() {
 		name, value, ok := strings.Cut(arg, "=")
 		if !ok {
 			return fail(env.Stderr, fmt.Errorf("factor %q must be key=value", arg))
 		}
-		if err := s.SetFactor(model.Factor(name), value); err != nil {
+		if err := experiment.Factors.Set(model.Factor(name), []byte(value)); err != nil {
 			return fail(env.Stderr, err)
 		}
 	}
 	if flags.Changed("run") {
-		s.Run = model.Script(*runScript)
+		experiment.Run = model.Script(*runScript)
 	}
-	if len(s.Factors) == 0 {
+	if len(experiment.Factors) == 0 {
 		return fail(env.Stderr, errors.New("at least one factor is required"))
 	}
-	if strings.TrimSpace(string(s.Run)) == "" {
+	if strings.TrimSpace(string(experiment.Run)) == "" {
 		return fail(env.Stderr, errors.New("a run script is required (use --run or a study file)"))
 	}
 	dir := "."
 	if *file != "" {
 		dir = filepath.Dir(*file)
 	}
-	if err := runExperiment(ctx, env, s, dir); err != nil {
+	if err := runExperiment(ctx, env, experiment, dir); err != nil {
 		if ctx.Err() != nil {
 			return 130
 		}
@@ -92,9 +93,9 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 }
 
 // runExperiment sorts factor names for deterministic design points.
-func runExperiment(ctx context.Context, env *cli.Env, s model.Study, dir string) error {
-	names := make([]model.Factor, 0, len(s.Factors))
-	for name := range s.Factors {
+func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experiment, dir string) error {
+	names := make([]model.Factor, 0, len(experiment.Factors))
+	for name := range experiment.Factors {
 		names = append(names, name)
 	}
 	slices.Sort(names)
@@ -105,7 +106,7 @@ func runExperiment(ctx context.Context, env *cli.Env, s model.Study, dir string)
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			command := exec.CommandContext(ctx, "/bin/sh", "-c", string(s.Run))
+			command := exec.CommandContext(ctx, "/bin/sh", "-c", string(experiment.Run))
 			command.Dir = dir
 			command.Stdin = env.Stdin
 			command.Stderr = env.Stderr
@@ -131,7 +132,7 @@ func runExperiment(ctx context.Context, env *cli.Env, s model.Study, dir string)
 			return json.NewEncoder(env.Stdout).Encode(result)
 		}
 		name := names[index]
-		for _, setting := range s.Factors[name] {
+		for _, setting := range experiment.Factors[name] {
 			values[name] = setting
 			if err := visit(index + 1); err != nil {
 				return err

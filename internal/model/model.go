@@ -3,6 +3,7 @@ package model
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"uuid"
 
@@ -11,8 +12,8 @@ import (
 
 // Study is the YAML protocol for a single experiment.
 type Study struct {
-	Factors map[Factor]Settings `yaml:"factors"`
-	Run     Script              `yaml:"run"`
+	Factors Factors `yaml:"factors"`
+	Run     Script  `yaml:"run"`
 }
 
 // Load decodes a study file into the receiver.
@@ -29,29 +30,32 @@ func (s *Study) Load(path string) error {
 	return nil
 }
 
-// SetFactor parses a YAML setting or sequence and replaces a factor's settings.
-func (s *Study) SetFactor(name Factor, value string) error {
-	var settings Settings
-	if err := yaml.Unmarshal([]byte(value), &settings); err != nil {
-		return fmt.Errorf("factor %q: %w", name, err)
-	}
-	if s.Factors == nil {
-		s.Factors = make(map[Factor]Settings)
-	}
-	s.Factors[name] = settings
-	return nil
-}
-
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
 	ID      uuid.UUID
-	Factors map[Factor]Settings `yaml:"factors"`
-	Run     Script              `yaml:"run"`
+	Factors Factors `yaml:"factors"`
+	Run     Script  `yaml:"run"`
 }
 
-// NewExperiment creates an experiment with a UUIDv7 ID.
-func NewExperiment() Experiment {
-	return Experiment{ID: uuid.NewV7()}
+// NewExperiment creates an experiment from a study with a UUIDv7 ID.
+func NewExperiment(study Study) Experiment {
+	return Experiment{ID: uuid.NewV7(), Factors: maps.Clone(study.Factors), Run: study.Run}
+}
+
+// Factors maps each factor to its possible settings.
+type Factors map[Factor]Settings
+
+// Set parses a YAML setting or sequence and replaces a factor's settings.
+func (f *Factors) Set(name Factor, value []byte) error {
+	var settings Settings
+	if err := yaml.Unmarshal(value, &settings); err != nil {
+		return fmt.Errorf("factor %q: %w", name, err)
+	}
+	if *f == nil {
+		*f = make(Factors)
+	}
+	(*f)[name] = settings
+	return nil
 }
 
 // Factor names an input to a run.
