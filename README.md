@@ -15,10 +15,10 @@ factors:
   foo: [1, 2, 3]
   bar: [4, 5]
 run: |
-  printf '{"sum":%s}\n' "$((foo + bar))"
+  printf '{"sum":%s}\n' "$(({foo} + {bar}))"
 ```
 
-The experiment can be run like shown below:
+The `{foo}` and `{bar}` placeholders are replaced with their settings without shell escaping. The experiment can be run like shown below:
 
 ```
 $ doe experiment -f sum.study.yaml
@@ -39,7 +39,7 @@ $ doe results
 Alternatively, positional `key=value` arguments define factors, with values interpreted as YAML. The script for each run is supplied with `-r` (short for `--run`):
 
 ```sh
-$ doe experiment 'foo=[1, 2, 3]' 'bar=[4, 5]' -r 'printf "{\"sum\":%s}\n" "$((foo + bar))"'
+$ doe experiment 'foo=[1, 2, 3]' 'bar=[4, 5]' -r 'printf "{\"sum\":%s}\n" "$(({foo} + {bar}))"'
 ```
 
 Files and CLI options can also be combined, with CLI options taking precedence:

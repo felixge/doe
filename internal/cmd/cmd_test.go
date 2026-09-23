@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/felixge/doe2/internal/cli"
+	"github.com/felixge/doe2/internal/model"
 )
 
 func TestExperimentIntegration(t *testing.T) {
@@ -18,7 +19,7 @@ func TestExperimentIntegration(t *testing.T) {
   foo: [1, 2, 3]
   bar: [4, 5]
 run: |
-  printf '{"result":1}\n'
+  printf '{"result":%s}\n' "$(({foo} + {bar}))"
 `
 	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 		t.Fatal(err)
@@ -30,7 +31,7 @@ run: |
 	}{
 		{"file", []string{"experiment", "-f", path}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
 		{"override", []string{"experiment", "-f", path, "foo=9"}, [][2]int{{9, 4}, {9, 5}}},
-		{"flags and factors interspersed", []string{"experiment", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"result":1}\n'`}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
+		{"flags and factors interspersed", []string{"experiment", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"result":%s}\n' "$(({foo} + {bar}))"`}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -55,11 +56,20 @@ run: |
 					t.Fatal(err)
 				}
 				want := tc.want[i]
-				if got.Foo != want[0] || got.Bar != want[1] || got.Result != 1 {
+				if got.Foo != want[0] || got.Bar != want[1] || got.Result != want[0]+want[1] {
 					t.Errorf("result %d = %+v, want %v", i, got, want)
 				}
 			}
 		})
+	}
+}
+
+func TestExpandRunScript(t *testing.T) {
+	values := map[model.Factor]model.Setting{"foo": "a'b; {bar}", "bar": 42}
+	got := expandRunScript(`{foo} {bar} {missing} {"result":1}`, values)
+	want := `a'b; {bar} 42 {missing} {"result":1}`
+	if got != want {
+		t.Errorf("script = %q, want %q", got, want)
 	}
 }
 

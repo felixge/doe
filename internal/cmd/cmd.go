@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -19,6 +20,8 @@ import (
 	"github.com/felixge/doe2/internal/model"
 	"github.com/spf13/pflag"
 )
+
+var factorPlaceholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
 
 // Main executes the doe command.
 func Main(ctx context.Context, env *cli.Env, args []string) int {
@@ -106,7 +109,7 @@ func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experimen
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			command := exec.CommandContext(ctx, "/bin/sh", "-c", string(experiment.Run))
+			command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(experiment.Run, values))
 			command.Dir = dir
 			command.Stdin = env.Stdin
 			command.Stderr = env.Stderr
@@ -143,6 +146,16 @@ func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experimen
 	return visit(0)
 }
 
+func expandRunScript(script model.Script, values map[model.Factor]model.Setting) string {
+	return factorPlaceholder.ReplaceAllStringFunc(string(script), func(placeholder string) string {
+		value, ok := values[model.Factor(placeholder[1:len(placeholder)-1])]
+		if !ok {
+			return placeholder
+		}
+		return fmt.Sprint(value)
+	})
+}
+
 func fail(stderr io.Writer, err error) int {
 	_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 	return 1
@@ -171,7 +184,6 @@ Options:
   -h, --help  Print help text.
 
 Factors are YAML values or sequences of values. CLI factors override file
-factors. Each run must emit one JSON object; combined input and output objects
-are printed as JSON lines. No results are saved yet.
+factors. In run scripts, {factor} expands to the setting.
 `)
 }
