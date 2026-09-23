@@ -31,6 +31,10 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 	}
 }
 
+// exitInterrupted is the conventional exit status for a process killed by
+// SIGINT (128 + signal number).
+const exitInterrupted = 130
+
 func run(ctx context.Context, env *cli.Env, args []string) int {
 	opts, help, err := parseRun(env.Stderr, args)
 	if help {
@@ -41,6 +45,10 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 		return fail(env.Stderr, err)
 	}
 	if err := runner.Execute(ctx, env, opts); err != nil {
+		if ctx.Err() != nil {
+			// The run was interrupted via ctrl+c or SIGTERM; exit quietly.
+			return exitInterrupted
+		}
 		return fail(env.Stderr, err)
 	}
 	return 0
