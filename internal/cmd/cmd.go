@@ -44,7 +44,7 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 }
 
 func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
-	// Handle help before loading a study so it works even with an invalid file.
+	// Parse flags.
 	flags := pflag.NewFlagSet("doe experiment", pflag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	flags.SetInterspersed(true)
@@ -55,13 +55,13 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		experimentUsage(env.Stdout)
 		return 0
 	} else if err != nil {
-		return fail(env.Stderr, err)
+		return env.Fail(err)
 	}
 
 	// Separate configuration errors from run failures, which may be cancellations.
 	experiment, dir, err := prepareExperiment(*file, *runScript, flags.Changed("run"), flags.Args())
 	if err != nil {
-		return fail(env.Stderr, err)
+		return env.Fail(err)
 	}
 
 	// Record only completed experiments; failed runs leave no record.
@@ -69,10 +69,10 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		if ctx.Err() != nil {
 			return 130
 		}
-		return fail(env.Stderr, err)
+		return env.Fail(err)
 	}
 	if err := appendExperiment(experiment, dir); err != nil {
-		return fail(env.Stderr, err)
+		return env.Fail(err)
 	}
 	return 0
 }
@@ -213,11 +213,6 @@ func expandRunScript(script model.Script, values map[model.Factor]model.Setting)
 		}
 		return fmt.Sprint(value)
 	})
-}
-
-func fail(stderr io.Writer, err error) int {
-	_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
-	return 1
 }
 
 func rootUsage(w io.Writer) {
