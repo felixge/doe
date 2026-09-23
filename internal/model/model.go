@@ -14,17 +14,38 @@ type Study struct {
 	Run     Script              `yaml:"run"`
 }
 
+// Load decodes a study file into the receiver.
+func (s *Study) Load(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var loaded Study
+	if err := yaml.Unmarshal(data, &loaded); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	*s = loaded
+	return nil
+}
+
+// SetFactor parses a YAML setting or sequence and replaces a factor's settings.
+func (s *Study) SetFactor(name Factor, value string) error {
+	var settings Settings
+	if err := yaml.Unmarshal([]byte(value), &settings); err != nil {
+		return fmt.Errorf("factor %q: %w", name, err)
+	}
+	if s.Factors == nil {
+		s.Factors = make(map[Factor]Settings)
+	}
+	s.Factors[name] = settings
+	return nil
+}
+
 // Factor names an input to a run.
 type Factor string
 
 // Settings is one or more possible values for a factor.
 type Settings []Setting
-
-// Setting is a factor value passed to a run as a string.
-type Setting string
-
-// Script is a shell command executed by doe.
-type Script string
 
 // UnmarshalYAML accepts a scalar or sequence; null and [] have no settings.
 func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
@@ -47,29 +68,8 @@ func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// SetFactor parses a YAML setting or sequence and replaces a factor's settings.
-func (s *Study) SetFactor(name Factor, value string) error {
-	var settings Settings
-	if err := yaml.Unmarshal([]byte(value), &settings); err != nil {
-		return fmt.Errorf("factor %q: %w", name, err)
-	}
-	if s.Factors == nil {
-		s.Factors = make(map[Factor]Settings)
-	}
-	s.Factors[name] = settings
-	return nil
-}
+// Setting is a factor value passed to a run as a string.
+type Setting string
 
-// Load decodes a study file into the receiver.
-func (s *Study) Load(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var loaded Study
-	if err := yaml.Unmarshal(data, &loaded); err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
-	}
-	*s = loaded
-	return nil
-}
+// Script is a shell command executed by doe.
+type Script string
