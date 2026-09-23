@@ -35,6 +35,12 @@ type Design struct {
 	Run     Script  `json:"run" yaml:"run"`
 }
 
+// Clone returns a design with an independent factors map.
+func (d Design) Clone() Design {
+	d.Factors = maps.Clone(d.Factors)
+	return d
+}
+
 // Results holds the experiments recorded by doe.
 type Results struct {
 	Experiments []Experiment `json:"experiments"`
@@ -49,9 +55,8 @@ type Experiment struct {
 // NewExperiment creates an experiment from a study with a UUIDv7 ID.
 func NewExperiment(study Study) Experiment {
 	return Experiment{
-		ID:      uuid.NewV7(),
-		Factors: maps.Clone(study.Factors),
-		Run:     study.Run,
+		ID:     uuid.NewV7(),
+		Design: study.Clone(),
 	}
 }
 
