@@ -36,17 +36,17 @@ $ doe results
 {"foo": "3", "bar": "5", "sum": 8}
 ```
 
-Alternatively, one can specify all options on the CLI, with each positional argument being interpreted as one line of a YAML file:
+Alternatively, positional `key=value` arguments define factors, with values interpreted as YAML. The run command is supplied with `--run`:
 
 ```sh
-doe run 'factors: {foo: [1, 2, 3], bar: [4, 5]}' \
-  "run: printf '{\"sum\":%s}\n' \"\$((foo + bar))\""
+doe run 'foo=[1, 2, 3]' 'bar=[4, 5]' \
+  --run 'printf "{\"sum\":%s}\n" "$((foo + bar))"'
 ```
 
 Files and CLI options can also be combined, with CLI options taking precedence:
 
 ```
-$ doe run -f sum.study.yaml 'factors: {foo: 9}'
+$ doe run -f sum.study.yaml foo=9
 {"foo": "9", "bar": "4", "sum": 13}
 {"foo": "9", "bar": "5", "sum": 14}
 ```
