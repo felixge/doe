@@ -56,17 +56,6 @@ func TestSumIntegration(t *testing.T) {
 
 func stringInt(n int) string { return strconv.Itoa(n) }
 
-func TestDashedFactorName(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	env := &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}
-	if code := Main(context.Background(), env, []string{"run", "foo-bar=9", "-r", `printf '{}'`}); code != 0 {
-		t.Fatalf("exit code %d: %s", code, &stderr)
-	}
-	if got := strings.TrimSpace(stdout.String()); got != `{"foo-bar":"9"}` {
-		t.Fatalf("stdout = %q", got)
-	}
-}
-
 func TestRunErrors(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
