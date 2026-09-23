@@ -88,7 +88,7 @@ Run "doe <command> -h" for command-specific help.
 }
 
 func runUsage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `Run performs one experiment per selected study. Completed runs are reused across designs.
+	_, _ = fmt.Fprint(w, `Run performs one experiment per selected study. Completed runs are reused within the same design.
 
 Usage: doe run [options] <project-directory> <design>...
 

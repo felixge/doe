@@ -9,6 +9,23 @@ import (
 	"testing"
 )
 
+func TestLoadResultsRequiresDesignProvenance(t *testing.T) {
+	for _, test := range []struct{ design, want string }{
+		{"", "run has no design"},
+		{`,"design":""`, "run has no design"},
+		{`,"design":"full"`, `run references unknown design "full"`},
+	} {
+		t.Run(test.design, func(t *testing.T) {
+			output := t.TempDir()
+			writeFile(t, filepath.Join(output, "experiments.jsonl"), `{"experiment_id":"e","designs":["smoke"]}`+"\n")
+			writeFile(t, filepath.Join(output, "runs.jsonl"), `{"experiment_id":"e"`+test.design+"}\n")
+			if _, err := loadResults(output); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error=%v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestReadJSONLRecoversOnlyInvalidUnterminatedFinalRecord(t *testing.T) {
 	tests := []struct {
 		name        string

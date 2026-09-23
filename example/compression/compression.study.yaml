@@ -7,7 +7,6 @@ designs:
       file: [sample.txt]
       algorithm: [gzip, zstd]
       preset: [default]
-    replicates: 1
 
   full:
     factors:
@@ -15,5 +14,3 @@ designs:
       algorithm: [gzip, zstd]
       preset: [min, default, max]
     replicates: 6
-    concurrency: 2
-    concurrency_by: [file]

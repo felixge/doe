@@ -56,14 +56,13 @@ func planDesigns(w io.Writer, selected []study.Selection, executions map[string]
 		results := executions[selection.Study.Name].results
 		for replicate, row := range schedule {
 			for _, pointIndex := range row {
-				key, err := reuseKey(selection.Study.Name, replicate+1, points[pointIndex])
+				key, err := reuseKey(selection.Study.Name, d.Name, replicate+1, points[pointIndex])
 				if err != nil {
 					return err
 				}
 				if _, ok := results.runs[key]; ok {
 					reused[key] = true
 				}
-				results.runs[key] = 0
 			}
 		}
 		totalReused += len(reused)
@@ -107,7 +106,7 @@ func planDesigns(w io.Writer, selected []study.Selection, executions map[string]
 				rowValues := []string{strconv.Itoa(position + 1)}
 				for replicate, row := range filteredSchedule {
 					cell := "#" + strconv.Itoa(row[position]+1)
-					key, err := reuseKey(selection.Study.Name, replicate+1, points[row[position]])
+					key, err := reuseKey(selection.Study.Name, d.Name, replicate+1, points[row[position]])
 					if err != nil {
 						return err
 					}
@@ -126,7 +125,7 @@ func planDesigns(w io.Writer, selected []study.Selection, executions map[string]
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(w, "\nTotal runs: %d; reusable: %d; new: %d\n* Reusable from existing results or earlier selected designs.\n", totalRuns, totalReused, totalRuns-totalReused)
+	_, err := fmt.Fprintf(w, "\nTotal runs: %d; reusable: %d; new: %d\n* Reusable from existing results for the same design.\n", totalRuns, totalReused, totalRuns-totalReused)
 	return err
 }
 

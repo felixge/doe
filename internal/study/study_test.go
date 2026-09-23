@@ -79,6 +79,7 @@ func TestParseRejectsInvalidDesigns(t *testing.T) {
 		{"sequence factors", "factors: [{a: [x]}]\n", "factors must be a mapping"},
 		{"empty factor name", "factors:\n  '': [x]\n", "factor name must not be empty"},
 		{"reserved factor", "factors:\n  run_id: [x]\n", "factor name \"run_id\" is reserved"},
+		{"reserved design factor", "factors: {design: [x]}\n", "factor name \"design\" is reserved"},
 		{"duplicate factor", "factors:\n  a: [x]\n  a: [y]\n", "duplicate factors key \"a\""},
 		{"empty settings", "factors: {a: []}\n", "settings for factor \"a\" must be a non-empty sequence"},
 		{"scalar settings", "factors: {a: x}\n", "settings for factor \"a\" must be a non-empty sequence"},

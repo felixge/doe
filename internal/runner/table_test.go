@@ -71,7 +71,7 @@ func TestPlanDesignsOutput(t *testing.T) {
 		"+-------+-------+\n| point | value |\n+-------+-------+\n| #1    | one   |\n| #2    | two   |\n+-------+-------+\n\n" +
 		"Schedule:\n" +
 		"+---------+----+----+\n| run/rep | 1  | 2  |\n+---------+----+----+\n| 1       | #1 | #2 |\n| 2       | #2 | #1 |\n+---------+----+----+\n\n" +
-		"Runs: 4; reusable: 0; new: 4\n\nTotal runs: 4; reusable: 0; new: 4\n* Reusable from existing results or earlier selected designs.\n"
+		"Runs: 4; reusable: 0; new: 4\n\nTotal runs: 4; reusable: 0; new: 4\n* Reusable from existing results for the same design.\n"
 	if got := output.String(); got != want {
 		t.Fatalf("planDesigns() output = %q, want %q", got, want)
 	}
@@ -155,7 +155,7 @@ func emptyExecutions(name string) map[string]*studyExecution {
 	return map[string]*studyExecution{name: {results: &resultIndex{runs: map[string]time.Duration{}}}}
 }
 
-func TestPlanReuseFromEarlierDesignsAndResults(t *testing.T) {
+func TestPlanReuseOnlyFromSameDesign(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "compression.study.yaml"), overlappingStudy)
 	opts := Options{Project: root, Designs: []string{"smoke", "full"}, Plan: true}
@@ -163,7 +163,7 @@ func TestPlanReuseFromEarlierDesignsAndResults(t *testing.T) {
 	if err := Execute(context.Background(), testEnv(stdout, stderr), opts); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Runs: 2; reusable: 0; new: 2", "Runs: 6; reusable: 2; new: 4", "Total runs: 8; reusable: 2; new: 6", "#1*", "#2*"} {
+	for _, want := range []string{"Runs: 2; reusable: 0; new: 2", "Runs: 6; reusable: 0; new: 6", "Total runs: 8; reusable: 0; new: 8"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("plan missing %q:\n%s", want, stdout)
 		}
@@ -177,13 +177,15 @@ func TestPlanReuseFromEarlierDesignsAndResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts.Plan = true
-	opts.Designs = []string{"full"}
+	opts.Designs = []string{"smoke", "full"}
 	stdout.Reset()
 	if err := Execute(context.Background(), testEnv(stdout, stderr), opts); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "Total runs: 6; reusable: 2; new: 4") {
-		t.Fatalf("plan=%s", stdout)
+	for _, want := range []string{"Runs: 2; reusable: 2; new: 0", "Runs: 6; reusable: 0; new: 6", "Total runs: 8; reusable: 2; new: 6", "#1*", "#2*"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("plan missing %q:\n%s", want, stdout)
+		}
 	}
 	if got := lineCount(t, filepath.Join(root, "results", "compression", "experiments.jsonl")); got != 1 {
 		t.Fatalf("plan created experiment: %d", got)

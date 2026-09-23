@@ -6,7 +6,7 @@ import "time"
 // IsReservedRunField reports whether name is owned by the runs.jsonl format.
 func IsReservedRunField(name string) bool {
 	switch name {
-	case "run_id", "experiment_id", "replicate", "start", "end":
+	case "run_id", "experiment_id", "design", "replicate", "start", "end":
 		return true
 	default:
 		return false
@@ -67,6 +67,7 @@ type Experiment struct {
 type Run struct {
 	ID           string            `json:"run_id"`
 	ExperimentID string            `json:"experiment_id"`
+	Design       string            `json:"design"`
 	Replicate    int               `json:"replicate"`
 	Start        time.Time         `json:"start"`
 	End          time.Time         `json:"end"`

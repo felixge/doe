@@ -9,7 +9,7 @@ The tool defines a directory layout for study protocols, scripts, and results. T
 ## Install
 
 ```bash
-go install github.com/felixge/doe@latest
+$ go install github.com/felixge/doe@latest
 ```
 
 ## Getting Started
@@ -34,7 +34,6 @@ designs:
       file: [sample.txt]
       algorithm: [gzip, zstd]
       preset: [default]
-    replicates: 1
 
   full:
     factors:
@@ -42,8 +41,6 @@ designs:
       algorithm: [gzip, zstd]
       preset: [min, default, max]
     replicates: 6
-    concurrency: 2
-    concurrency_by: [file]
 ```
 
 It uses a [setup.bash](./example/compression/setup.bash) script to install dependencies and to emit a JSON object describing the environment:
@@ -67,7 +64,7 @@ $ doe run . full
 <progress on stderr>
 ```
 
-`doe run` leaves stdout empty. doe streams one JSON object per run to `results/compression/runs.jsonl`. You can analyze this data any way you like, e.g. using DuckDB's `read_json` function:
+doe streams one JSON object per run to `results/compression/runs.jsonl`. You can analyze this data any way you like, e.g. using DuckDB's `read_json` function:
 
 ```bash
 $ duckdb -c "SELECT algorithm, file, level, preset, round(avg(input_size_bytes/output_size_bytes), 2) as ratio, round(avg(input_size_bytes/cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/compression/runs.jsonl') GROUP BY ALL ORDER BY ALL;"
@@ -127,7 +124,7 @@ A setup or run failure stops execution, cancels active runs, and retains complet
 
 ### Plans and scheduling
 
-`--plan` prints each selected design's point table and schedule in selector order. The `point` column labels points `#1`, `#2`, etc. Schedule rows are run positions and columns are replicates: read a column top to bottom, then move right. `*` marks runs reusable from existing results or earlier selected designs. Per-design and total counts report scheduled, reusable, and new runs. Plans do not run setup, write records, or repair interrupted records.
+`--plan` prints each selected design's point table and schedule in selector order. The `point` column labels points `#1`, `#2`, etc. Schedule rows are run positions and columns are replicates: read a column top to bottom, then move right. `*` marks runs reusable from existing results for the same design. Per-design and total counts report scheduled, reusable, and new runs. Plans do not run setup, write records, or repair interrupted records.
 
 For replicate `r`, doe uses row `r-1` of a repeating Williams design. A complete schedule has `n` rows for an even number of points and `2n` rows for an odd number greater than one. This balances execution position and first-order carryover effects. The schedule repeats when more replicates are requested.
 
@@ -174,9 +171,9 @@ Each selected study's snapshot includes its own study file and every other proje
 
 Ignored Git files are still included. Included inputs must be regular files, not symlinks. Snapshots store content hashes, not copies of files. Keep the project sources in version control to reproduce an experiment.
 
-Completed runs are reused by **study + design point + replicate**. Design names, concurrency settings, scheduling context, and environment hashes are not part of this key. Full can reuse matching smoke runs, and reordered factors do not change identity. Reused records retain their original experiment IDs, environment, timestamps, and logs; no duplicate records are written.
+Completed runs are reused by **study + design name + design point + replicate**. Full never reuses smoke runs, even for identical points and concurrency settings. Within the same design, reordered factors do not change point identity. Reused records retain their original experiment IDs, environment, timestamps, and logs; no duplicate records are written.
 
-This intentionally permits mixing measurements from different concurrency, scheduling, or setup environments. `--dirty` also permits mixing source versions. Consider these differences when analyzing results; remove a study's results explicitly when a fresh measurement set is needed.
+Changes to a design, including its concurrency settings, require `--dirty` when results already exist. This flag permits reuse within the same named design despite changed inputs or scheduling settings. Setup environment hashes are not part of the reuse key. Consider these differences when analyzing results; remove a study's results explicitly when a fresh measurement set is needed.
 
 ## Results format
 
@@ -186,7 +183,6 @@ project/
   work/
   results/
     compression/
-      .doe
       experiments.jsonl
       runs.jsonl
       <experiment_id>/
@@ -194,7 +190,7 @@ project/
         <run_id>.txt
 ```
 
-Each study has independent experiment/run records. `.doe` marks a managed results directory; doe refuses unrelated nonempty directories or symlinked result paths. `setup.txt` exists when setup is specified. Failed runs have logs but no run record. An invalid, unterminated JSONL tail left by interruption is ignored during preflight and removed before execution resumes; malformed terminated records are errors.
+Each study has independent experiment/run records. Symlinked result paths are rejected. `setup.txt` exists when setup is specified. Failed runs have logs but no run record. An invalid, unterminated JSONL tail left by interruption is ignored during preflight and removed before execution resumes; malformed terminated records are errors.
 
 ### experiments.jsonl
 
@@ -220,11 +216,12 @@ One JSON object per successfully completed run, appended in completion order:
 | --- | --- |
 | `run_id` | Unique run identifier. |
 | `experiment_id` | Original experiment identifier, joining the run to its protocol snapshot and environment. |
+| `design` | Design name within the study. Runs are reused only within this design. |
 | `replicate` | Replicate number, starting at 1. |
 | `start`, `end` | RFC3339Nano timestamps of run execution. |
 | Other fields | Flattened factor settings and response measurements. |
 
-`run_id`, `experiment_id`, `replicate`, `start`, and `end` are reserved names for both factors and responses.
+`run_id`, `experiment_id`, `design`, `replicate`, `start`, and `end` are reserved names for both factors and responses.
 
 ## Terminology
 

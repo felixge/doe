@@ -27,8 +27,6 @@ import (
 	"golang.org/x/term"
 )
 
-const resultsMarker = "doe results\n"
-
 // Options contains the validated command-line arguments for doe run.
 type Options struct {
 	Project string
@@ -74,9 +72,6 @@ func Execute(ctx context.Context, env *cli.Env, opts Options) error {
 			continue
 		}
 		output := filepath.Join(root, "results", s.Name)
-		if err := checkOwnedOutput(output); err != nil {
-			return err
-		}
 		if err := validateManagedPaths(output); err != nil {
 			return err
 		}
@@ -125,7 +120,7 @@ func canonicalPath(path string) (string, error) {
 	return filepath.EvalSymlinks(absolute)
 }
 
-func checkOwnedOutput(output string) error {
+func validateManagedPaths(output string) error {
 	info, err := os.Lstat(output)
 	if os.IsNotExist(err) {
 		return nil
@@ -136,54 +131,7 @@ func checkOwnedOutput(output string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("results path is not a directory: %s", output)
 	}
-	entries, err := os.ReadDir(output)
-	if err != nil {
-		return err
-	}
-	if len(entries) == 0 {
-		return nil
-	}
-	marker := filepath.Join(output, ".doe")
-	info, err = os.Lstat(marker)
-	if err != nil {
-		return fmt.Errorf("refusing to use nonempty directory that is not a doe results directory: %s", output)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("invalid doe results marker: %s", marker)
-	}
-	data, err := os.ReadFile(marker)
-	if err != nil {
-		return err
-	}
-	if string(data) != resultsMarker {
-		return fmt.Errorf("invalid doe results marker: %s", marker)
-	}
-	return nil
-}
-
-func writeMarker(output string) error {
-	file, err := os.CreateTemp(output, ".doe-*")
-	if err != nil {
-		return err
-	}
-	tmp := file.Name()
-	defer func() { _ = os.Remove(tmp) }()
-	if err := file.Chmod(0o644); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.WriteString(resultsMarker); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(output, ".doe"))
-}
-
-func validateManagedPaths(output string) error {
-	for _, name := range []string{".doe", "experiments.jsonl", "runs.jsonl"} {
+	for _, name := range []string{"experiments.jsonl", "runs.jsonl"} {
 		info, err := os.Lstat(filepath.Join(output, name))
 		if os.IsNotExist(err) {
 			continue
@@ -215,9 +163,6 @@ func setupOutput(ctx context.Context, stdin io.Reader, root, script, logPath str
 
 func beginExperiment(ctx context.Context, env *cli.Env, root, output string, s model.Study, execution *studyExecution) error {
 	if err := os.MkdirAll(output, 0o755); err != nil {
-		return err
-	}
-	if err := writeMarker(output); err != nil {
 		return err
 	}
 	for _, name := range []string{"experiments.jsonl", "runs.jsonl"} {
@@ -258,7 +203,7 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output, script strin
 	pointKeys := make([]string, len(points))
 	commands := make([]string, len(points))
 	for i, point := range points {
-		key, err := pointKey(experiment.Study, point)
+		key, err := pointKey(experiment.Study, d.Name, point)
 		if err != nil {
 			return err
 		}
@@ -507,7 +452,8 @@ func saveCompletionResult(output string, d model.Design, experiment model.Experi
 	}
 	run := model.Run{
 		ID: completion.id, ExperimentID: experiment.ID, Replicate: completion.task.replicate,
-		Start: completion.start, End: completion.end, Inputs: inputs, Outputs: outputs,
+		Design: d.Name,
+		Start:  completion.start, End: completion.end, Inputs: inputs, Outputs: outputs,
 	}
 	if err := appendJSON(filepath.Join(output, "runs.jsonl"), flattenRun(run)); err != nil {
 		return err
@@ -720,9 +666,10 @@ func pointMap(point model.Point) map[string]model.Scalar {
 }
 
 func flattenRun(run model.Run) map[string]any {
-	record := make(map[string]any, len(run.Inputs)+len(run.Outputs)+5)
+	record := make(map[string]any, len(run.Inputs)+len(run.Outputs)+6)
 	record["run_id"] = run.ID
 	record["experiment_id"] = run.ExperimentID
+	record["design"] = run.Design
 	record["replicate"] = run.Replicate
 	record["start"] = run.Start
 	record["end"] = run.End

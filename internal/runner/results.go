@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -52,6 +53,13 @@ func loadResults(output string) (*resultIndex, error) {
 		if !ok {
 			return fmt.Errorf("run references unknown experiment %q", experimentID)
 		}
+		design, ok := record["design"].(string)
+		if !ok || design == "" {
+			return fmt.Errorf("run has no design")
+		}
+		if !slices.Contains(experiment.Designs, design) {
+			return fmt.Errorf("run references unknown design %q in experiment %q", design, experimentID)
+		}
 		replicateNumber, ok := record["replicate"].(json.Number)
 		if !ok {
 			return fmt.Errorf("run has invalid replicate")
@@ -68,7 +76,7 @@ func loadResults(output string) (*resultIndex, error) {
 			}
 			point.Values = append(point.Values, model.Value{Name: name, Value: value})
 		}
-		key, err := reuseKey(experiment.Study, replicate, point)
+		key, err := reuseKey(experiment.Study, design, replicate, point)
 		if err != nil {
 			return err
 		}
@@ -108,8 +116,8 @@ func (r *resultIndex) addExperiment(experiment model.Experiment) {
 	r.experiment[experiment.ID] = experiment
 }
 
-func reuseKey(study string, replicate int, point model.Point) (string, error) {
-	key, err := pointKey(study, point)
+func reuseKey(study, design string, replicate int, point model.Point) (string, error) {
+	key, err := pointKey(study, design, point)
 	if err != nil {
 		return "", err
 	}
@@ -120,7 +128,7 @@ func replicateKey(pointKey string, replicate int) string {
 	return pointKey + "\x00" + strconv.Itoa(replicate)
 }
 
-func pointKey(study string, point model.Point) (string, error) {
+func pointKey(study, design string, point model.Point) (string, error) {
 	values := make(map[string]model.Scalar, len(point.Values))
 	for _, value := range point.Values {
 		values[value.Name] = value.Value
@@ -129,7 +137,7 @@ func pointKey(study string, point model.Point) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return study + "\x00" + string(data), nil
+	return study + "\x00" + design + "\x00" + string(data), nil
 }
 
 func readJSONL(path string, consume func([]byte) error) error {

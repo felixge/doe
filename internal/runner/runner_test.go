@@ -28,7 +28,7 @@ designs:
     concurrency: 2
 `
 
-func TestExecuteReuseAcrossDesignsAndResume(t *testing.T) {
+func TestExecuteReusesOnlySameDesignOnResume(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "compression.study.yaml"), overlappingStudy)
 	output := filepath.Join(root, "results", "compression")
@@ -51,11 +51,11 @@ func TestExecuteReuseAcrossDesignsAndResume(t *testing.T) {
 	run("full")
 	run("compression/smoke", "full")
 	runs := readRecords[map[string]any](t, filepath.Join(output, "runs.jsonl"))
-	if len(runs) != 6 {
-		t.Fatalf("runs=%d, want 6", len(runs))
+	if len(runs) != 8 {
+		t.Fatalf("runs=%d, want 8", len(runs))
 	}
 	for i, value := range []string{"one two", "quote'it"} {
-		if runs[i]["experiment_id"] != first.ID || runs[i]["value"] != value || runs[i]["seen"] != value {
+		if runs[i]["design"] != "smoke" || runs[i]["experiment_id"] != first.ID || runs[i]["value"] != value || runs[i]["seen"] != value {
 			t.Fatalf("original run lost provenance or shell escaping: %v", runs[i])
 		}
 	}
@@ -70,18 +70,23 @@ func TestExecuteReuseAcrossDesignsAndResume(t *testing.T) {
 	if len(experiments) != 3 || !reflect.DeepEqual(experiments[2].Designs, []string{"smoke", "full"}) {
 		t.Fatalf("experiments=%+v", experiments)
 	}
+	for _, run := range runs[2:] {
+		if run["design"] != "full" || run["experiment_id"] != experiments[1].ID {
+			t.Fatalf("full run lost provenance: %v", run)
+		}
+	}
 	for _, e := range experiments {
 		if e.Study != "compression" || e.Env["host"].(map[string]any)["name"] != "test" {
 			t.Fatalf("experiment=%+v", e)
 		}
 		assertFileContains(t, filepath.Join(output, e.ID, "setup.txt"), `"host"`)
 	}
-	if got := lineCount(t, filepath.Join(root, "work", "order")); got != 9 {
-		t.Fatalf("setup/run invocations=%d, want 9", got)
+	if got := lineCount(t, filepath.Join(root, "work", "order")); got != 11 {
+		t.Fatalf("setup/run invocations=%d, want 11", got)
 	}
 }
 
-func TestExecuteReusesEarlierDesignWithReorderedFactors(t *testing.T) {
+func TestExecuteKeepsEarlierDesignSeparate(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "a.study.yaml"), `setup: mkdir -p work; echo setup >> work/order
 run: echo run >> work/order; echo '{}'
@@ -91,7 +96,6 @@ designs:
   full:
     factors: {b: [2], a: [1, 3]}
     replicates: 2
-    concurrency: 2
 `)
 	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: []string{"smoke", "full"}}); err != nil {
 		t.Fatal(err)
@@ -102,16 +106,22 @@ designs:
 		t.Fatalf("experiments=%+v", experiments)
 	}
 	runs := readRecords[map[string]any](t, filepath.Join(output, "runs.jsonl"))
-	if len(runs) != 4 || lineCount(t, filepath.Join(root, "work", "order")) != 5 {
-		t.Fatalf("runs=%v; wanted four runs and one setup", runs)
+	if len(runs) != 5 || lineCount(t, filepath.Join(root, "work", "order")) != 6 {
+		t.Fatalf("runs=%v; wanted five runs and one setup", runs)
 	}
 	seen := map[string]bool{}
 	for _, run := range runs {
-		key := fmt.Sprint(run["a"], "/", run["b"], "/", run["replicate"])
+		key := fmt.Sprint(run["design"], "/", run["a"], "/", run["b"], "/", run["replicate"])
 		if seen[key] || run["experiment_id"] != experiments[0].ID {
 			t.Fatalf("duplicate or wrong provenance: %v", run)
 		}
 		seen[key] = true
+	}
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: []string{"full", "smoke"}}); err != nil {
+		t.Fatal(err)
+	}
+	if resumed := readRecords[map[string]any](t, filepath.Join(output, "runs.jsonl")); !reflect.DeepEqual(resumed, runs) {
+		t.Fatalf("resume changed completed runs: %v", resumed)
 	}
 }
 
@@ -188,7 +198,6 @@ func TestExecutePreflightHasNoSideEffects(t *testing.T) {
 				if err := os.MkdirAll(output, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				writeFile(t, filepath.Join(output, ".doe"), resultsMarker)
 				partial = filepath.Join(output, "experiments.jsonl")
 				writeFile(t, partial, "{\"experiment_id\":\"previous\",\"files_hash\":\"changed\"}\n{\"partial\":")
 			}
@@ -283,6 +292,7 @@ func TestExecuteEnvironmentResponsesAndLogs(t *testing.T) {
 		{"nested", `printf 'out\n'; echo err >&2; echo '{"host":{"name":"test"}}'`, `echo log; echo err >&2; echo '{"summary":{"n":2},"samples":[1,null]}'`, ""},
 		{"no env", "echo setup done", "echo '{}'", ""},
 		{"reserved response", "", `echo '{"end":1}'`, `response name "end" is reserved`},
+		{"reserved design response", "", `echo '{"design":"other"}'`, `response name "design" is reserved`},
 		{"factor response", "", `echo '{"value":1}'`, `response name "value" is also a factor`},
 		{"no result", "", "true", "run produced no result"},
 		{"bad result", "", "echo '[]'", "cannot unmarshal array"},
@@ -390,12 +400,12 @@ func TestCommandOutputLogsCombinedOutputAndParsesFinalStdout(t *testing.T) {
 func TestLoadResultsIndexesRunsByDuration(t *testing.T) {
 	output := t.TempDir()
 	writeFile(t, filepath.Join(output, "experiments.jsonl"), `{"experiment_id":"experiment","study":"compression","designs":["smoke"],"factors":["value"]}`+"\n")
-	writeFile(t, filepath.Join(output, "runs.jsonl"), `{"experiment_id":"experiment","replicate":1,"start":"2026-09-19T12:00:00Z","end":"2026-09-19T12:00:02.25Z","value":"one"}`+"\n")
+	writeFile(t, filepath.Join(output, "runs.jsonl"), `{"experiment_id":"experiment","design":"smoke","replicate":1,"start":"2026-09-19T12:00:00Z","end":"2026-09-19T12:00:02.25Z","value":"one"}`+"\n")
 	results, err := loadResults(output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := reuseKey("compression", 1, model.Point{Values: []model.Value{{Name: "value", Value: "one"}}})
+	key, err := reuseKey("compression", "smoke", 1, model.Point{Values: []model.Value{{Name: "value", Value: "one"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +426,7 @@ func TestInterpolateDoesNotRescanValues(t *testing.T) {
 }
 
 func TestOutputSafety(t *testing.T) {
-	for _, kind := range []string{"unowned", "marker", "symlink", "record symlink"} {
+	for _, kind := range []string{"file", "symlink", "record symlink"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "a.study.yaml"), overlappingStudy)
@@ -425,10 +435,11 @@ func TestOutputSafety(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch kind {
-			case "unowned":
-				writeFile(t, filepath.Join(output, "important"), "keep")
-			case "marker":
-				writeFile(t, filepath.Join(output, ".doe"), "wrong")
+			case "file":
+				if err := os.Remove(output); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, output, "keep")
 			case "symlink":
 				if err := os.Remove(output); err != nil {
 					t.Fatal(err)
@@ -437,7 +448,6 @@ func TestOutputSafety(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "record symlink":
-				writeFile(t, filepath.Join(output, ".doe"), resultsMarker)
 				if err := os.Symlink("missing", filepath.Join(output, "runs.jsonl")); err != nil {
 					t.Fatal(err)
 				}
@@ -446,6 +456,34 @@ func TestOutputSafety(t *testing.T) {
 				t.Fatal("unsafe output accepted")
 			}
 		})
+	}
+}
+
+func TestExecuteUsesNonemptyResultsDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.study.yaml"), overlappingStudy)
+	output := filepath.Join(root, "results", "a")
+	if err := os.MkdirAll(output, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(output, "notes.txt"), "keep")
+	if err := Execute(context.Background(), testEnv(new(bytes.Buffer), new(bytes.Buffer)), Options{Project: root, Designs: []string{"smoke"}}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContains(t, filepath.Join(output, "notes.txt"), "keep")
+	experiment := readRecords[model.Experiment](t, filepath.Join(output, "experiments.jsonl"))[0]
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"notes.txt": true, "experiments.jsonl": true, "runs.jsonl": true, experiment.ID: true}
+	if len(entries) != len(want) {
+		t.Fatalf("unexpected results entries: %v", entries)
+	}
+	for _, entry := range entries {
+		if !want[entry.Name()] {
+			t.Fatalf("unexpected results entry: %s", entry.Name())
+		}
 	}
 }
 
