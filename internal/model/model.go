@@ -8,23 +8,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Factor names an input to a run.
-type Factor string
-
-// Setting is a factor value passed to a run as a string.
-type Setting string
-
-// Settings is one or more possible values for a factor.
-type Settings []Setting
-
-// Script is a shell command executed by doe.
-type Script string
-
 // Study is the YAML protocol for a single experiment.
 type Study struct {
 	Factors map[Factor]Settings `yaml:"factors"`
 	Run     Script              `yaml:"run"`
 }
+
+// Factor names an input to a run.
+type Factor string
+
+// Settings is one or more possible values for a factor.
+type Settings []Setting
+
+// Setting is a factor value passed to a run as a string.
+type Setting string
+
+// Script is a shell command executed by doe.
+type Script string
 
 // UnmarshalYAML accepts one scalar or a non-empty sequence of scalars.
 func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
