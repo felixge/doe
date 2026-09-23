@@ -111,7 +111,16 @@ func execute(ctx context.Context, env *cli.Env, s model.Study, dir string) error
 			command.Stderr = env.Stderr
 			command.Env = os.Environ()
 			for _, name := range names {
-				command.Env = append(command.Env, string(name)+"="+string(values[name]))
+				value := values[name]
+				text, ok := value.(string)
+				if !ok {
+					encoded, err := json.Marshal(value)
+					if err != nil {
+						return fmt.Errorf("factor %q: %w", name, err)
+					}
+					text = string(encoded)
+				}
+				command.Env = append(command.Env, string(name)+"="+text)
 			}
 			output, err := command.Output()
 			if err != nil {
@@ -130,7 +139,7 @@ func execute(ctx context.Context, env *cli.Env, s model.Study, dir string) error
 				if _, exists := result[string(name)]; exists {
 					return fmt.Errorf("run output conflicts with factor %q", name)
 				}
-				result[string(name)] = string(values[name])
+				result[string(name)] = values[name]
 			}
 			return json.NewEncoder(env.Stdout).Encode(result)
 		}
@@ -173,7 +182,7 @@ Options:
   -r, --run   Override the run script with a shell command.
   -h, --help  Print help text.
 
-Factors are YAML scalars or sequences of scalars. CLI factors override file
+Factors are YAML values or sequences of values. CLI factors override file
 factors. Each run must emit one JSON object; combined input and output objects
 are printed as JSON lines. No results are saved yet.
 `)

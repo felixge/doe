@@ -61,29 +61,31 @@ type Factor string
 // a factor that doesn't have a setting.
 type Settings []Setting
 
-// UnmarshalYAML accepts a scalar or sequence; null and [] have no settings.
+// UnmarshalYAML accepts a value or sequence of values; null and [] have no settings.
 func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.SequenceNode {
-		for _, setting := range node.Content {
-			if setting.Kind != yaml.ScalarNode {
-				return fmt.Errorf("settings must be YAML scalars")
-			}
-			*s = append(*s, Setting(setting.Value))
-		}
-		return nil
-	}
-	if node.Kind != yaml.ScalarNode {
-		return fmt.Errorf("settings must be YAML scalars or a sequence of scalars")
-	}
 	if node.Tag == "!!null" {
 		return nil
 	}
-	*s = Settings{Setting(node.Value)}
+	if node.Kind == yaml.SequenceNode {
+		for _, setting := range node.Content {
+			var value Setting
+			if err := setting.Decode(&value); err != nil {
+				return err
+			}
+			*s = append(*s, value)
+		}
+		return nil
+	}
+	var value Setting
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	*s = Settings{value}
 	return nil
 }
 
-// Setting is a factor value passed to a run as a string.
-type Setting string
+// Setting is a factor value of any type.
+type Setting any
 
 // Script is a shell command executed by doe.
 type Script string

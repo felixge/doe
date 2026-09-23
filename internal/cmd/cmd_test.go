@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -38,15 +37,15 @@ func TestSumIntegration(t *testing.T) {
 			}
 			for i, line := range lines {
 				var got struct {
-					Foo string `json:"foo"`
-					Bar string `json:"bar"`
-					Sum int    `json:"sum"`
+					Foo int `json:"foo"`
+					Bar int `json:"bar"`
+					Sum int `json:"sum"`
 				}
 				if err := json.Unmarshal([]byte(line), &got); err != nil {
 					t.Fatal(err)
 				}
 				want := tc.want[i]
-				if got.Foo != stringInt(want[0]) || got.Bar != stringInt(want[1]) || got.Sum != want[2] {
+				if got.Foo != want[0] || got.Bar != want[1] || got.Sum != want[2] {
 					t.Errorf("result %d = %+v, want %v", i, got, want)
 				}
 			}
@@ -54,7 +53,28 @@ func TestSumIntegration(t *testing.T) {
 	}
 }
 
-func stringInt(n int) string { return strconv.Itoa(n) }
+func TestStructuredSettings(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	env := &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}
+	args := []string{"execute", "foo=[{bar: 1}]", "enabled=true", "label=hello", "-r", `printf '{"seen":%s,"active":%s,"text":"%s"}\n' "$foo" "$enabled" "$label"`}
+	if code := Main(context.Background(), env, args); code != 0 {
+		t.Fatalf("exit code %d: %s", code, &stderr)
+	}
+	var got struct {
+		Foo     map[string]int `json:"foo"`
+		Enabled bool           `json:"enabled"`
+		Label   string         `json:"label"`
+		Seen    map[string]int `json:"seen"`
+		Active  bool           `json:"active"`
+		Text    string         `json:"text"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Foo["bar"] != 1 || got.Seen["bar"] != 1 || !got.Enabled || !got.Active || got.Label != "hello" || got.Text != "hello" {
+		t.Errorf("unexpected result: %+v", got)
+	}
+}
 
 func TestExecuteHelp(t *testing.T) {
 	for _, tc := range []struct {
