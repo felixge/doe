@@ -44,6 +44,7 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 }
 
 func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
+	// Handle help before loading a study so it works even with an invalid file.
 	flags := pflag.NewFlagSet("doe experiment", pflag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	flags.SetInterspersed(true)
@@ -57,35 +58,13 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return fail(env.Stderr, err)
 	}
 
-	var s model.Study
-	if *file != "" {
-		if err := s.Load(*file); err != nil {
-			return fail(env.Stderr, err)
-		}
+	// Separate configuration errors from run failures, which may be cancellations.
+	experiment, dir, err := prepareExperiment(*file, *runScript, flags.Changed("run"), flags.Args())
+	if err != nil {
+		return fail(env.Stderr, err)
 	}
-	experiment := model.NewExperiment(s)
-	for _, arg := range flags.Args() {
-		name, value, ok := strings.Cut(arg, "=")
-		if !ok {
-			return fail(env.Stderr, fmt.Errorf("factor %q must be key=value", arg))
-		}
-		if err := experiment.Factors.Set(model.Factor(name), []byte(value)); err != nil {
-			return fail(env.Stderr, err)
-		}
-	}
-	if flags.Changed("run") {
-		experiment.Run = model.Script(*runScript)
-	}
-	if len(experiment.Factors) == 0 {
-		return fail(env.Stderr, errors.New("at least one factor is required"))
-	}
-	if strings.TrimSpace(string(experiment.Run)) == "" {
-		return fail(env.Stderr, errors.New("a run script is required (use --run or a study file)"))
-	}
-	dir := "."
-	if *file != "" {
-		dir = filepath.Dir(*file)
-	}
+
+	// Record only completed experiments; failed runs leave no record.
 	if err := runExperiment(ctx, env, experiment, dir); err != nil {
 		if ctx.Err() != nil {
 			return 130
@@ -96,6 +75,44 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return fail(env.Stderr, err)
 	}
 	return 0
+}
+
+func prepareExperiment(path, runScript string, overrideRun bool, args []string) (model.Experiment, string, error) {
+	// Start from the file so positional settings can replace its factors.
+	var study model.Study
+	if path != "" {
+		if err := study.Load(path); err != nil {
+			return model.Experiment{}, "", err
+		}
+	}
+	experiment := model.NewExperiment(study)
+	for _, arg := range args {
+		name, value, ok := strings.Cut(arg, "=")
+		if !ok {
+			return model.Experiment{}, "", fmt.Errorf("factor %q must be key=value", arg)
+		}
+		if err := experiment.Factors.Set(model.Factor(name), []byte(value)); err != nil {
+			return model.Experiment{}, "", err
+		}
+	}
+	if overrideRun {
+		experiment.Run = model.Script(runScript)
+	}
+
+	// Reject incomplete designs before running anything.
+	if len(experiment.Factors) == 0 {
+		return model.Experiment{}, "", errors.New("at least one factor is required")
+	}
+	if strings.TrimSpace(string(experiment.Run)) == "" {
+		return model.Experiment{}, "", errors.New("a run script is required (use --run or a study file)")
+	}
+
+	// Keep scripts and results relative to the study file.
+	dir := "."
+	if path != "" {
+		dir = filepath.Dir(path)
+	}
+	return experiment, dir, nil
 }
 
 func appendExperiment(experiment model.Experiment, dir string) error {
@@ -118,44 +135,21 @@ func appendExperiment(experiment model.Experiment, dir string) error {
 	return nil
 }
 
-// runExperiment sorts factor names for deterministic design points.
+// runExperiment visits design points in stable factor order.
 func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experiment, dir string) error {
+	// Map iteration varies, so sort names to keep output order stable.
 	names := make([]model.Factor, 0, len(experiment.Factors))
 	for name := range experiment.Factors {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+
+	// Reuse the current settings as recursion walks the cartesian product.
 	values := make(map[model.Factor]model.Setting, len(names))
 	var visit func(int) error
 	visit = func(index int) error {
 		if index == len(names) {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(experiment.Run, values))
-			command.Dir = dir
-			command.Stdin = env.Stdin
-			command.Stderr = env.Stderr
-			output, err := command.Output()
-			if err != nil {
-				return fmt.Errorf("run %v: %w", values, err)
-			}
-			var result map[string]any
-			decoder := json.NewDecoder(strings.NewReader(string(output)))
-			if err := decoder.Decode(&result); err != nil || result == nil {
-				return fmt.Errorf("run %v: output must be a JSON object: %v", values, err)
-			}
-			var extra any
-			if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-				return fmt.Errorf("run %v: output must contain exactly one JSON object", values)
-			}
-			for _, name := range names {
-				if _, exists := result[string(name)]; exists {
-					return fmt.Errorf("run output conflicts with factor %q", name)
-				}
-				result[string(name)] = values[name]
-			}
-			return json.NewEncoder(env.Stdout).Encode(result)
+			return runDesignPoint(ctx, env, experiment.Run, dir, names, values)
 		}
 		name := names[index]
 		for _, setting := range experiment.Factors[name] {
@@ -167,6 +161,48 @@ func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experimen
 		return nil
 	}
 	return visit(0)
+}
+
+func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, dir string, names []model.Factor, values map[model.Factor]model.Setting) error {
+	// Avoid starting a shell when the experiment is already canceled.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(script, values))
+	command.Dir = dir
+	command.Stdin = env.Stdin
+	command.Stderr = env.Stderr
+	output, err := command.Output()
+	if err != nil {
+		return fmt.Errorf("run %v: %w", values, err)
+	}
+
+	// Reject conflicts so script output cannot silently replace inputs.
+	result, err := decodeRunOutput(output, values)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if _, exists := result[string(name)]; exists {
+			return fmt.Errorf("run output conflicts with factor %q", name)
+		}
+		result[string(name)] = values[name]
+	}
+	return json.NewEncoder(env.Stdout).Encode(result)
+}
+
+func decodeRunOutput(output []byte, values map[model.Factor]model.Setting) (map[string]any, error) {
+	// Reject trailing values so each run contributes exactly one JSONL result.
+	var result map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(output)))
+	if err := decoder.Decode(&result); err != nil || result == nil {
+		return nil, fmt.Errorf("run %v: output must be a JSON object: %v", values, err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("run %v: output must contain exactly one JSON object", values)
+	}
+	return result, nil
 }
 
 func expandRunScript(script model.Script, values map[model.Factor]model.Setting) string {
