@@ -16,8 +16,8 @@ import (
 	"syscall"
 
 	"github.com/felixge/doe2/internal/cli"
-	"github.com/felixge/doe2/internal/jsonl"
 	"github.com/felixge/doe2/internal/model"
+	"github.com/felixge/doe2/internal/results"
 	"github.com/spf13/pflag"
 )
 
@@ -71,7 +71,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		}
 		return env.Fail(err)
 	}
-	if err := appendExperiment(experiment, dir); err != nil {
+	if err := results.New(filepath.Join(dir, "results")).AppendExperiment(experiment); err != nil {
 		return env.Fail(err)
 	}
 	return 0
@@ -113,14 +113,6 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 		dir = filepath.Dir(path)
 	}
 	return experiment, dir, nil
-}
-
-func appendExperiment(experiment model.Experiment, dir string) error {
-	resultsDir := filepath.Join(dir, "results")
-	if err := os.MkdirAll(resultsDir, 0755); err != nil {
-		return fmt.Errorf("create results directory: %w", err)
-	}
-	return jsonl.AppendFile(filepath.Join(resultsDir, "experiments.jsonl"), experiment)
 }
 
 // runExperiment runs each point until a run fails.
