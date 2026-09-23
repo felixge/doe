@@ -39,8 +39,7 @@ $ doe results
 Alternatively, positional `key=value` arguments define factors, with values interpreted as YAML. The run command is supplied with `--run`:
 
 ```sh
-doe run 'foo=[1, 2, 3]' 'bar=[4, 5]' \
-  --run 'printf "{\"sum\":%s}\n" "$((foo + bar))"'
+$ doe run 'foo=[1, 2, 3]' 'bar=[4, 5]' --run 'printf "{\"sum\":%s}\n" "$((foo + bar))"'
 ```
 
 Files and CLI options can also be combined, with CLI options taking precedence:
