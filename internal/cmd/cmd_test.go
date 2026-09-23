@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/felixge/doe2/internal/cli"
 	"github.com/felixge/doe2/internal/model"
+	"github.com/felixge/doe2/internal/results"
 )
 
 func TestExperimentIntegration(t *testing.T) {
@@ -93,9 +95,52 @@ run: |
 			if len(experiment.Factors["foo"]) != len(tc.want)/len(experiment.Factors["bar"]) {
 				t.Errorf("recorded factors = %v, want design for %v", experiment.Factors, tc.want)
 			}
+			lock, err := os.ReadFile(filepath.Join(resultsDir, "results", "experiment.lock"))
+			if err != nil || strings.TrimSpace(string(lock)) != experiment.ID.String() {
+				t.Errorf("lock contains %q, %v; want %s", lock, err, experiment.ID)
+			}
 			previous.Experiments = append(previous.Experiments, experiment)
 			recorded[resultsDir] = previous
 		})
+	}
+}
+
+func TestExperimentRecordedWhileRunning(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	env := &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}
+	done := make(chan int, 1)
+	go func() {
+		done <- Main(context.Background(), env, []string{"experiment", "foo=1", "-r", `while [ ! -f gate ]; do sleep 0.01; done; echo '{}'`})
+	}()
+	defer func() {
+		if err := os.WriteFile("gate", nil, 0600); err != nil {
+			t.Error(err)
+		}
+		if code := <-done; code != 0 {
+			t.Errorf("exit code %d: %s", code, &stderr)
+		}
+	}()
+
+	path := filepath.Join("results", "experiments.jsonl")
+	var data []byte
+	deadline := time.After(5 * time.Second)
+	for len(data) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("experiment was not recorded while running")
+		case <-time.After(10 * time.Millisecond):
+			data, _ = os.ReadFile(path)
+		}
+	}
+	var experiment model.Experiment
+	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
+		t.Fatal(err)
+	}
+	var otherStderr bytes.Buffer
+	otherEnv := &cli.Env{Stdin: strings.NewReader(""), Stdout: &bytes.Buffer{}, Stderr: &otherStderr}
+	if code := Main(context.Background(), otherEnv, []string{"experiment", "foo=2", "-r", `echo '{}'`}); code != 1 || !strings.Contains(otherStderr.String(), "another experiment is running: "+experiment.ID.String()) {
+		t.Errorf("concurrent experiment = code %d, stderr %q; want running experiment ID", code, &otherStderr)
 	}
 }
 
@@ -143,8 +188,31 @@ func TestExperimentErrors(t *testing.T) {
 			t.Errorf("Main(%q) = %d, stderr %q; want %q", tc.args, code, &stderr, tc.want)
 		}
 	}
-	if _, err := os.Stat(filepath.Join("results", "experiments.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("failed experiments wrote a record: %v", err)
+	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d records, want two failed experiments", len(lines))
+	}
+	r, err := results.New("results")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range lines {
+		var experiment model.Experiment
+		if err := json.Unmarshal([]byte(line), &experiment); err != nil {
+			t.Fatal(err)
+		}
+		release, err := r.LockExperiment(experiment.ID)
+		if err != nil {
+			t.Errorf("failed experiment left lock held: %v", err)
+			continue
+		}
+		if err := release(); err != nil {
+			t.Error(err)
+		}
 	}
 }
 

@@ -10,6 +10,42 @@ import (
 	"github.com/felixge/doe2/internal/model"
 )
 
+func TestExperimentLock(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := model.NewExperiment(model.Study{}).ID
+	other := model.NewExperiment(model.Study{}).ID
+	release, err := r.LockExperiment(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if otherRelease, err := r.LockExperiment(other); err == nil {
+		_ = otherRelease()
+		t.Error("second experiment acquired the lock")
+	} else if !strings.Contains(err.Error(), "another experiment is running: "+id.String()) {
+		t.Errorf("lock error = %q, want running experiment ID", err)
+	}
+	data, err := os.ReadFile(filepath.Join(r.Dir(), "experiment.lock"))
+	if err != nil || strings.TrimSpace(string(data)) != id.String() {
+		t.Errorf("lock contains %q, %v; want %s", data, err, id)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	releaseOther, err := r.LockExperiment(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = releaseOther() }()
+	data, err = os.ReadFile(filepath.Join(r.Dir(), "experiment.lock"))
+	if err != nil || strings.TrimSpace(string(data)) != other.String() {
+		t.Errorf("lock contains %q, %v; want %s", data, err, other)
+	}
+}
+
 func TestAppendExperiment(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "results")
 	results, err := New(dir)

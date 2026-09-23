@@ -64,14 +64,19 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return env.Fail(err)
 	}
 
-	// Record only completed experiments; failed runs leave no record.
+	// Hold the lock while running so other processes can check for liveness.
+	release, err := results.LockExperiment(experiment.ID)
+	if err != nil {
+		return env.Fail(err)
+	}
+	defer func() { _ = release() }()
+	if err := results.AppendExperiment(experiment); err != nil {
+		return env.Fail(err)
+	}
 	if err := runExperiment(ctx, env, experiment, results); err != nil {
 		if ctx.Err() != nil {
 			return 130
 		}
-		return env.Fail(err)
-	}
-	if err := results.AppendExperiment(experiment); err != nil {
 		return env.Fail(err)
 	}
 	return 0
