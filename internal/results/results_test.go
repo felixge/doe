@@ -22,8 +22,14 @@ func TestAppendExperiment(t *testing.T) {
 	if got := results.Dir(); got != dir {
 		t.Errorf("Dir() = %q, want %q", got, dir)
 	}
-	first := model.NewExperiment(model.Study{})
-	second := model.NewExperiment(model.Study{})
+	first, err := model.NewExperiment(model.Study{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := model.NewExperiment(model.Study{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, experiment := range []*model.Experiment{&first, &second} {
 		if err := results.AppendExperiment(experiment); err != nil {
 			t.Fatal(err)
@@ -43,8 +49,8 @@ func TestAppendExperiment(t *testing.T) {
 		if err := json.Unmarshal([]byte(lines[i]), &got); err != nil {
 			t.Fatal(err)
 		}
-		if got.ID != want.ID {
-			t.Errorf("record %d ID = %s, want %s", i, got.ID, want.ID)
+		if got.ID != want.ID || got.PID != want.PID || got.ProcessStartTime != want.ProcessStartTime {
+			t.Errorf("record %d identity = (%s, %d, %q), want (%s, %d, %q)", i, got.ID, got.PID, got.ProcessStartTime, want.ID, want.PID, want.ProcessStartTime)
 		}
 	}
 }

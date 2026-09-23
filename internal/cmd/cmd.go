@@ -85,7 +85,10 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 			return nil, nil, err
 		}
 	}
-	experiment := model.NewExperiment(study)
+	experiment, err := model.NewExperiment(study)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, arg := range args {
 		factor, settingsYAML, ok := strings.Cut(arg, "=")
 		if !ok {

@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,7 +13,20 @@ import (
 
 func TestNewExperiment(t *testing.T) {
 	study := Study{Factors: Factors{"foo": {1}}, Run: "echo study"}
-	experiment := NewExperiment(study)
+	experiment, err := NewExperiment(study)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if experiment.PID != os.Getpid() || experiment.ProcessStartTime == "" {
+		t.Errorf("process identity = (%d, %q), want current PID and start time", experiment.PID, experiment.ProcessStartTime)
+	}
+	other, err := NewExperiment(study)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.ProcessStartTime != experiment.ProcessStartTime {
+		t.Errorf("process start changed: %q != %q", other.ProcessStartTime, experiment.ProcessStartTime)
+	}
 	if version := experiment.ID[6] >> 4; version != 7 {
 		t.Errorf("ID version = %d, want 7", version)
 	}
@@ -77,13 +91,20 @@ func TestDesignSerialization(t *testing.T) {
 		t.Errorf("study = %+v, want flat YAML design", study)
 	}
 
-	data, err := json.Marshal(NewExperiment(study))
+	experiment, err := NewExperiment(study)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(experiment)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var record map[string]any
 	if err := json.Unmarshal(data, &record); err != nil {
 		t.Fatal(err)
+	}
+	if record["pid"] != float64(os.Getpid()) || record["process_start_time"] != experiment.ProcessStartTime {
+		t.Errorf("experiment has incorrect process identity: %s", data)
 	}
 	if _, ok := record["factors"]; ok {
 		t.Errorf("experiment has top-level factors: %s", data)

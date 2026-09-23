@@ -82,7 +82,7 @@ run: |
 			if err := json.Unmarshal([]byte(records[len(records)-1]), &experiment); err != nil {
 				t.Fatal(err)
 			}
-			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" {
+			if experiment.ID == (model.Experiment{}).ID || experiment.PID != os.Getpid() || experiment.ProcessStartTime == "" || len(experiment.Factors) != 2 || experiment.Run == "" {
 				t.Errorf("invalid experiment record: %+v", experiment)
 			}
 			for _, prior := range previous.Experiments {
