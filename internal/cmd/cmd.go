@@ -32,23 +32,23 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 	case "-h", "--help", "help":
 		rootUsage(env.Stdout)
 		return 0
-	case "run":
-		return run(ctx, env, args[1:])
+	case "execute":
+		return executeCommand(ctx, env, args[1:])
 	default:
 		_, _ = fmt.Fprintf(env.Stderr, "unknown command: %s\n", args[0])
 		return 1
 	}
 }
 
-func run(ctx context.Context, env *cli.Env, args []string) int {
-	flags := pflag.NewFlagSet("doe run", pflag.ContinueOnError)
+func executeCommand(ctx context.Context, env *cli.Env, args []string) int {
+	flags := pflag.NewFlagSet("doe execute", pflag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
 	file := flags.StringP("file", "f", "", "study YAML file")
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
-		runUsage(env.Stdout)
+		executeUsage(env.Stdout)
 		return 0
 	} else if err != nil {
 		return fail(env.Stderr, err)
@@ -157,16 +157,16 @@ func rootUsage(w io.Writer) {
 Usage: doe <command> [command options] [arguments]
 
 Commands:
-  run    Execute a study and print JSON results.
+  execute  Execute a study and print JSON results.
 
 Run "doe <command> -h" for command-specific help.
 `)
 }
 
-func runUsage(w io.Writer) {
+func executeUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Execute one run for each combination of factor settings.
 
-Usage: doe run [-f study.yaml] [key=value ...] [-r script]
+Usage: doe execute [-f study.yaml] [key=value ...] [-r script]
 
 Options:
   -f, --file  Load factors and run script from a YAML study.

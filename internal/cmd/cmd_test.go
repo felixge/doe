@@ -19,9 +19,9 @@ func TestSumIntegration(t *testing.T) {
 		args []string
 		want [][3]int
 	}{
-		{"file", []string{"run", "-f", path}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
-		{"override", []string{"run", "-f", path, "foo=9"}, [][3]int{{9, 4, 13}, {9, 5, 14}}},
-		{"flags and factors interspersed", []string{"run", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"sum":%s}\n' "$((foo + bar))"`}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
+		{"file", []string{"execute", "-f", path}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
+		{"override", []string{"execute", "-f", path, "foo=9"}, [][3]int{{9, 4, 13}, {9, 5, 14}}},
+		{"flags and factors interspersed", []string{"execute", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"sum":%s}\n' "$((foo + bar))"`}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -56,14 +56,31 @@ func TestSumIntegration(t *testing.T) {
 
 func stringInt(n int) string { return strconv.Itoa(n) }
 
-func TestRunErrors(t *testing.T) {
+func TestExecuteHelp(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"run", "foo=1"}, "run script is required"},
-		{[]string{"run", "foo=1", "--run", "exit 7"}, "exit status 7"},
-		{[]string{"run", "foo=1", "--run", "echo nope"}, "JSON object"},
+		{nil, "execute  Execute a study"},
+		{[]string{"execute", "--help"}, "Usage: doe execute"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, tc.args)
+		if code != 0 || !strings.Contains(stdout.String(), tc.want) || stderr.Len() != 0 {
+			t.Errorf("Main(%q) = %d, stdout %q, stderr %q; want %q", tc.args, code, &stdout, &stderr, tc.want)
+		}
+	}
+}
+
+func TestExecuteErrors(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"execute", "foo=1"}, "run script is required"},
+		{[]string{"execute", "foo=1", "--run", "exit 7"}, "exit status 7"},
+		{[]string{"execute", "foo=1", "--run", "echo nope"}, "JSON object"},
+		{[]string{"run"}, "unknown command"},
 		{[]string{"results"}, "unknown command"},
 	} {
 		var stdout, stderr bytes.Buffer

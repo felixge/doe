@@ -21,7 +21,7 @@ run: |
 The study can be executed like shown below:
 
 ```
-$ doe run -f sum.study.yaml
+$ doe execute -f sum.study.yaml
 ```
 
 The tool saves the results to a local directory called `results` and they can be displayed like this:
@@ -36,16 +36,16 @@ $ doe results
 {"foo": "3", "bar": "5", "sum": 8}
 ```
 
-Alternatively, positional `key=value` arguments define factors, with values interpreted as YAML. The run command is supplied with `-r` (short for `--run`):
+Alternatively, positional `key=value` arguments define factors, with values interpreted as YAML. The script for each run is supplied with `-r` (short for `--run`):
 
 ```sh
-$ doe run 'foo=[1, 2, 3]' 'bar=[4, 5]' -r 'printf "{\"sum\":%s}\n" "$((foo + bar))"'
+$ doe execute 'foo=[1, 2, 3]' 'bar=[4, 5]' -r 'printf "{\"sum\":%s}\n" "$((foo + bar))"'
 ```
 
 Files and CLI options can also be combined, with CLI options taking precedence:
 
 ```
-$ doe run -f sum.study.yaml foo=9
+$ doe execute -f sum.study.yaml foo=9
 {"foo": "9", "bar": "4", "sum": 13}
 {"foo": "9", "bar": "5", "sum": 14}
 ```
