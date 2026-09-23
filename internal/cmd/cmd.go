@@ -92,7 +92,30 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		}
 		return fail(env.Stderr, err)
 	}
+	if err := appendExperiment(experiment, dir); err != nil {
+		return fail(env.Stderr, err)
+	}
 	return 0
+}
+
+func appendExperiment(experiment model.Experiment, dir string) error {
+	resultsDir := filepath.Join(dir, "results")
+	if err := os.MkdirAll(resultsDir, 0755); err != nil {
+		return fmt.Errorf("create results directory: %w", err)
+	}
+	path := filepath.Join(resultsDir, "experiments.jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	if err := json.NewEncoder(file).Encode(experiment); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("append %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
+	}
+	return nil
 }
 
 // runExperiment sorts factor names for deterministic design points.

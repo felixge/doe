@@ -30,11 +30,16 @@ func (s *Study) Load(path string) error {
 	return nil
 }
 
+// Results holds the experiments recorded by doe.
+type Results struct {
+	Experiments []Experiment `json:"experiments"`
+}
+
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
-	ID      uuid.UUID
-	Factors Factors `yaml:"factors"`
-	Run     Script  `yaml:"run"`
+	ID      uuid.UUID `json:"id"`
+	Factors Factors   `json:"factors" yaml:"factors"`
+	Run     Script    `json:"run" yaml:"run"`
 }
 
 // NewExperiment creates an experiment from a study with a UUIDv7 ID.

@@ -14,6 +14,7 @@ import (
 )
 
 func TestExperimentIntegration(t *testing.T) {
+	t.Chdir(t.TempDir())
 	path := filepath.Join(t.TempDir(), "study.yaml")
 	study := `factors:
   foo: [1, 2, 3]
@@ -24,6 +25,7 @@ run: |
 	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
+	recorded := make(map[string]model.Results)
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -60,6 +62,39 @@ run: |
 					t.Errorf("result %d = %+v, want %v", i, got, want)
 				}
 			}
+			resultsDir := "."
+			if tc.name != "flags and factors interspersed" {
+				resultsDir = filepath.Dir(path)
+				if _, err := os.Stat("results"); !os.IsNotExist(err) {
+					t.Errorf("study experiment wrote results in current directory: %v", err)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(resultsDir, "results", "experiments.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			records := strings.Split(strings.TrimSpace(string(data)), "\n")
+			previous := recorded[resultsDir]
+			if len(records) != len(previous.Experiments)+1 {
+				t.Fatalf("got %d experiment records, want %d", len(records), len(previous.Experiments)+1)
+			}
+			var experiment model.Experiment
+			if err := json.Unmarshal([]byte(records[len(records)-1]), &experiment); err != nil {
+				t.Fatal(err)
+			}
+			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" {
+				t.Errorf("invalid experiment record: %+v", experiment)
+			}
+			for _, prior := range previous.Experiments {
+				if experiment.ID == prior.ID {
+					t.Errorf("reused experiment ID: %s", experiment.ID)
+				}
+			}
+			if len(experiment.Factors["foo"]) != len(tc.want)/len(experiment.Factors["bar"]) {
+				t.Errorf("recorded factors = %v, want design for %v", experiment.Factors, tc.want)
+			}
+			previous.Experiments = append(previous.Experiments, experiment)
+			recorded[resultsDir] = previous
 		})
 	}
 }
@@ -90,6 +125,7 @@ func TestExperimentHelp(t *testing.T) {
 }
 
 func TestExperimentErrors(t *testing.T) {
+	t.Chdir(t.TempDir())
 	for _, tc := range []struct {
 		args []string
 		want string
@@ -106,5 +142,21 @@ func TestExperimentErrors(t *testing.T) {
 		if code != 1 || !strings.Contains(stderr.String(), tc.want) {
 			t.Errorf("Main(%q) = %d, stderr %q; want %q", tc.args, code, &stderr, tc.want)
 		}
+	}
+	if _, err := os.Stat(filepath.Join("results", "experiments.jsonl")); !os.IsNotExist(err) {
+		t.Errorf("failed experiments wrote a record: %v", err)
+	}
+}
+
+func TestExperimentRecordError(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("results", []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=1", "--run", `echo '{"result":1}'`})
+	if code != 1 || !strings.Contains(stderr.String(), "create results directory") {
+		t.Errorf("Main = %d, stderr %q; want results directory error", code, &stderr)
 	}
 }
