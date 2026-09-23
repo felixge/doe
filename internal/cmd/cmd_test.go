@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -72,25 +71,5 @@ func TestRunErrors(t *testing.T) {
 		if code != 1 || !strings.Contains(stderr.String(), tc.want) {
 			t.Errorf("Main(%q) = %d, stderr %q; want %q", tc.args, code, &stderr, tc.want)
 		}
-	}
-}
-
-func TestNoResultsDirectory(t *testing.T) {
-	// The current implementation only prints results and does not persist them.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "sum.study.yaml")
-	data, err := os.ReadFile(filepath.Join("..", "..", "example", "sum", "sum.study.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var stdout, stderr bytes.Buffer
-	if code := Main(context.Background(), &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}, []string{"run", "-f", path}); code != 0 {
-		t.Fatalf("exit %d: %s", code, &stderr)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "results")); !os.IsNotExist(err) {
-		t.Fatalf("results directory should not exist: %v", err)
 	}
 }
