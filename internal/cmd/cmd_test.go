@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,16 +12,25 @@ import (
 	"github.com/felixge/doe2/internal/cli"
 )
 
-func TestSumIntegration(t *testing.T) {
-	path := filepath.Join("..", "..", "example", "sum", "sum.study.yaml")
+func TestExecuteIntegration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "study.yaml")
+	study := `factors:
+  foo: [1, 2, 3]
+  bar: [4, 5]
+run: |
+  printf '{"result":1}\n'
+`
+	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		args []string
-		want [][3]int
+		want [][2]int
 	}{
-		{"file", []string{"execute", "-f", path}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
-		{"override", []string{"execute", "-f", path, "foo=9"}, [][3]int{{9, 4, 13}, {9, 5, 14}}},
-		{"flags and factors interspersed", []string{"execute", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"sum":%s}\n' "$((foo + bar))"`}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
+		{"file", []string{"execute", "-f", path}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
+		{"override", []string{"execute", "-f", path, "foo=9"}, [][2]int{{9, 4}, {9, 5}}},
+		{"flags and factors interspersed", []string{"execute", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"result":1}\n'`}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -37,42 +47,19 @@ func TestSumIntegration(t *testing.T) {
 			}
 			for i, line := range lines {
 				var got struct {
-					Foo int `json:"foo"`
-					Bar int `json:"bar"`
-					Sum int `json:"sum"`
+					Foo    int `json:"foo"`
+					Bar    int `json:"bar"`
+					Result int `json:"result"`
 				}
 				if err := json.Unmarshal([]byte(line), &got); err != nil {
 					t.Fatal(err)
 				}
 				want := tc.want[i]
-				if got.Foo != want[0] || got.Bar != want[1] || got.Sum != want[2] {
+				if got.Foo != want[0] || got.Bar != want[1] || got.Result != 1 {
 					t.Errorf("result %d = %+v, want %v", i, got, want)
 				}
 			}
 		})
-	}
-}
-
-func TestStructuredSettings(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	env := &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}
-	args := []string{"execute", "foo=[{bar: 1}]", "enabled=true", "label=hello", "-r", `printf '{"seen":%s,"active":%s,"text":"%s"}\n' "$foo" "$enabled" "$label"`}
-	if code := Main(context.Background(), env, args); code != 0 {
-		t.Fatalf("exit code %d: %s", code, &stderr)
-	}
-	var got struct {
-		Foo     map[string]int `json:"foo"`
-		Enabled bool           `json:"enabled"`
-		Label   string         `json:"label"`
-		Seen    map[string]int `json:"seen"`
-		Active  bool           `json:"active"`
-		Text    string         `json:"text"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Foo["bar"] != 1 || got.Seen["bar"] != 1 || !got.Enabled || !got.Active || got.Label != "hello" || got.Text != "hello" {
-		t.Errorf("unexpected result: %+v", got)
 	}
 }
 

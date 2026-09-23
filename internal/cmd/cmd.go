@@ -109,19 +109,6 @@ func execute(ctx context.Context, env *cli.Env, s model.Study, dir string) error
 			command.Dir = dir
 			command.Stdin = env.Stdin
 			command.Stderr = env.Stderr
-			command.Env = os.Environ()
-			for _, name := range names {
-				value := values[name]
-				text, ok := value.(string)
-				if !ok {
-					encoded, err := json.Marshal(value)
-					if err != nil {
-						return fmt.Errorf("factor %q: %w", name, err)
-					}
-					text = string(encoded)
-				}
-				command.Env = append(command.Env, string(name)+"="+text)
-			}
 			output, err := command.Output()
 			if err != nil {
 				return fmt.Errorf("run %v: %w", values, err)
