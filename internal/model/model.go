@@ -112,9 +112,10 @@ type Factor string
 type Point map[Factor]Setting
 
 // Run is a design point identified by a UUID.
+// JSON tags are unnecessary because MarshalJSON handles serialization.
 type Run struct {
-	ID uuid.UUID `json:"id"`
-	Point
+	ID    uuid.UUID
+	Point Point
 }
 
 // MarshalJSON writes the ID and point settings as a flat object.
