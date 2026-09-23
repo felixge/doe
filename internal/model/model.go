@@ -4,6 +4,7 @@ package model
 import (
 	"fmt"
 	"os"
+	"uuid"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,10 +42,23 @@ func (s *Study) SetFactor(name Factor, value string) error {
 	return nil
 }
 
+// Execution is a single invocation of a study. Its ID is a UUIDv7, which
+// embeds a timestamp and sorts by creation time unless the clock moves backwards.
+type Execution struct {
+	ID uuid.UUID
+	Study
+}
+
+// NewExecution creates an execution with a UUIDv7 ID.
+func NewExecution() Execution {
+	return Execution{ID: uuid.NewV7()}
+}
+
 // Factor names an input to a run.
 type Factor string
 
-// Settings is one or more possible values for a factor.
+// Settings lists possible values for a factor. A nil or empty slice represents
+// a factor that doesn't have a setting.
 type Settings []Setting
 
 // UnmarshalYAML accepts a scalar or sequence; null and [] have no settings.
