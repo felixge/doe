@@ -63,15 +63,16 @@ func (s *Study) SetFactor(name Factor, value string) error {
 	return nil
 }
 
-// Load decodes a study file into a Study.
-func Load(path string) (Study, error) {
+// Load decodes a study file into the receiver.
+func (s *Study) Load(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Study{}, err
+		return err
 	}
-	var s Study
-	if err := yaml.Unmarshal(data, &s); err != nil {
-		return Study{}, fmt.Errorf("parse %s: %w", path, err)
+	var loaded Study
+	if err := yaml.Unmarshal(data, &loaded); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
 	}
-	return s, nil
+	*s = loaded
+	return nil
 }

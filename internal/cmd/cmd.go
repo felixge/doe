@@ -56,9 +56,7 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 
 	var s model.Study
 	if *file != "" {
-		var err error
-		s, err = model.Load(*file)
-		if err != nil {
+		if err := s.Load(*file); err != nil {
 			return fail(env.Stderr, err)
 		}
 	}
