@@ -18,10 +18,10 @@ run: |
   printf '{"sum":%s}\n' "$((foo + bar))"
 ```
 
-The study can be executed like shown below:
+The experiment can be run like shown below:
 
 ```
-$ doe execute -f sum.study.yaml
+$ doe experiment -f sum.study.yaml
 ```
 
 The tool saves the results to a local directory called `results` and they can be displayed like this:
@@ -39,13 +39,13 @@ $ doe results
 Alternatively, positional `key=value` arguments define factors, with values interpreted as YAML. The script for each run is supplied with `-r` (short for `--run`):
 
 ```sh
-$ doe execute 'foo=[1, 2, 3]' 'bar=[4, 5]' -r 'printf "{\"sum\":%s}\n" "$((foo + bar))"'
+$ doe experiment 'foo=[1, 2, 3]' 'bar=[4, 5]' -r 'printf "{\"sum\":%s}\n" "$((foo + bar))"'
 ```
 
 Files and CLI options can also be combined, with CLI options taking precedence:
 
 ```
-$ doe execute -f sum.study.yaml foo=9
+$ doe experiment -f sum.study.yaml foo=9
 {"foo": "9", "bar": "4", "sum": 13}
 {"foo": "9", "bar": "5", "sum": 14}
 ```
@@ -54,6 +54,7 @@ $ doe execute -f sum.study.yaml foo=9
 
 | term         | description                                                  |
 | ------------ | ------------------------------------------------------------ |
+| experiment   | A single `doe experiment` invocation.                        |
 | factor       | A factor that influences the outcome of the experiment.      |
 | setting      | A value for a factor.                                        |
 | matrix       | A mapping of factor:settings where settings can either be a single setting or a sequence of values that is used to form a cartesian product with the other factor=settings pairs in the matrix. |
@@ -63,5 +64,5 @@ $ doe execute -f sum.study.yaml foo=9
 | measurement  | A value for a response.                                      |
 | output       | A response=measurement pair.                                 |
 | outcome      | The outputs of a run.                                        |
-| run          | The execution of a design point producing measurements       |
+| run          | A design point carried out to produce measurements.          |
 

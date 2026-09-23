@@ -42,16 +42,17 @@ func (s *Study) SetFactor(name Factor, value string) error {
 	return nil
 }
 
-// Execution is a single invocation of a study. Its ID is a UUIDv7, which
+// Experiment is a single invocation of a study. Its ID is a UUIDv7, which
 // embeds a timestamp and sorts by creation time unless the clock moves backwards.
-type Execution struct {
-	ID uuid.UUID
-	Study
+type Experiment struct {
+	ID      uuid.UUID
+	Factors map[Factor]Settings `yaml:"factors"`
+	Run     Script              `yaml:"run"`
 }
 
-// NewExecution creates an execution with a UUIDv7 ID.
-func NewExecution() Execution {
-	return Execution{ID: uuid.NewV7()}
+// NewExperiment creates an experiment with a UUIDv7 ID.
+func NewExperiment() Experiment {
+	return Experiment{ID: uuid.NewV7()}
 }
 
 // Factor names an input to a run.

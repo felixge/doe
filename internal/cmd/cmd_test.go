@@ -12,7 +12,7 @@ import (
 	"github.com/felixge/doe2/internal/cli"
 )
 
-func TestExecuteIntegration(t *testing.T) {
+func TestExperimentIntegration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "study.yaml")
 	study := `factors:
   foo: [1, 2, 3]
@@ -28,9 +28,9 @@ run: |
 		args []string
 		want [][2]int
 	}{
-		{"file", []string{"execute", "-f", path}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
-		{"override", []string{"execute", "-f", path, "foo=9"}, [][2]int{{9, 4}, {9, 5}}},
-		{"flags and factors interspersed", []string{"execute", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"result":1}\n'`}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
+		{"file", []string{"experiment", "-f", path}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
+		{"override", []string{"experiment", "-f", path, "foo=9"}, [][2]int{{9, 4}, {9, 5}}},
+		{"flags and factors interspersed", []string{"experiment", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"result":1}\n'`}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -63,13 +63,13 @@ run: |
 	}
 }
 
-func TestExecuteHelp(t *testing.T) {
+func TestExperimentHelp(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
-		{nil, "execute  Execute a study"},
-		{[]string{"execute", "--help"}, "Usage: doe execute"},
+		{nil, "experiment  Run an experiment"},
+		{[]string{"experiment", "--help"}, "Usage: doe experiment"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, tc.args)
@@ -79,14 +79,15 @@ func TestExecuteHelp(t *testing.T) {
 	}
 }
 
-func TestExecuteErrors(t *testing.T) {
+func TestExperimentErrors(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"execute", "foo=1"}, "run script is required"},
-		{[]string{"execute", "foo=1", "--run", "exit 7"}, "exit status 7"},
-		{[]string{"execute", "foo=1", "--run", "echo nope"}, "JSON object"},
+		{[]string{"experiment", "foo=1"}, "run script is required"},
+		{[]string{"experiment", "foo=1", "--run", "exit 7"}, "exit status 7"},
+		{[]string{"experiment", "foo=1", "--run", "echo nope"}, "JSON object"},
+		{[]string{"execute"}, "unknown command"},
 		{[]string{"run"}, "unknown command"},
 		{[]string{"results"}, "unknown command"},
 	} {

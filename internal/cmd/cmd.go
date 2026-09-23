@@ -32,23 +32,23 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 	case "-h", "--help", "help":
 		rootUsage(env.Stdout)
 		return 0
-	case "execute":
-		return executeCommand(ctx, env, args[1:])
+	case "experiment":
+		return experimentCommand(ctx, env, args[1:])
 	default:
 		_, _ = fmt.Fprintf(env.Stderr, "unknown command: %s\n", args[0])
 		return 1
 	}
 }
 
-func executeCommand(ctx context.Context, env *cli.Env, args []string) int {
-	flags := pflag.NewFlagSet("doe execute", pflag.ContinueOnError)
+func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
+	flags := pflag.NewFlagSet("doe experiment", pflag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
 	file := flags.StringP("file", "f", "", "study YAML file")
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
-		executeUsage(env.Stdout)
+		experimentUsage(env.Stdout)
 		return 0
 	} else if err != nil {
 		return fail(env.Stderr, err)
@@ -82,7 +82,7 @@ func executeCommand(ctx context.Context, env *cli.Env, args []string) int {
 	if *file != "" {
 		dir = filepath.Dir(*file)
 	}
-	if err := execute(ctx, env, s, dir); err != nil {
+	if err := runExperiment(ctx, env, s, dir); err != nil {
 		if ctx.Err() != nil {
 			return 130
 		}
@@ -91,8 +91,8 @@ func executeCommand(ctx context.Context, env *cli.Env, args []string) int {
 	return 0
 }
 
-// execute sorts factor names for deterministic design points.
-func execute(ctx context.Context, env *cli.Env, s model.Study, dir string) error {
+// runExperiment sorts factor names for deterministic design points.
+func runExperiment(ctx context.Context, env *cli.Env, s model.Study, dir string) error {
 	names := make([]model.Factor, 0, len(s.Factors))
 	for name := range s.Factors {
 		names = append(names, name)
@@ -153,16 +153,16 @@ func rootUsage(w io.Writer) {
 Usage: doe <command> [command options] [arguments]
 
 Commands:
-  execute  Execute a study and print JSON results.
+  experiment  Run an experiment and print JSON results.
 
 Run "doe <command> -h" for command-specific help.
 `)
 }
 
-func executeUsage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `Execute one run for each combination of factor settings.
+func experimentUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe execute [-f study.yaml] [key=value ...] [-r script]
+Usage: doe experiment [-f study.yaml] [key=value ...] [-r script]
 
 Options:
   -f, --file  Load factors and run script from a YAML study.
