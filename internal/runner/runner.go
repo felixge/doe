@@ -227,9 +227,6 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output, script strin
 			}
 		}
 	}
-	if d.Concurrency > 1 || len(d.ConcurrencyBy) > 0 {
-		return conductConcurrent(ctx, env, root, output, d, experiment, results, pointKeys, commands, schedule, reused)
-	}
 	state := newProgressState(len(points)*d.Replicates, reused, time.Now(), remaining)
 	for replicate, row := range schedule {
 		for _, pointIndex := range row {
@@ -238,6 +235,9 @@ func conductDesign(ctx context.Context, env *cli.Env, root, output, script strin
 				state.AddDuration(pointKeys[pointIndex], duration)
 			}
 		}
+	}
+	if d.Concurrency > 1 || len(d.ConcurrencyBy) > 0 {
+		return conductConcurrent(ctx, env, root, output, d, experiment, results, pointKeys, commands, schedule, state)
 	}
 
 	var progress *progressBar
@@ -310,7 +310,7 @@ func conductConcurrent(
 	results *resultIndex,
 	pointKeys, commands []string,
 	schedule [][]int,
-	reused int,
+	state *progressState,
 ) error {
 	groupNames := make([]string, 0)
 	groupQueues := make(map[string][]runTask)
@@ -341,6 +341,7 @@ func conductConcurrent(
 		}
 	}
 	active := make(map[string]int, len(groupNames))
+	activeStarted := make(map[runTask]time.Time)
 	next := make(map[string]int, len(groupNames))
 	activeTotal := 0
 	stopped := false
@@ -363,8 +364,9 @@ func conductConcurrent(
 				next[group]++
 				active[group]++
 				activeTotal++
+				start := time.Now()
+				activeStarted[task] = start
 				go func() {
-					start := time.Now()
 					runID := rand.Text()
 					logPath := filepath.Join(output, experiment.ID, runID+".txt")
 					last, err := commandOutputToFile(runCtx, sharedEnv.Stdin, root, commands[task.pointIndex], logPath)
@@ -377,10 +379,30 @@ func conductConcurrent(
 	if activeTotal == 0 && runCtx.Err() != nil {
 		return runCtx.Err()
 	}
+	var ticker *time.Ticker
+	var ticks <-chan time.Time
 	if progress != nil {
-		progress.Render(progressSnapshot{total: len(d.Points) * d.Replicates, done: reused, status: fmt.Sprintf("%d active", activeTotal)})
+		ticker = time.NewTicker(time.Second)
+		ticks = ticker.C
+		defer ticker.Stop()
 	}
-	done := reused
+	renderProgress := func(now time.Time) {
+		if progress == nil {
+			return
+		}
+		status := fmt.Sprintf("%d active · estimating ...", activeTotal)
+		if state.done == state.total {
+			status = "done in " + formatDuration(now.Sub(state.started))
+		} else if estimate, ok := state.estimateConcurrent(now, pointKeys, groupQueues, next, activeStarted, d.Concurrency); ok {
+			status = fmt.Sprintf("%d active · ~%s remaining", activeTotal, formatDuration(estimate))
+		} else if activeTotal > 0 {
+			status += " (" + formatDuration(now.Sub(state.started)) + " elapsed)"
+		}
+		progress.Render(progressSnapshot{total: state.total, done: state.done, status: status})
+	}
+	if progress != nil {
+		renderProgress(time.Now())
+	}
 	ctxDone := ctx.Done()
 	for activeTotal > 0 {
 		select {
@@ -388,6 +410,7 @@ func conductConcurrent(
 			group := concurrencyGroupKey(d.Points[completion.task.pointIndex], d.ConcurrencyBy)
 			active[group]--
 			activeTotal--
+			delete(activeStarted, completion.task)
 			if completion.err != nil {
 				if firstErr == nil {
 					firstErr = fmt.Errorf("replicate %d point #%d (log: %s): %w", completion.task.replicate, completion.task.pointIndex+1, completion.logPath, completion.err)
@@ -401,16 +424,13 @@ func conductConcurrent(
 				stopped = true
 				cancel()
 			} else {
-				done++
+				state.AddDuration(pointKeys[completion.task.pointIndex], completion.end.Sub(completion.start))
+				state.done++
 			}
 			dispatch()
-			if progress != nil {
-				status := fmt.Sprintf("%d active", activeTotal)
-				if done == len(d.Points)*d.Replicates {
-					status = "done"
-				}
-				progress.Render(progressSnapshot{total: len(d.Points) * d.Replicates, done: done, status: status})
-			}
+			renderProgress(time.Now())
+		case now := <-ticks:
+			renderProgress(now)
 		case <-ctxDone:
 			if firstErr == nil {
 				firstErr = ctx.Err()

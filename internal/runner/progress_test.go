@@ -95,6 +95,33 @@ func TestProgressStateCompletionUpdatesPointAverage(t *testing.T) {
 	}
 }
 
+func TestProgressStateEstimatesConcurrentLanes(t *testing.T) {
+	started := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	state := newProgressState(4, 2, started, nil)
+	state.AddDuration("fast", 2*time.Second)
+	state.AddDuration("slow", 10*time.Second)
+	fast := runTask{pointIndex: 0, replicate: 2}
+	newPoint := runTask{pointIndex: 2, replicate: 1}
+	queues := map[string][]runTask{
+		"one": {fast, {pointIndex: 1, replicate: 2}},
+		"two": {newPoint},
+	}
+	next := map[string]int{"one": 1, "two": 1}
+	active := map[runTask]time.Time{fast: started, newPoint: started}
+
+	got, ok := state.estimateConcurrent(
+		started.Add(time.Second),
+		[]string{"fast", "slow", "new"},
+		queues,
+		next,
+		active,
+		2,
+	)
+	if !ok || got != 10*time.Second {
+		t.Fatalf("estimate = %s, %v; want 10s, true", got, ok)
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	for duration, want := range map[time.Duration]string{
 		0:                              "0s",

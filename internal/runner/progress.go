@@ -94,6 +94,13 @@ func (p *progressState) AddDuration(point string, duration time.Duration) {
 	p.points[point] = stats
 }
 
+func (p *progressState) duration(point string) (time.Duration, bool) {
+	if duration, ok := p.points[point].Average(); ok {
+		return duration, true
+	}
+	return p.all.Average()
+}
+
 func (p *progressState) Start(now time.Time) {
 	p.activeStarted = now
 }
@@ -122,10 +129,7 @@ func (p *progressState) Snapshot(now time.Time) progressSnapshot {
 func (p *progressState) estimate(now time.Time) (time.Duration, bool) {
 	var remaining time.Duration
 	for index, point := range p.remaining[p.next:] {
-		estimate, ok := p.points[point].Average()
-		if !ok {
-			estimate, ok = p.all.Average()
-		}
+		estimate, ok := p.duration(point)
 		if !ok {
 			return 0, false
 		}
@@ -133,6 +137,51 @@ func (p *progressState) estimate(now time.Time) (time.Duration, bool) {
 			estimate -= now.Sub(p.activeStarted)
 		}
 		remaining += max(estimate, 0)
+	}
+	return remaining, true
+}
+
+func (p *progressState) estimateConcurrent(
+	now time.Time,
+	pointKeys []string,
+	groupQueues map[string][]runTask,
+	next map[string]int,
+	active map[runTask]time.Time,
+	concurrency int,
+) (time.Duration, bool) {
+	var remaining time.Duration
+	for group, queue := range groupQueues {
+		lanes := make([]time.Duration, 0, concurrency)
+		for _, task := range queue[:next[group]] {
+			started, ok := active[task]
+			if !ok {
+				continue
+			}
+			duration, ok := p.duration(pointKeys[task.pointIndex])
+			if !ok {
+				return 0, false
+			}
+			lanes = append(lanes, max(duration-now.Sub(started), 0))
+		}
+		for len(lanes) < concurrency {
+			lanes = append(lanes, 0)
+		}
+		for _, task := range queue[next[group]:] {
+			duration, ok := p.duration(pointKeys[task.pointIndex])
+			if !ok {
+				return 0, false
+			}
+			lane := 0
+			for i := 1; i < len(lanes); i++ {
+				if lanes[i] < lanes[lane] {
+					lane = i
+				}
+			}
+			lanes[lane] += duration
+		}
+		for _, duration := range lanes {
+			remaining = max(remaining, duration)
+		}
 	}
 	return remaining, true
 }
