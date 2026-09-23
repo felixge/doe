@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -24,13 +23,8 @@ type Factors struct {
 	Settings map[string][]string
 }
 
-var variableName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z_0-9]*$`)
-
 // Set parses a YAML setting or sequence and replaces a factor's settings.
 func (f *Factors) Set(name, value string) error {
-	if !variableName.MatchString(name) {
-		return fmt.Errorf("factor %q is not a shell variable name", name)
-	}
 	var document yaml.Node
 	if err := yaml.Unmarshal([]byte(value), &document); err != nil {
 		return fmt.Errorf("factor %q: %w", name, err)
@@ -61,9 +55,6 @@ func (f *Factors) UnmarshalYAML(node *yaml.Node) error {
 		key, value := node.Content[i], node.Content[i+1]
 		if key.Tag != "!!str" {
 			return fmt.Errorf("factor names must be strings")
-		}
-		if !variableName.MatchString(key.Value) {
-			return fmt.Errorf("factor %q is not a shell variable name", key.Value)
 		}
 		if _, exists := f.Settings[key.Value]; exists {
 			return fmt.Errorf("duplicate factor %q", key.Value)
