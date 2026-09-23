@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -66,14 +67,14 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 		if !ok {
 			return fail(env.Stderr, fmt.Errorf("factor %q must be key=value", arg))
 		}
-		if err := s.Factors.Set(name, value); err != nil {
+		if err := s.Set(name, value); err != nil {
 			return fail(env.Stderr, err)
 		}
 	}
 	if flags.Changed("run") {
 		s.Run = *runScript
 	}
-	if len(s.Factors.Names) == 0 {
+	if len(s.Factors) == 0 {
 		return fail(env.Stderr, errors.New("at least one factor is required"))
 	}
 	if strings.TrimSpace(s.Run) == "" {
@@ -92,12 +93,17 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 	return 0
 }
 
-// execute visits the first factor fastest, matching the README's sum example.
+// execute sorts factor names for deterministic design points.
 func execute(ctx context.Context, env *cli.Env, s study.Study, dir string) error {
-	values := make(map[string]string, len(s.Factors.Names))
+	names := make([]string, 0, len(s.Factors))
+	for name := range s.Factors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	values := make(map[string]string, len(names))
 	var visit func(int) error
 	visit = func(index int) error {
-		if index < 0 {
+		if index == len(names) {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -106,7 +112,7 @@ func execute(ctx context.Context, env *cli.Env, s study.Study, dir string) error
 			command.Stdin = env.Stdin
 			command.Stderr = env.Stderr
 			command.Env = os.Environ()
-			for _, name := range s.Factors.Names {
+			for _, name := range names {
 				command.Env = append(command.Env, name+"="+values[name])
 			}
 			output, err := command.Output()
@@ -122,7 +128,7 @@ func execute(ctx context.Context, env *cli.Env, s study.Study, dir string) error
 			if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 				return fmt.Errorf("run %v: output must contain exactly one JSON object", values)
 			}
-			for _, name := range s.Factors.Names {
+			for _, name := range names {
 				if _, exists := result[name]; exists {
 					return fmt.Errorf("run output conflicts with factor %q", name)
 				}
@@ -130,16 +136,16 @@ func execute(ctx context.Context, env *cli.Env, s study.Study, dir string) error
 			}
 			return json.NewEncoder(env.Stdout).Encode(result)
 		}
-		name := s.Factors.Names[index]
-		for _, setting := range s.Factors.Settings[name] {
+		name := names[index]
+		for _, setting := range s.Factors[name] {
 			values[name] = setting
-			if err := visit(index - 1); err != nil {
+			if err := visit(index + 1); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	return visit(len(s.Factors.Names) - 1)
+	return visit(0)
 }
 
 func fail(stderr io.Writer, err error) int {
