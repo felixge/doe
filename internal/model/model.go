@@ -76,27 +76,17 @@ type Results struct {
 }
 
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
-// ProcessStartTime is an OS-native identity value: ticks since boot on Linux,
-// or a seconds.microseconds creation timestamp on macOS.
 type Experiment struct {
-	ID               uuid.UUID `json:"id"`
-	PID              int       `json:"pid"`
-	ProcessStartTime string    `json:"process_start_time"`
-	Design           `json:"design"`
+	ID     uuid.UUID `json:"id"`
+	Design `json:"design"`
 }
 
-// NewExperiment creates an experiment with the identity of the current process.
-func NewExperiment(study Study) (Experiment, error) {
-	start, err := processStartTime()
-	if err != nil {
-		return Experiment{}, fmt.Errorf("read process start time: %w", err)
-	}
+// NewExperiment creates an experiment from a study with a UUIDv7 ID.
+func NewExperiment(study Study) Experiment {
 	return Experiment{
-		ID:               uuid.NewV7(),
-		PID:              os.Getpid(),
-		ProcessStartTime: start,
-		Design:           study.Clone(),
-	}, nil
+		ID:     uuid.NewV7(),
+		Design: study.Clone(),
+	}
 }
 
 // Factors maps each factor to its possible settings.
