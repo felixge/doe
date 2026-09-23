@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"syscall"
 
@@ -135,79 +134,61 @@ func appendExperiment(experiment model.Experiment, dir string) error {
 	return nil
 }
 
-// runExperiment visits design points in stable factor order.
+// runExperiment runs each point until a run fails.
 func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experiment, dir string) error {
-	// Map iteration varies, so sort names to keep output order stable.
-	names := make([]model.Factor, 0, len(experiment.Factors))
-	for name := range experiment.Factors {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-
-	// Reuse the current settings as recursion walks the cartesian product.
-	values := make(map[model.Factor]model.Setting, len(names))
-	var visit func(int) error
-	visit = func(index int) error {
-		if index == len(names) {
-			return runDesignPoint(ctx, env, experiment.Run, dir, names, values)
+	for _, point := range experiment.Points() {
+		if err := runDesignPoint(ctx, env, experiment.Run, dir, point); err != nil {
+			return err
 		}
-		name := names[index]
-		for _, setting := range experiment.Factors[name] {
-			values[name] = setting
-			if err := visit(index + 1); err != nil {
-				return err
-			}
-		}
-		return nil
 	}
-	return visit(0)
+	return nil
 }
 
-func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, dir string, names []model.Factor, values map[model.Factor]model.Setting) error {
+func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, dir string, point model.Point) error {
 	// Avoid starting a shell when the experiment is already canceled.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(script, values))
+	command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(script, point))
 	command.Dir = dir
 	command.Stdin = env.Stdin
 	command.Stderr = env.Stderr
 	output, err := command.Output()
 	if err != nil {
-		return fmt.Errorf("run %v: %w", values, err)
+		return fmt.Errorf("run %v: %w", point, err)
 	}
 
 	// Reject conflicts so script output cannot silently replace inputs.
-	result, err := decodeRunOutput(output, values)
+	result, err := decodeRunOutput(output, point)
 	if err != nil {
 		return err
 	}
-	for _, name := range names {
+	for name, setting := range point {
 		if _, exists := result[string(name)]; exists {
 			return fmt.Errorf("run output conflicts with factor %q", name)
 		}
-		result[string(name)] = values[name]
+		result[string(name)] = setting
 	}
 	return json.NewEncoder(env.Stdout).Encode(result)
 }
 
-func decodeRunOutput(output []byte, values map[model.Factor]model.Setting) (map[string]any, error) {
+func decodeRunOutput(output []byte, point model.Point) (map[string]any, error) {
 	// Reject trailing values so each run contributes exactly one JSONL result.
 	var result map[string]any
 	decoder := json.NewDecoder(strings.NewReader(string(output)))
 	if err := decoder.Decode(&result); err != nil || result == nil {
-		return nil, fmt.Errorf("run %v: output must be a JSON object: %v", values, err)
+		return nil, fmt.Errorf("run %v: output must be a JSON object: %v", point, err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("run %v: output must contain exactly one JSON object", values)
+		return nil, fmt.Errorf("run %v: output must contain exactly one JSON object", point)
 	}
 	return result, nil
 }
 
-func expandRunScript(script model.Script, values map[model.Factor]model.Setting) string {
+func expandRunScript(script model.Script, point model.Point) string {
 	return factorPlaceholder.ReplaceAllStringFunc(string(script), func(placeholder string) string {
-		value, ok := values[model.Factor(placeholder[1:len(placeholder)-1])]
+		value, ok := point[model.Factor(placeholder[1:len(placeholder)-1])]
 		if !ok {
 			return placeholder
 		}

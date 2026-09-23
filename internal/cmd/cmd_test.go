@@ -100,7 +100,7 @@ run: |
 }
 
 func TestExpandRunScript(t *testing.T) {
-	values := map[model.Factor]model.Setting{"foo": "a'b; {bar}", "bar": 42}
+	values := model.Point{"foo": "a'b; {bar}", "bar": 42}
 	got := expandRunScript(`{foo} {bar} {missing} {"result":1}`, values)
 	want := `a'b; {bar} 42 {missing} {"result":1}`
 	if got != want {

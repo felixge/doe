@@ -26,6 +26,47 @@ func TestNewExperiment(t *testing.T) {
 	}
 }
 
+func TestDesignPoints(t *testing.T) {
+	design := Design{Factors: Factors{
+		"foo": {1, 2, 3},
+		"bar": {4, 5},
+	}}
+	want := []Point{
+		{"bar": 4, "foo": 1},
+		{"bar": 4, "foo": 2},
+		{"bar": 4, "foo": 3},
+		{"bar": 5, "foo": 1},
+		{"bar": 5, "foo": 2},
+		{"bar": 5, "foo": 3},
+	}
+	points := design.Points()
+	if !reflect.DeepEqual(points, want) {
+		t.Fatalf("points = %v, want %v", points, want)
+	}
+	points[0]["foo"] = 99
+	if points[1]["foo"] != 2 || design.Factors["foo"][0] != 1 {
+		t.Errorf("modifying a point changed another point or the design: %v, %v", points, design.Factors)
+	}
+}
+
+func TestDesignPointsEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		factors Factors
+		want    []Point
+	}{
+		{"no factors", nil, []Point{{}}},
+		{"empty settings", Factors{"foo": {}}, nil},
+		{"empty with other factors", Factors{"foo": {1}, "bar": nil}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (Design{Factors: tc.factors}).Points(); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("points = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDesignSerialization(t *testing.T) {
 	var study Study
 	if err := yaml.Unmarshal([]byte("factors:\n  foo: 1\nrun: echo study\n"), &study); err != nil {

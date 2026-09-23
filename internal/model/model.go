@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"uuid"
 
 	"gopkg.in/yaml.v3"
@@ -39,6 +40,33 @@ type Design struct {
 func (d Design) Clone() Design {
 	d.Factors = maps.Clone(d.Factors)
 	return d
+}
+
+// Points returns the cartesian product of the design's factor settings.
+// Factors are sorted so the resulting order is stable.
+func (d Design) Points() []Point {
+	names := make([]Factor, 0, len(d.Factors))
+	for name := range d.Factors {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	var points []Point
+	current := make(Point, len(names))
+	var visit func(int)
+	visit = func(index int) {
+		if index == len(names) {
+			points = append(points, maps.Clone(current))
+			return
+		}
+		name := names[index]
+		for _, setting := range d.Factors[name] {
+			current[name] = setting
+			visit(index + 1)
+		}
+	}
+	visit(0)
+	return points
 }
 
 // Results holds the experiments recorded by doe.
@@ -78,6 +106,9 @@ func (f *Factors) Set(name Factor, value []byte) error {
 
 // Factor names an input to a run.
 type Factor string
+
+// Point maps each factor to its setting for a single run.
+type Point map[Factor]Setting
 
 // Settings lists possible values for a factor. A nil or empty slice represents
 // a factor that doesn't have a setting.
