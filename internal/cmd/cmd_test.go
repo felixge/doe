@@ -124,11 +124,11 @@ func TestRunCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	env, _, stderr := testEnv()
-	if code := Main(ctx, env, []string{"run", root, "full"}); code != 1 {
-		t.Fatalf("Main() = %d, want 1", code)
+	if code := Main(ctx, env, []string{"run", root, "full"}); code != 130 {
+		t.Fatalf("Main() = %d, want 130", code)
 	}
-	if !strings.Contains(stderr.String(), context.Canceled.Error()) {
-		t.Fatalf("stderr = %q", stderr.String())
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 }
 
