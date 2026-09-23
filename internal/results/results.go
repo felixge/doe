@@ -29,6 +29,6 @@ func (r *Results) Dir() string {
 }
 
 // AppendExperiment records an experiment as a JSON line.
-func (r *Results) AppendExperiment(experiment model.Experiment) error {
+func (r *Results) AppendExperiment(experiment *model.Experiment) error {
 	return jsonl.AppendFile(filepath.Join(r.dir, "experiments.jsonl"), experiment)
 }

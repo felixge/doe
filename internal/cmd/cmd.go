@@ -77,22 +77,22 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	return 0
 }
 
-func prepareExperiment(path, runScript string, overrideRun bool, args []string) (model.Experiment, *results.Results, error) {
+func prepareExperiment(path, runScript string, overrideRun bool, args []string) (*model.Experiment, *results.Results, error) {
 	// Start from the file so CLI factors can override file factors.
 	var study model.Study
 	if path != "" {
 		if err := study.Load(path); err != nil {
-			return model.Experiment{}, nil, err
+			return nil, nil, err
 		}
 	}
 	experiment := model.NewExperiment(study)
 	for _, arg := range args {
 		factor, settingsYAML, ok := strings.Cut(arg, "=")
 		if !ok {
-			return model.Experiment{}, nil, fmt.Errorf("factor %q must be key=value", arg)
+			return nil, nil, fmt.Errorf("factor %q must be key=value", arg)
 		}
 		if err := experiment.Factors.Set(model.Factor(factor), []byte(settingsYAML)); err != nil {
-			return model.Experiment{}, nil, err
+			return nil, nil, err
 		}
 	}
 	if overrideRun {
@@ -101,10 +101,10 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 
 	// Reject incomplete designs before running anything.
 	if len(experiment.Factors) == 0 {
-		return model.Experiment{}, nil, errors.New("at least one factor is required")
+		return nil, nil, errors.New("at least one factor is required")
 	}
 	if strings.TrimSpace(string(experiment.Run)) == "" {
-		return model.Experiment{}, nil, errors.New("a run script is required (use --run or a study file)")
+		return nil, nil, errors.New("a run script is required (use --run or a study file)")
 	}
 
 	// Keep scripts and results relative to the study file.
@@ -113,11 +113,11 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 		dir = filepath.Dir(path)
 	}
 	results, err := results.New(filepath.Join(dir, "results"))
-	return experiment, results, err
+	return &experiment, results, err
 }
 
 // runExperiment runs each point until a run fails.
-func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experiment, results *results.Results) error {
+func runExperiment(ctx context.Context, env *cli.Env, experiment *model.Experiment, results *results.Results) error {
 	for _, point := range experiment.Points() {
 		if err := runDesignPoint(ctx, env, experiment.Run, results, point); err != nil {
 			return err

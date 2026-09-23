@@ -24,7 +24,7 @@ func TestAppendExperiment(t *testing.T) {
 	}
 	first := model.NewExperiment(model.Study{})
 	second := model.NewExperiment(model.Study{})
-	for _, experiment := range []model.Experiment{first, second} {
+	for _, experiment := range []*model.Experiment{&first, &second} {
 		if err := results.AppendExperiment(experiment); err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func TestAppendExperimentErrors(t *testing.T) {
 	if err := os.Mkdir(path, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := results.AppendExperiment(model.Experiment{}); err == nil || !strings.Contains(err.Error(), path) {
+	if err := results.AppendExperiment(&model.Experiment{}); err == nil || !strings.Contains(err.Error(), path) {
 		t.Errorf("AppendExperiment with invalid file = %v, want path error", err)
 	}
 }
