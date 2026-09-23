@@ -2,6 +2,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -109,6 +110,22 @@ type Factor string
 
 // Point maps each factor to its setting for a single run.
 type Point map[Factor]Setting
+
+// Run is a design point identified by a UUID.
+type Run struct {
+	ID uuid.UUID `json:"id"`
+	Point
+}
+
+// MarshalJSON writes the ID and point settings as a flat object.
+func (r Run) MarshalJSON() ([]byte, error) {
+	fields := maps.Clone(r.Point)
+	if fields == nil {
+		fields = make(Point)
+	}
+	fields["id"] = r.ID
+	return json.Marshal(fields)
+}
 
 // Settings lists possible settings for a factor. A nil or empty slice represents
 // a factor that doesn't have a setting.

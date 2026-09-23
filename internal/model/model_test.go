@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"uuid"
 
 	"gopkg.in/yaml.v3"
 )
@@ -92,6 +93,36 @@ func TestDesignSerialization(t *testing.T) {
 	}
 	if design, ok := record["design"].(map[string]any); !ok || design["run"] != "echo study" || design["factors"] == nil {
 		t.Errorf("experiment has no nested design: %s", data)
+	}
+}
+
+func TestRunSerialization(t *testing.T) {
+	id := uuid.NewV7()
+	point := Point{"foo": 42, "bar": true, "id": "factor value"}
+	for _, tc := range []struct {
+		name  string
+		point Point
+		want  map[string]any
+	}{
+		{"with settings", point, map[string]any{"id": id.String(), "foo": float64(42), "bar": true}},
+		{"without settings", nil, map[string]any{"id": id.String()}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(Run{ID: id, Point: tc.point})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("run JSON = %s, want %v", data, tc.want)
+			}
+		})
+	}
+	if point["id"] != "factor value" {
+		t.Errorf("marshaling changed point: %v", point)
 	}
 }
 
