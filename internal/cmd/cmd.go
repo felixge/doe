@@ -45,7 +45,7 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
 	file := flags.StringP("file", "f", "", "study YAML file")
-	script := flags.String("run", "", "shell script to run at each design point")
+	script := flags.StringP("run", "r", "", "shell script to run at each design point")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
 		runUsage(env.Stdout)
 		return 0
@@ -162,11 +162,11 @@ Run "doe <command> -h" for command-specific help.
 func runUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Execute one run for each combination of factor settings.
 
-Usage: doe run [-f study.yaml] [key=value ...] [--run script]
+Usage: doe run [-f study.yaml] [key=value ...] [-r script]
 
 Options:
   -f, --file  Load factors and run script from a YAML study.
-      --run   Override the run script with a shell command.
+  -r, --run   Override the run script with a shell command.
   -h, --help  Print help text.
 
 Factors are YAML scalars or sequences of scalars. CLI factors override file

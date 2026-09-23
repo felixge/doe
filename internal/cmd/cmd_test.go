@@ -21,7 +21,7 @@ func TestSumIntegration(t *testing.T) {
 	}{
 		{"file", []string{"run", "-f", path}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
 		{"override", []string{"run", "-f", path, "foo=9"}, [][3]int{{9, 4, 13}, {9, 5, 14}}},
-		{"flags and factors interspersed", []string{"run", "foo=[1, 2, 3]", "bar=[4, 5]", "--run", `printf '{"sum":%s}\n' "$((foo + bar))"`}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
+		{"flags and factors interspersed", []string{"run", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"sum":%s}\n' "$((foo + bar))"`}, [][3]int{{1, 4, 5}, {2, 4, 6}, {3, 4, 7}, {1, 5, 6}, {2, 5, 7}, {3, 5, 8}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
