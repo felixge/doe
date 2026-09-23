@@ -1,0 +1,66 @@
+# doe
+
+<img src="./mascot.png" width="130" align="left" alt="doe mascot" />
+
+doe is a lightweight CLI for applying [design of experiments](https://en.wikipedia.org/wiki/Design_of_experiments) methodology to software engineering.
+
+The UX balances the needs of fast-paced experimentation with enough scientific rigor to make results easy to analyze and reproduce. <br clear="left" />
+
+## Getting Started
+
+Doe executes experiments defined via YAML. For example, consider the `sum.study.yaml` file below defining a matrix of factors and a script to invoke for each resulting design point:
+
+````
+factors:
+	foo=[1,2,3]
+	bar=[4,5]
+run: echo '{"sum": '"$((a+b))'}'
+````
+
+The study can be executed like shown below:
+
+```
+$ doe run -f sum.study.yaml
+```
+
+The tool saves the results to a local directory called `results` and they can be displayed like this:
+
+```
+$ doe results
+{"foo": "1", "bar": "4", "sum": 5}
+{"foo": "2", "bar": "4", "sum": 6}
+{"foo": "3", "bar": "4", "sum": 7}
+{"foo": "1", "bar": "5", "sum": 6}
+{"foo": "2", "bar": "5", "sum": 7}
+{"foo": "3", "bar": "5", "sum": 8}
+```
+
+Alternatively, one can specify all options on the CLI, with each positional argument being interpreted as one line of a YAML file:
+
+```
+doe run "factors:{foo:[1,2,3],bar:[4,5,6]}" 'run:echo {"sum": '$((a+b))'}'
+```
+
+Files an CLI options can also be combined, with CLI options taking precedence:
+
+````
+$ doe run -f echo.study.yaml "factors:{foo=9}"
+{"foo": "9", "bar": "4", "sum": 13}
+{"foo": "9", "bar": "5", "sum": 13}
+````
+
+## Terminology
+
+| term         | description                                                  |
+| ------------ | ------------------------------------------------------------ |
+| factor       | A factor that influences the outcome of the experiment.      |
+| setting      | A value for a factor.                                        |
+| matrix       | A mapping of factor:settings where settings can either be a single setting or a sequence of values that is used to form a cartesian product with the other factor=settings pairs in the matrix. |
+| input        | A factor=setting pair passed to a run.                       |
+| design point | A combination of factor=setting pairs passed to a run.       |
+| response     | A name of a measured outcome of the experiment.              |
+| measurement  | A value for a response.                                      |
+| output       | A response=measurement pair.                                 |
+| outcome      | The outputs of a run.                                        |
+| run          | The execution of a design point producing measurements       |
+
