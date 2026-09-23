@@ -26,12 +26,9 @@ type Setting string
 // Script is a shell command executed by doe.
 type Script string
 
-// UnmarshalYAML accepts one scalar or a non-empty sequence of scalars.
+// UnmarshalYAML accepts a scalar or sequence; null and [] have no settings.
 func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.SequenceNode {
-		if len(node.Content) == 0 {
-			return fmt.Errorf("settings must not be empty")
-		}
 		for _, setting := range node.Content {
 			if setting.Kind != yaml.ScalarNode {
 				return fmt.Errorf("settings must be YAML scalars")
@@ -43,6 +40,9 @@ func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.ScalarNode {
 		return fmt.Errorf("settings must be YAML scalars or a sequence of scalars")
 	}
+	if node.Tag == "!!null" {
+		return nil
+	}
 	*s = Settings{Setting(node.Value)}
 	return nil
 }
@@ -52,9 +52,6 @@ func (s *Study) SetFactor(name Factor, value string) error {
 	var settings Settings
 	if err := yaml.Unmarshal([]byte(value), &settings); err != nil {
 		return fmt.Errorf("factor %q: %w", name, err)
-	}
-	if len(settings) == 0 {
-		return fmt.Errorf("factor %q: setting is empty", name)
 	}
 	if s.Factors == nil {
 		s.Factors = make(map[Factor]Settings)
