@@ -163,11 +163,11 @@ func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, dir 
 	if err != nil {
 		return err
 	}
-	for name, setting := range point {
-		if _, exists := result[string(name)]; exists {
-			return fmt.Errorf("run output conflicts with factor %q", name)
+	for factor, setting := range point {
+		if _, exists := result[string(factor)]; exists {
+			return fmt.Errorf("run output conflicts with factor %q", factor)
 		}
-		result[string(name)] = setting
+		result[string(factor)] = setting
 	}
 	return json.NewEncoder(env.Stdout).Encode(result)
 }
@@ -188,11 +188,11 @@ func decodeRunOutput(output []byte, point model.Point) (map[string]any, error) {
 
 func expandRunScript(script model.Script, point model.Point) string {
 	return factorPlaceholder.ReplaceAllStringFunc(string(script), func(placeholder string) string {
-		value, ok := point[model.Factor(placeholder[1:len(placeholder)-1])]
+		setting, ok := point[model.Factor(placeholder[1:len(placeholder)-1])]
 		if !ok {
 			return placeholder
 		}
-		return fmt.Sprint(value)
+		return fmt.Sprint(setting)
 	})
 }
 
