@@ -15,15 +15,15 @@ type Results struct {
 	dir string
 }
 
-// New returns a Results for dir.
-func New(dir string) *Results {
-	return &Results{dir: dir}
+// New creates the results directory and returns a Results for dir.
+func New(dir string) (*Results, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create results directory: %w", err)
+	}
+	return &Results{dir: dir}, nil
 }
 
-// AppendExperiment records an experiment as a JSON line, creating the results directory if needed.
+// AppendExperiment records an experiment as a JSON line.
 func (r *Results) AppendExperiment(experiment model.Experiment) error {
-	if err := os.MkdirAll(r.dir, 0755); err != nil {
-		return fmt.Errorf("create results directory: %w", err)
-	}
 	return jsonl.AppendFile(filepath.Join(r.dir, "experiments.jsonl"), experiment)
 }

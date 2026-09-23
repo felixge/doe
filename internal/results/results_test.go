@@ -12,7 +12,13 @@ import (
 
 func TestAppendExperiment(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "results")
-	results := New(dir)
+	results, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		t.Fatalf("New did not create results directory: %v", err)
+	}
 	first := model.NewExperiment(model.Study{})
 	second := model.NewExperiment(model.Study{})
 	for _, experiment := range []model.Experiment{first, second} {
@@ -45,16 +51,20 @@ func TestAppendExperimentErrors(t *testing.T) {
 	if err := os.WriteFile(dir, []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := New(dir).AppendExperiment(model.Experiment{}); err == nil || !strings.Contains(err.Error(), "create results directory") {
-		t.Errorf("AppendExperiment with invalid directory = %v, want directory error", err)
+	if _, err := New(dir); err == nil || !strings.Contains(err.Error(), "create results directory") {
+		t.Errorf("New with invalid directory = %v, want directory error", err)
 	}
 
 	dir = t.TempDir()
+	results, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "experiments.jsonl")
 	if err := os.Mkdir(path, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := New(dir).AppendExperiment(model.Experiment{}); err == nil || !strings.Contains(err.Error(), path) {
+	if err := results.AppendExperiment(model.Experiment{}); err == nil || !strings.Contains(err.Error(), path) {
 		t.Errorf("AppendExperiment with invalid file = %v, want path error", err)
 	}
 }
