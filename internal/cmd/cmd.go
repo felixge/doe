@@ -77,7 +77,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 }
 
 func prepareExperiment(path, runScript string, overrideRun bool, args []string) (model.Experiment, string, error) {
-	// Start from the file so positional settings can replace its factors.
+	// Start from the file so CLI factors can override file factors.
 	var study model.Study
 	if path != "" {
 		if err := study.Load(path); err != nil {
@@ -86,11 +86,11 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 	}
 	experiment := model.NewExperiment(study)
 	for _, arg := range args {
-		name, value, ok := strings.Cut(arg, "=")
+		factor, settingsYAML, ok := strings.Cut(arg, "=")
 		if !ok {
 			return model.Experiment{}, "", fmt.Errorf("factor %q must be key=value", arg)
 		}
-		if err := experiment.Factors.Set(model.Factor(name), []byte(value)); err != nil {
+		if err := experiment.Factors.Set(model.Factor(factor), []byte(settingsYAML)); err != nil {
 			return model.Experiment{}, "", err
 		}
 	}
@@ -218,7 +218,7 @@ Options:
   -r, --run   Override the run script with a shell command.
   -h, --help  Print help text.
 
-Factors are YAML values or sequences of values. CLI factors override file
-factors. In run scripts, {factor} expands to the setting.
+Factor settings are YAML values or sequences of values. CLI factors override
+file factors. In run scripts, {factor} expands to the setting.
 `)
 }

@@ -100,8 +100,8 @@ run: |
 }
 
 func TestExpandRunScript(t *testing.T) {
-	values := model.Point{"foo": "a'b; {bar}", "bar": 42}
-	got := expandRunScript(`{foo} {bar} {missing} {"result":1}`, values)
+	point := model.Point{"foo": "a'b; {bar}", "bar": 42}
+	got := expandRunScript(`{foo} {bar} {missing} {"result":1}`, point)
 	want := `a'b; {bar} 42 {missing} {"result":1}`
 	if got != want {
 		t.Errorf("script = %q, want %q", got, want)

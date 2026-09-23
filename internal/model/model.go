@@ -45,23 +45,23 @@ func (d Design) Clone() Design {
 // Points returns the cartesian product of the design's factor settings.
 // Factors are sorted so the resulting order is stable.
 func (d Design) Points() []Point {
-	names := make([]Factor, 0, len(d.Factors))
-	for name := range d.Factors {
-		names = append(names, name)
+	factors := make([]Factor, 0, len(d.Factors))
+	for factor := range d.Factors {
+		factors = append(factors, factor)
 	}
-	slices.Sort(names)
+	slices.Sort(factors)
 
 	var points []Point
-	current := make(Point, len(names))
+	current := make(Point, len(factors))
 	var visit func(int)
 	visit = func(index int) {
-		if index == len(names) {
+		if index == len(factors) {
 			points = append(points, maps.Clone(current))
 			return
 		}
-		name := names[index]
-		for _, setting := range d.Factors[name] {
-			current[name] = setting
+		factor := factors[index]
+		for _, setting := range d.Factors[factor] {
+			current[factor] = setting
 			visit(index + 1)
 		}
 	}
@@ -92,15 +92,15 @@ func NewExperiment(study Study) Experiment {
 type Factors map[Factor]Settings
 
 // Set parses a YAML setting or sequence and replaces a factor's settings.
-func (f *Factors) Set(name Factor, value []byte) error {
+func (f *Factors) Set(factor Factor, data []byte) error {
 	var settings Settings
-	if err := yaml.Unmarshal(value, &settings); err != nil {
-		return fmt.Errorf("factor %q: %w", name, err)
+	if err := yaml.Unmarshal(data, &settings); err != nil {
+		return fmt.Errorf("factor %q: %w", factor, err)
 	}
 	if *f == nil {
 		*f = make(Factors)
 	}
-	(*f)[name] = settings
+	(*f)[factor] = settings
 	return nil
 }
 
@@ -110,30 +110,30 @@ type Factor string
 // Point maps each factor to its setting for a single run.
 type Point map[Factor]Setting
 
-// Settings lists possible values for a factor. A nil or empty slice represents
+// Settings lists possible settings for a factor. A nil or empty slice represents
 // a factor that doesn't have a setting.
 type Settings []Setting
 
-// UnmarshalYAML accepts a value or sequence of values; null and [] have no settings.
+// UnmarshalYAML accepts a setting or sequence of settings; null and [] have no settings.
 func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
 	if node.Tag == "!!null" {
 		return nil
 	}
 	if node.Kind == yaml.SequenceNode {
-		for _, setting := range node.Content {
-			var value Setting
-			if err := setting.Decode(&value); err != nil {
+		for _, settingNode := range node.Content {
+			var setting Setting
+			if err := settingNode.Decode(&setting); err != nil {
 				return err
 			}
-			*s = append(*s, value)
+			*s = append(*s, setting)
 		}
 		return nil
 	}
-	var value Setting
-	if err := node.Decode(&value); err != nil {
+	var setting Setting
+	if err := node.Decode(&setting); err != nil {
 		return err
 	}
-	*s = Settings{value}
+	*s = Settings{setting}
 	return nil
 }
 

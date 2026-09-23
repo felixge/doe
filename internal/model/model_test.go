@@ -110,6 +110,6 @@ func TestFactorsSet(t *testing.T) {
 		t.Errorf("invalid YAML error = %v", err)
 	}
 	if !reflect.DeepEqual(factors["foo"], Settings{42}) {
-		t.Errorf("invalid YAML changed factor: %v", factors["foo"])
+		t.Errorf("invalid YAML changed settings: %v", factors["foo"])
 	}
 }
