@@ -16,8 +16,8 @@ import (
 	"syscall"
 
 	"github.com/felixge/doe2/internal/cli"
+	"github.com/felixge/doe2/internal/jsonl"
 	"github.com/felixge/doe2/internal/model"
-	"github.com/felixge/doe2/jsonl"
 	"github.com/spf13/pflag"
 )
 
