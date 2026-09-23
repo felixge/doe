@@ -47,8 +47,8 @@ func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// Set parses a YAML setting or sequence and replaces a factor's settings.
-func (s *Study) Set(name Factor, value string) error {
+// SetFactor parses a YAML setting or sequence and replaces a factor's settings.
+func (s *Study) SetFactor(name Factor, value string) error {
 	var settings Settings
 	if err := yaml.Unmarshal([]byte(value), &settings); err != nil {
 		return fmt.Errorf("factor %q: %w", name, err)

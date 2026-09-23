@@ -67,7 +67,7 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 		if !ok {
 			return fail(env.Stderr, fmt.Errorf("factor %q must be key=value", arg))
 		}
-		if err := s.Set(model.Factor(name), value); err != nil {
+		if err := s.SetFactor(model.Factor(name), value); err != nil {
 			return fail(env.Stderr, err)
 		}
 	}
