@@ -45,7 +45,7 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
 	file := flags.StringP("file", "f", "", "study YAML file")
-	script := flags.StringP("run", "r", "", "shell script to run at each design point")
+	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
 		runUsage(env.Stdout)
 		return 0
@@ -71,7 +71,7 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 		}
 	}
 	if flags.Changed("run") {
-		s.Run = *script
+		s.Run = *runScript
 	}
 	if len(s.Factors.Names) == 0 {
 		return fail(env.Stderr, errors.New("at least one factor is required"))
