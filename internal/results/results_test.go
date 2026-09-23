@@ -19,6 +19,9 @@ func TestAppendExperiment(t *testing.T) {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		t.Fatalf("New did not create results directory: %v", err)
 	}
+	if got := results.Dir(); got != dir {
+		t.Errorf("Dir() = %q, want %q", got, dir)
+	}
 	first := model.NewExperiment(model.Study{})
 	second := model.NewExperiment(model.Study{})
 	for _, experiment := range []model.Experiment{first, second} {

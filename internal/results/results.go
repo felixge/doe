@@ -23,6 +23,11 @@ func New(dir string) (*Results, error) {
 	return &Results{dir: dir}, nil
 }
 
+// Dir returns the results directory.
+func (r *Results) Dir() string {
+	return r.dir
+}
+
 // AppendExperiment records an experiment as a JSON line.
 func (r *Results) AppendExperiment(experiment model.Experiment) error {
 	return jsonl.AppendFile(filepath.Join(r.dir, "experiments.jsonl"), experiment)

@@ -59,44 +59,40 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Separate configuration errors from run failures, which may be cancellations.
-	experiment, dir, err := prepareExperiment(*file, *runScript, flags.Changed("run"), flags.Args())
+	experiment, records, err := prepareExperiment(*file, *runScript, flags.Changed("run"), flags.Args())
 	if err != nil {
 		return env.Fail(err)
 	}
 
 	// Record only completed experiments; failed runs leave no record.
-	if err := runExperiment(ctx, env, experiment, dir); err != nil {
+	if err := runExperiment(ctx, env, experiment, records); err != nil {
 		if ctx.Err() != nil {
 			return 130
 		}
 		return env.Fail(err)
 	}
-	results, err := results.New(filepath.Join(dir, "results"))
-	if err != nil {
-		return env.Fail(err)
-	}
-	if err := results.AppendExperiment(experiment); err != nil {
+	if err := records.AppendExperiment(experiment); err != nil {
 		return env.Fail(err)
 	}
 	return 0
 }
 
-func prepareExperiment(path, runScript string, overrideRun bool, args []string) (model.Experiment, string, error) {
+func prepareExperiment(path, runScript string, overrideRun bool, args []string) (model.Experiment, *results.Results, error) {
 	// Start from the file so CLI factors can override file factors.
 	var study model.Study
 	if path != "" {
 		if err := study.Load(path); err != nil {
-			return model.Experiment{}, "", err
+			return model.Experiment{}, nil, err
 		}
 	}
 	experiment := model.NewExperiment(study)
 	for _, arg := range args {
 		factor, settingsYAML, ok := strings.Cut(arg, "=")
 		if !ok {
-			return model.Experiment{}, "", fmt.Errorf("factor %q must be key=value", arg)
+			return model.Experiment{}, nil, fmt.Errorf("factor %q must be key=value", arg)
 		}
 		if err := experiment.Factors.Set(model.Factor(factor), []byte(settingsYAML)); err != nil {
-			return model.Experiment{}, "", err
+			return model.Experiment{}, nil, err
 		}
 	}
 	if overrideRun {
@@ -105,10 +101,10 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 
 	// Reject incomplete designs before running anything.
 	if len(experiment.Factors) == 0 {
-		return model.Experiment{}, "", errors.New("at least one factor is required")
+		return model.Experiment{}, nil, errors.New("at least one factor is required")
 	}
 	if strings.TrimSpace(string(experiment.Run)) == "" {
-		return model.Experiment{}, "", errors.New("a run script is required (use --run or a study file)")
+		return model.Experiment{}, nil, errors.New("a run script is required (use --run or a study file)")
 	}
 
 	// Keep scripts and results relative to the study file.
@@ -116,26 +112,27 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 	if path != "" {
 		dir = filepath.Dir(path)
 	}
-	return experiment, dir, nil
+	records, err := results.New(filepath.Join(dir, "results"))
+	return experiment, records, err
 }
 
 // runExperiment runs each point until a run fails.
-func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experiment, dir string) error {
+func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experiment, records *results.Results) error {
 	for _, point := range experiment.Points() {
-		if err := runDesignPoint(ctx, env, experiment.Run, dir, point); err != nil {
+		if err := runDesignPoint(ctx, env, experiment.Run, records, point); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, dir string, point model.Point) error {
+func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, records *results.Results, point model.Point) error {
 	// Avoid starting a shell when the experiment is already canceled.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(script, point))
-	command.Dir = dir
+	command.Dir = filepath.Dir(records.Dir())
 	command.Stdin = env.Stdin
 	command.Stderr = env.Stderr
 	output, err := command.Output()
