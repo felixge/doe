@@ -17,10 +17,13 @@ type Setting string
 // Settings is one or more possible values for a factor.
 type Settings []Setting
 
+// Script is a shell command executed by doe.
+type Script string
+
 // Study is the YAML protocol for a single experiment.
 type Study struct {
 	Factors map[Factor]Settings `yaml:"factors"`
-	Run     string              `yaml:"run"`
+	Run     Script              `yaml:"run"`
 }
 
 // UnmarshalYAML accepts one scalar or a non-empty sequence of scalars.

@@ -72,12 +72,12 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 		}
 	}
 	if flags.Changed("run") {
-		s.Run = *runScript
+		s.Run = model.Script(*runScript)
 	}
 	if len(s.Factors) == 0 {
 		return fail(env.Stderr, errors.New("at least one factor is required"))
 	}
-	if strings.TrimSpace(s.Run) == "" {
+	if strings.TrimSpace(string(s.Run)) == "" {
 		return fail(env.Stderr, errors.New("a run script is required (use --run or a study file)"))
 	}
 	dir := "."
@@ -107,7 +107,7 @@ func execute(ctx context.Context, env *cli.Env, s model.Study, dir string) error
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			command := exec.CommandContext(ctx, "/bin/sh", "-c", s.Run)
+			command := exec.CommandContext(ctx, "/bin/sh", "-c", string(s.Run))
 			command.Dir = dir
 			command.Stdin = env.Stdin
 			command.Stderr = env.Stderr
