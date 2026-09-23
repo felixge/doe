@@ -11,12 +11,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"syscall"
 
 	"github.com/felixge/doe2/internal/cli"
-	"github.com/felixge/doe2/internal/study"
+	"github.com/felixge/doe2/internal/model"
 	"github.com/spf13/pflag"
 )
 
@@ -54,10 +54,10 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 		return fail(env.Stderr, err)
 	}
 
-	var s study.Study
+	var s model.Study
 	if *file != "" {
 		var err error
-		s, err = study.Load(*file)
+		s, err = model.Load(*file)
 		if err != nil {
 			return fail(env.Stderr, err)
 		}
@@ -67,7 +67,7 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 		if !ok {
 			return fail(env.Stderr, fmt.Errorf("factor %q must be key=value", arg))
 		}
-		if err := s.Set(name, value); err != nil {
+		if err := s.Set(model.Factor(name), value); err != nil {
 			return fail(env.Stderr, err)
 		}
 	}
@@ -94,13 +94,13 @@ func run(ctx context.Context, env *cli.Env, args []string) int {
 }
 
 // execute sorts factor names for deterministic design points.
-func execute(ctx context.Context, env *cli.Env, s study.Study, dir string) error {
-	names := make([]string, 0, len(s.Factors))
+func execute(ctx context.Context, env *cli.Env, s model.Study, dir string) error {
+	names := make([]model.Factor, 0, len(s.Factors))
 	for name := range s.Factors {
 		names = append(names, name)
 	}
-	sort.Strings(names)
-	values := make(map[string]string, len(names))
+	slices.Sort(names)
+	values := make(map[model.Factor]model.Setting, len(names))
 	var visit func(int) error
 	visit = func(index int) error {
 		if index == len(names) {
@@ -113,7 +113,7 @@ func execute(ctx context.Context, env *cli.Env, s study.Study, dir string) error
 			command.Stderr = env.Stderr
 			command.Env = os.Environ()
 			for _, name := range names {
-				command.Env = append(command.Env, name+"="+values[name])
+				command.Env = append(command.Env, string(name)+"="+string(values[name]))
 			}
 			output, err := command.Output()
 			if err != nil {
@@ -129,10 +129,10 @@ func execute(ctx context.Context, env *cli.Env, s study.Study, dir string) error
 				return fmt.Errorf("run %v: output must contain exactly one JSON object", values)
 			}
 			for _, name := range names {
-				if _, exists := result[name]; exists {
+				if _, exists := result[string(name)]; exists {
 					return fmt.Errorf("run output conflicts with factor %q", name)
 				}
-				result[name] = values[name]
+				result[string(name)] = string(values[name])
 			}
 			return json.NewEncoder(env.Stdout).Encode(result)
 		}
