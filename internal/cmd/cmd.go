@@ -59,19 +59,19 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Separate configuration errors from run failures, which may be cancellations.
-	experiment, records, err := prepareExperiment(*file, *runScript, flags.Changed("run"), flags.Args())
+	experiment, results, err := prepareExperiment(*file, *runScript, flags.Changed("run"), flags.Args())
 	if err != nil {
 		return env.Fail(err)
 	}
 
 	// Record only completed experiments; failed runs leave no record.
-	if err := runExperiment(ctx, env, experiment, records); err != nil {
+	if err := runExperiment(ctx, env, experiment, results); err != nil {
 		if ctx.Err() != nil {
 			return 130
 		}
 		return env.Fail(err)
 	}
-	if err := records.AppendExperiment(experiment); err != nil {
+	if err := results.AppendExperiment(experiment); err != nil {
 		return env.Fail(err)
 	}
 	return 0
@@ -112,27 +112,27 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 	if path != "" {
 		dir = filepath.Dir(path)
 	}
-	records, err := results.New(filepath.Join(dir, "results"))
-	return experiment, records, err
+	results, err := results.New(filepath.Join(dir, "results"))
+	return experiment, results, err
 }
 
 // runExperiment runs each point until a run fails.
-func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experiment, records *results.Results) error {
+func runExperiment(ctx context.Context, env *cli.Env, experiment model.Experiment, results *results.Results) error {
 	for _, point := range experiment.Points() {
-		if err := runDesignPoint(ctx, env, experiment.Run, records, point); err != nil {
+		if err := runDesignPoint(ctx, env, experiment.Run, results, point); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, records *results.Results, point model.Point) error {
+func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, results *results.Results, point model.Point) error {
 	// Avoid starting a shell when the experiment is already canceled.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(script, point))
-	command.Dir = filepath.Dir(records.Dir())
+	command.Dir = filepath.Dir(results.Dir())
 	command.Stdin = env.Stdin
 	command.Stderr = env.Stderr
 	output, err := command.Output()
