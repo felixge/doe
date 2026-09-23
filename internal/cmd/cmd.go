@@ -17,6 +17,7 @@ import (
 
 	"github.com/felixge/doe2/internal/cli"
 	"github.com/felixge/doe2/internal/model"
+	"github.com/felixge/doe2/jsonl"
 	"github.com/spf13/pflag"
 )
 
@@ -119,19 +120,7 @@ func appendExperiment(experiment model.Experiment, dir string) error {
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		return fmt.Errorf("create results directory: %w", err)
 	}
-	path := filepath.Join(resultsDir, "experiments.jsonl")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
-	}
-	if err := json.NewEncoder(file).Encode(experiment); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("append %s: %w", path, err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", path, err)
-	}
-	return nil
+	return jsonl.AppendFile(filepath.Join(resultsDir, "experiments.jsonl"), experiment)
 }
 
 // runExperiment runs each point until a run fails.
