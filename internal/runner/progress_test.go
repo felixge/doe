@@ -11,18 +11,18 @@ func TestProgressBarRendersSnapshots(t *testing.T) {
 	var output bytes.Buffer
 	bar := newProgress(&output, "compression/full")
 	bar.Render(progressSnapshot{total: 108, status: "estimating ..."})
-	if got := output.String(); !strings.Contains(got, "compression/full [>                       ] 0/108 · estimating ...") {
+	if got := output.String(); !strings.Contains(got, "[>                       ] compression/full 0/108 · estimating ...") {
 		t.Fatalf("estimating progress output = %q", got)
 	}
 
 	bar.Render(progressSnapshot{total: 108, done: 12, status: "~3m 42s remaining"})
-	if got := output.String(); !strings.Contains(got, "compression/full [==>                     ] 12/108 · ~3m 42s remaining") {
+	if got := output.String(); !strings.Contains(got, "[==>                     ] compression/full 12/108 · ~3m 42s remaining") {
 		t.Fatalf("estimated progress output = %q", got)
 	}
 
 	bar.Render(progressSnapshot{total: 108, done: 108, status: "done in 4m 11s"})
 	bar.Close()
-	if got := output.String(); !strings.Contains(got, "compression/full [========================] 108/108 · done in 4m 11s\n") {
+	if got := output.String(); !strings.Contains(got, "[========================] compression/full 108/108 · done in 4m 11s\n") {
 		t.Fatalf("completed progress output = %q", got)
 	}
 }

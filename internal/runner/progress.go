@@ -34,7 +34,7 @@ func (p *progressBar) Render(snapshot progressSnapshot) {
 		}
 		bar = strings.Repeat("=", filled) + ">" + strings.Repeat(" ", progressWidth-filled-1)
 	}
-	_, _ = fmt.Fprintf(p.writer, "\r\x1b[2K%s [%s] %d/%d · %s", p.label, bar, snapshot.done, snapshot.total, snapshot.status)
+	_, _ = fmt.Fprintf(p.writer, "\r\x1b[2K[%s] %s %d/%d · %s", bar, p.label, snapshot.done, snapshot.total, snapshot.status)
 	p.shown = true
 }
 
