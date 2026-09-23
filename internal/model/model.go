@@ -42,8 +42,7 @@ func (s *Study) SetFactor(name Factor, value string) error {
 	return nil
 }
 
-// Experiment is a single invocation of a study. Its ID is a UUIDv7, which
-// embeds a timestamp and sorts by creation time unless the clock moves backwards.
+// Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
 	ID      uuid.UUID
 	Factors map[Factor]Settings `yaml:"factors"`
