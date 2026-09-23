@@ -71,11 +71,11 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		}
 		return env.Fail(err)
 	}
-	records, err := results.New(filepath.Join(dir, "results"))
+	results, err := results.New(filepath.Join(dir, "results"))
 	if err != nil {
 		return env.Fail(err)
 	}
-	if err := records.AppendExperiment(experiment); err != nil {
+	if err := results.AppendExperiment(experiment); err != nil {
 		return env.Fail(err)
 	}
 	return 0
