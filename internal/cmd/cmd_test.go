@@ -560,8 +560,14 @@ func TestCompressionPresets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(experiment.Points) != tc.points || experiment.Replicates != tc.replicates || experiment.Setup != "./setup.bash" || experiment.Run != "./run.bash {algorithm} {preset} {file}" {
+			if len(experiment.Points) != tc.points || experiment.Replicates != tc.replicates || experiment.Setup != "./setup.bash" || experiment.Run != "./run.bash {algorithm} {effort} {file}" {
 				t.Errorf("compression design = %+v, points = %d", experiment.Design, len(experiment.Points))
+			}
+			if _, ok := experiment.Factors["effort"]; !ok {
+				t.Errorf("compression design missing effort factor: %+v", experiment.Factors)
+			}
+			if _, ok := experiment.Factors["preset"]; ok {
+				t.Errorf("compression design still has preset factor: %+v", experiment.Factors)
 			}
 		})
 	}

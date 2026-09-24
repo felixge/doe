@@ -1,14 +1,14 @@
 setup: ./setup.bash
-run: ./run.bash {algorithm} {preset} {file}
+run: ./run.bash {algorithm} {effort} {file}
 factors:
   file: [sample.txt]
   algorithm: [gzip, zstd]
-  preset: [default]
+  effort: [default]
 
 presets:
   smoke: {}
   full:
     factors:
       file: [sample.pb, sample.png, sample.txt]
-      preset: [min, default, max]
+      effort: [min, default, max]
     replicates: 6

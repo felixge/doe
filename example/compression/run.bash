@@ -2,7 +2,7 @@
 set -euo pipefail
 
 algorithm=$1
-preset=$2
+effort=$2
 file=$3
 
 # Batch inputs so short runs are measurable; wall and CPU are normalized below.
@@ -13,7 +13,7 @@ for ((i = 0; i < iterations; i++)); do
   inputs+=("$file")
 done
 
-case "$algorithm:$preset" in
+case "$algorithm:$effort" in
 gzip:min) level=1 ;;
 gzip:default) level=6 ;;
 gzip:max) level=9 ;;
@@ -21,7 +21,7 @@ zstd:min) level=1 ;;
 zstd:default) level=3 ;;
 zstd:max) level=22 ;;
 *)
-  echo "unsupported compression setting: $algorithm $preset" >&2
+  echo "unsupported compression setting: $algorithm $effort" >&2
   exit 1
   ;;
 esac

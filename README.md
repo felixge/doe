@@ -26,22 +26,22 @@ The heart is the [compression.study.yaml](./example/compression/compression.stud
 
 ```yaml
 setup: ./setup.bash
-run: ./run.bash {algorithm} {preset} {file}
+run: ./run.bash {algorithm} {effort} {file}
 factors:
   file: [sample.txt]
   algorithm: [gzip, zstd]
-  preset: [default]
+  effort: [default]
 
 presets:
   smoke: {}
   full:
     factors:
       file: [sample.pb, sample.png, sample.txt]
-      preset: [min, default, max]
+      effort: [min, default, max]
     replicates: 6
 ```
 
-The `full` preset inherits the shared protocol and factors, overriding `file` and `preset` while keeping both algorithms.
+The `full` preset inherits the shared protocol and factors, overriding `file` and `effort` while keeping both algorithms.
 
 It uses a [setup.bash](./example/compression/setup.bash) script to install dependencies and to emit a JSON object describing the environment:
 
@@ -67,9 +67,9 @@ $ doe experiment -f compression.study.yaml -p full
 doe saves one JSON object per run to `results/runs.jsonl`. You can analyze this data any way you like, e.g. using DuckDB's `read_json` function:
 
 ```bash
-$ duckdb -c "SELECT algorithm, file, level, preset, round(avg(input_size_bytes/output_size_bytes), 2) as ratio, round(avg(input_size_bytes/cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/runs.jsonl') GROUP BY ALL ORDER BY ALL;"
+$ duckdb -c "SELECT algorithm, file, level, effort, round(avg(input_size_bytes/output_size_bytes), 2) as ratio, round(avg(input_size_bytes/cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/runs.jsonl') GROUP BY ALL ORDER BY ALL;"
 ┌───────────┬────────────┬───────┬─────────┬────────┬────────────┬──────────┐
-│ algorithm │    file    │ level │ preset  │ ratio  │ throughput │ count(1) │
+│ algorithm │    file    │ level │ effort  │ ratio  │ throughput │ count(1) │
 │  varchar  │  varchar   │ int64 │ varchar │ double │   double   │  int64   │
 ├───────────┼────────────┼───────┼─────────┼────────┼────────────┼──────────┤
 │ gzip      │ sample.pb  │     1 │ min     │   1.08 │      70.94 │        6 │
