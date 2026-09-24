@@ -40,8 +40,8 @@ func (r *Results) ProjectDir() string {
 	return filepath.Dir(r.dir)
 }
 
-// OpenRunLog creates a log for a run and returns it for streaming output.
-func (r *Results) OpenRunLog(runID uuid.UUID) (*os.File, error) {
+// CreateRunLog creates a log for a run and returns it for streaming output.
+func (r *Results) CreateRunLog(runID uuid.UUID) (*os.File, error) {
 	dir := filepath.Join(r.dir, "runs")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create run logs directory %s: %w", dir, err)

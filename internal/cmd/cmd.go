@@ -164,7 +164,7 @@ func runDesignPoint(ctx context.Context, script model.Script, results *results.R
 		return err
 	}
 	run := model.NewRun(point)
-	log, err := results.OpenRunLog(run.ID)
+	log, err := results.CreateRunLog(run.ID)
 	if err != nil {
 		return err
 	}
