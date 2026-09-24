@@ -2,6 +2,7 @@
 package model
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -14,12 +15,13 @@ import (
 
 // Study is the YAML protocol for a single experiment.
 type Study struct {
-	Design `yaml:",inline"`
+	Design  `yaml:",inline"`
+	Presets map[string]Design `yaml:"presets"`
 }
 
-// NewStudy creates a study with one replicate per design point.
+// NewStudy creates an empty study.
 func NewStudy() Study {
-	return Study{Replicates: 1}
+	return Study{}
 }
 
 // Load decodes a study file into the receiver.
@@ -40,6 +42,21 @@ type Design struct {
 	Setup      Script  `json:"setup,omitempty" yaml:"setup"`
 	Run        Script  `json:"run" yaml:"run"`
 	Replicates int     `json:"replicates" yaml:"replicates"`
+}
+
+// Merge applies the nonzero options and factor settings from override to a copy of d.
+func (d Design) Merge(override Design) Design {
+	d = d.Clone()
+	for factor, settings := range override.Factors {
+		if d.Factors == nil {
+			d.Factors = make(Factors)
+		}
+		d.Factors[factor] = settings
+	}
+	d.Setup = cmp.Or(override.Setup, d.Setup)
+	d.Run = cmp.Or(override.Run, d.Run)
+	d.Replicates = cmp.Or(override.Replicates, d.Replicates)
+	return d
 }
 
 // Validate checks the final design after applying study and CLI settings.
@@ -98,6 +115,7 @@ type Results struct {
 type Experiment struct {
 	ID     uuid.UUID `json:"id"`
 	Env    Env       `json:"env"`
+	Preset string    `json:"preset,omitempty"`
 	Design `json:"design"`
 }
 

@@ -231,6 +231,138 @@ func TestExperimentSetupFailure(t *testing.T) {
 	}
 }
 
+func TestExperimentPresets(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		flags      []string
+		factor     int
+		replicates int
+		preset     string
+	}{
+		{"no preset", nil, 1, 3, ""},
+		{"short flag", []string{"-p", "smoke"}, 1, 3, "smoke"},
+		{"long flag", []string{"--preset", "full"}, 2, 6, "full"},
+		{"CLI overrides", []string{"-p", "full", "foo=9", "-n", "2"}, 9, 2, "full"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "study.yaml")
+			study := `factors:
+  foo: [1]
+run: echo '{"ok":true}'
+replicates: 3
+presets:
+  smoke: {}
+  full:
+    factors:
+      foo: [2]
+    replicates: 6
+`
+			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string{"experiment", "-f", path}, tc.flags...)
+			var stdout, stderr bytes.Buffer
+			if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 {
+				t.Fatalf("exit code %d: %s", code, &stderr)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "results", "experiments.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var record map[string]any
+			if err := json.Unmarshal(bytes.TrimSpace(data), &record); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := record["preset"]; (tc.preset == "" && ok) || (tc.preset != "" && got != tc.preset) {
+				t.Errorf("recorded preset = %v, want %q: %s", got, tc.preset, data)
+			}
+			var experiment model.Experiment
+			if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
+				t.Fatal(err)
+			}
+			if experiment.Replicates != tc.replicates || !reflect.DeepEqual(experiment.Factors["foo"], model.Settings{float64(tc.factor)}) {
+				t.Errorf("recorded design = %+v, want foo=%d and replicates=%d", experiment.Design, tc.factor, tc.replicates)
+			}
+			runs, err := os.ReadFile(filepath.Join(dir, "results", "runs.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(bytes.Split(bytes.TrimSpace(runs), []byte("\n"))); got != tc.replicates {
+				t.Errorf("run count = %d, want %d", got, tc.replicates)
+			}
+		})
+	}
+}
+
+func TestPrepareExperimentPresetPrecedence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "study.yaml")
+	study := `factors:
+  foo: [1]
+  bar: [2]
+setup: echo study
+run: echo study
+replicates: 4
+presets:
+  full:
+    factors:
+      foo: [3]
+      baz: [4]
+    setup: echo preset
+    run: echo preset
+    replicates: 0
+`
+	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+		t.Fatal(err)
+	}
+	experiment, err := prepareExperiment(path, "full", "", "echo CLI", 0, []string{"bar=[5, 6]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if experiment.Preset != "full" || experiment.Setup != "echo preset" || experiment.Run != "echo CLI" || experiment.Replicates != 4 ||
+		!reflect.DeepEqual(experiment.Factors, model.Factors{"foo": {3}, "bar": {5, 6}, "baz": {4}}) {
+		t.Errorf("resolved experiment = %+v", experiment)
+	}
+}
+
+func TestCompressionPresets(t *testing.T) {
+	path := filepath.Join("..", "..", "example", "compression", "compression.study.yaml")
+	for _, tc := range []struct {
+		preset     string
+		points     int
+		replicates int
+	}{
+		{"", 2, 1},
+		{"smoke", 2, 1},
+		{"full", 18, 6},
+	} {
+		t.Run(tc.preset, func(t *testing.T) {
+			experiment, err := prepareExperiment(path, tc.preset, "", "", 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(experiment.Points()) != tc.points || experiment.Replicates != tc.replicates || experiment.Setup != "./setup.bash" || experiment.Run != "./run.bash {algorithm} {preset} {file}" {
+				t.Errorf("compression design = %+v, points = %d", experiment.Design, len(experiment.Points()))
+			}
+		})
+	}
+}
+
+func TestExperimentUnknownPreset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "study.yaml")
+	if err := os.WriteFile(path, []byte("factors: {foo: 1}\nrun: echo '{}'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, []string{"experiment", "-f", path, "-p", "missing"})
+	if code != 1 || !strings.Contains(stderr.String(), `unknown preset "missing"`) || stdout.Len() != 0 {
+		t.Errorf("exit code %d, stdout %q, stderr %q", code, &stdout, &stderr)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "results")); !os.IsNotExist(err) {
+		t.Errorf("unknown preset created results: %v", err)
+	}
+}
+
 func TestExperimentReplicates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "study.yaml")
 	study := `factors:
@@ -359,6 +491,8 @@ func TestExperimentReplicatesFlag(t *testing.T) {
 		{"override invalid study count", "factors:\n  foo: 1\nreplicates: 0\nrun: echo '{}'\n", []string{"--replicates=2"}, 2},
 		{"override fractional YAML count", "factors:\n  foo: 1\nreplicates: 1.5\nrun: echo '{}'\n", []string{"--replicates=2"}, 2},
 		{"study default", "factors:\n  foo: 1\nrun: echo '{}'\n", nil, 1},
+		{"zero means absent", "factors:\n  foo: 1\nreplicates: 0\nrun: echo '{}'\n", nil, 1},
+		{"zero CLI means absent", "factors:\n  foo: 1\nreplicates: 3\nrun: echo '{}'\n", []string{"-n", "0"}, 3},
 		{"no study", "", []string{"foo=1", "-r", "echo '{}'", "--replicates=2"}, 2},
 		{"default", "", []string{"foo=1", "-r", "echo '{}'"}, 1},
 	} {
@@ -411,7 +545,7 @@ func TestExperimentReplicatesFlag(t *testing.T) {
 }
 
 func TestExperimentInvalidReplicates(t *testing.T) {
-	for _, value := range []string{"0", "-1", "many"} {
+	for _, value := range []string{"-1", "many"} {
 		t.Run(value, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "study.yaml")
 			study := "factors:\n  foo: 1\nrun: echo '{}'\nreplicates: " + value + "\n"
@@ -428,7 +562,7 @@ func TestExperimentInvalidReplicates(t *testing.T) {
 			}
 		})
 	}
-	for _, value := range []string{"0", "-1", "1.5", "many"} {
+	for _, value := range []string{"-1", "1.5", "many"} {
 		t.Run("flag "+value, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 			var stdout, stderr bytes.Buffer

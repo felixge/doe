@@ -50,9 +50,10 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
 	file := flags.StringP("file", "f", "", "study YAML file")
+	preset := flags.StringP("preset", "p", "", "named study preset")
 	setupScript := flags.StringP("setup", "s", "", "shell script to run before any runs")
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
-	replicates := flags.IntP("replicates", "n", 1, "runs per design point")
+	replicates := flags.IntP("replicates", "n", 0, "runs per design point")
 	clean := flags.BoolP("clean", "c", false, "remove previous results before running")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
 		experimentUsage(env.Stdout)
@@ -62,7 +63,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Prepare and validate the experiment before starting any runs.
-	experiment, err := prepareExperiment(*file, *setupScript, *runScript, *replicates, flags.Changed("replicates"), flags.Args())
+	experiment, err := prepareExperiment(*file, *preset, *setupScript, *runScript, *replicates, flags.Args())
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -95,40 +96,43 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	return 0
 }
 
-func prepareExperiment(path, setupScript, runScript string, replicates int, overrideReplicates bool, args []string) (*model.Experiment, error) {
-	// Start from the file so CLI options can override study settings.
+func prepareExperiment(path, preset, setupScript, runScript string, replicates int, args []string) (*model.Experiment, error) {
+	// Keep each source separate so only its specified options override earlier ones.
 	study := model.NewStudy()
 	if path != "" {
 		if err := study.Load(path); err != nil {
 			return nil, err
 		}
 	}
-	experiment := model.NewExperiment(study)
+	var presetDesign model.Design
+	if preset != "" {
+		var ok bool
+		presetDesign, ok = study.Presets[preset]
+		if !ok {
+			return nil, fmt.Errorf("unknown preset %q", preset)
+		}
+	}
+	cliDesign := model.Design{Setup: model.Script(setupScript), Run: model.Script(runScript), Replicates: replicates}
 	for _, arg := range args {
 		factor, settingsYAML, ok := strings.Cut(arg, "=")
 		if !ok {
 			return nil, fmt.Errorf("factor %q must be key=value", arg)
 		}
-		if err := experiment.Factors.Set(model.Factor(factor), []byte(settingsYAML)); err != nil {
+		if err := cliDesign.Factors.Set(model.Factor(factor), []byte(settingsYAML)); err != nil {
 			return nil, err
 		}
 	}
-	if setupScript != "" {
-		experiment.Setup = model.Script(setupScript)
-	}
-	experiment.Setup = model.Script(strings.TrimSpace(string(experiment.Setup)))
-	if runScript != "" {
-		experiment.Run = model.Script(runScript)
-	}
-	experiment.Run = model.Script(strings.TrimSpace(string(experiment.Run)))
-	if overrideReplicates {
-		experiment.Replicates = replicates
-	}
 
-	// Reject incomplete designs before running anything.
-	if err := experiment.Validate(); err != nil {
+	// Apply the built-in default only after merging, so zero means absent in a preset.
+	design := study.Design.Merge(presetDesign).Merge(cliDesign)
+	design.Replicates = cmp.Or(design.Replicates, 1)
+	design.Setup = model.Script(strings.TrimSpace(string(design.Setup)))
+	design.Run = model.Script(strings.TrimSpace(string(design.Run)))
+	if err := design.Validate(); err != nil {
 		return nil, err
 	}
+	experiment := model.NewExperiment(model.Study{Design: design})
+	experiment.Preset = preset
 	return &experiment, nil
 }
 
@@ -238,18 +242,20 @@ Run "doe <command> -h" for command-specific help.
 func experimentUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe experiment [-f study.yaml] [key=value ...] [-s script] [-r script] [-n count] [-c]
+Usage: doe experiment [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [-n count] [-c]
 
 Options:
   -f, --file        Load factors, scripts, and replicates from a YAML study.
+  -p, --preset      Apply a named preset from the study.
   -s, --setup       Override the setup script, run once before any runs.
   -r, --run         Override the run script with a shell command.
   -n, --replicates  Override runs per design point (default: 1).
   -c, --clean       Remove previous results before running.
   -h, --help        Print help text.
 
-Factor settings are YAML values or sequences of values. CLI options override
-study settings. In run scripts, {factor} expands to the setting.
+Factor settings are YAML values or sequences of values. Study defaults are
+inherited by the selected preset; CLI options override both. In run scripts,
+{factor} expands to the setting.
 Setup scripts do not expand factor placeholders.
 A study's replicates key runs each design point that many times (default: 1).
 `)

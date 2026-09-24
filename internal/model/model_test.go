@@ -12,8 +12,8 @@ import (
 
 func TestNewStudy(t *testing.T) {
 	study := NewStudy()
-	if study.Replicates != 1 || study.Factors != nil || study.Run != "" {
-		t.Errorf("NewStudy() = %+v, want one replicate and empty design", study)
+	if study.Replicates != 0 || study.Factors != nil || study.Run != "" || study.Presets != nil {
+		t.Errorf("NewStudy() = %+v, want an empty study", study)
 	}
 }
 
@@ -63,8 +63,44 @@ func TestDesignReplicates(t *testing.T) {
 	if err := yaml.Unmarshal([]byte("factors:\n  foo: 1\nrun: echo '{}'\n"), &study); err != nil {
 		t.Fatal(err)
 	}
-	if study.Replicates != 1 {
-		t.Errorf("default replicate count = %d, want 1", study.Replicates)
+	if study.Replicates != 0 {
+		t.Errorf("unspecified replicate count = %d, want 0", study.Replicates)
+	}
+}
+
+func TestDesignMerge(t *testing.T) {
+	base := Design{Factors: Factors{"foo": {1}, "bar": {2}}, Setup: "setup", Run: "run", Replicates: 3}
+	preset := Design{Factors: Factors{"foo": {4}, "baz": {5}}, Run: "preset run"}
+	cli := Design{Factors: Factors{"bar": {6}}, Replicates: 2}
+	merged := base.Merge(preset).Merge(cli)
+	want := Design{Factors: Factors{"foo": {4}, "bar": {6}, "baz": {5}}, Setup: "setup", Run: "preset run", Replicates: 2}
+	if !reflect.DeepEqual(merged, want) {
+		t.Errorf("merged design = %+v, want %+v", merged, want)
+	}
+	if !reflect.DeepEqual(base.Factors, Factors{"foo": {1}, "bar": {2}}) {
+		t.Errorf("merge changed base factors: %v", base.Factors)
+	}
+	if got := base.Merge(Design{Replicates: 0}).Replicates; got != 3 {
+		t.Errorf("zero replicate override = %d, want 3", got)
+	}
+}
+
+func TestStudyPresets(t *testing.T) {
+	var study Study
+	if err := yaml.Unmarshal([]byte(`factors:
+  foo: [1]
+run: echo study
+presets:
+  smoke: {}
+  full:
+    factors:
+      foo: [2, 3]
+    replicates: 6
+`), &study); err != nil {
+		t.Fatal(err)
+	}
+	if len(study.Presets) != 2 || study.Presets["smoke"].Replicates != 0 || !reflect.DeepEqual(study.Presets["full"].Factors["foo"], Settings{2, 3}) || study.Presets["full"].Replicates != 6 {
+		t.Errorf("decoded presets = %+v", study.Presets)
 	}
 }
 
@@ -159,6 +195,9 @@ func TestDesignSerialization(t *testing.T) {
 	}
 	if design, ok := record["design"].(map[string]any); !ok || design["run"] != "echo study" || design["factors"] == nil {
 		t.Errorf("experiment has no nested design: %s", data)
+	}
+	if _, ok := record["preset"]; ok {
+		t.Errorf("experiment without preset records one: %s", data)
 	}
 }
 
