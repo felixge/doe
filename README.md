@@ -9,7 +9,7 @@ The UX balances the needs of fast-paced experimentation with enough scientific r
 ## Install
 
 ```bash
-$ go install github.com/felixge/doe2@latest
+$ go install github.com/felixge/doe@latest
 ```
 
 ## Getting Started
@@ -92,8 +92,6 @@ $ duckdb -c "SELECT algorithm, file, level, preset, round(avg(input_size_bytes/o
 │ zstd      │ sample.txt │    22 │ max     │  16.73 │       8.67 │        6 │
 └───────────┴────────────┴───────┴─────────┴────────┴────────────┴──────────┘
 ```
-
-Study defaults are inherited by the selected preset; CLI options override both. For example, `doe experiment -f compression.study.yaml -p smoke -n 3 file=sample.pb` runs the smoke preset with three replicates of each design point on `sample.pb`. Use `-s` and `-r` to override the setup and run commands.
 
 ## Terminology
 
