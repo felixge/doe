@@ -26,14 +26,16 @@ const (
 )
 
 // Status is a snapshot of the latest attempted experiment in a results directory.
+// A zero duration can mean unavailable; nonzero durations may display as 0s.
 type Status struct {
-	ExperimentID uuid.UUID
-	State        State
-	Completed    int           // Runs recorded without an error.
-	Total        int           // Planned runs; zero until the experiment record is written.
-	Remaining    time.Duration // Estimated time left, when HasRemaining is true.
-	HasRemaining bool
-	Error        string
+	ExperimentID      uuid.UUID
+	State             State
+	Completed         int // Runs recorded without an error.
+	Total             int // Planned runs; zero until the experiment record is written.
+	RunElapsed        time.Duration
+	ExperimentElapsed time.Duration
+	Remaining         time.Duration
+	Error             string
 }
 
 // Status reads a snapshot without creating or changing the results directory.
@@ -121,17 +123,30 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 	default:
 		status.State = StateStopped
 	}
+	if latest != nil && !latest.Start.IsZero() {
+		switch status.State {
+		case StateRunning:
+			if !now.Before(latest.Start) {
+				status.ExperimentElapsed = now.Sub(latest.Start)
+			}
+		case StateDone:
+			if !lastEnd.IsZero() && !lastEnd.Before(latest.Start) {
+				status.ExperimentElapsed = lastEnd.Sub(latest.Start)
+			}
+		}
+	}
 	if status.State == StateRunning && status.Completed < status.Total {
 		var elapsed time.Duration
 		if !lastEnd.IsZero() {
 			// The previous run's end approximates the active run's start.
 			elapsed = max(now.Sub(lastEnd), 0)
+			status.RunElapsed = elapsed
 		}
 		pointIndexes := make([]int, 0, status.Total)
 		for _, row := range schedule {
 			pointIndexes = append(pointIndexes, row...)
 		}
-		status.Remaining, status.HasRemaining = model.EstimateTotalDuration(pointIndexes[status.Completed:], samples, elapsed)
+		status.Remaining, _ = model.EstimateTotalDuration(pointIndexes[status.Completed:], samples, elapsed)
 	}
 	return status, nil
 }

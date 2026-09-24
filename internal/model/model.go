@@ -124,6 +124,7 @@ type Results struct {
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
 	ID         uuid.UUID `json:"id"`
+	Start      time.Time `json:"start,omitzero"`
 	Env        Env       `json:"env"`
 	Preset     string    `json:"preset,omitempty"`
 	Points     []Point   `json:"points"`
@@ -136,6 +137,7 @@ func NewExperiment(design Design) Experiment {
 	design = design.Clone()
 	return Experiment{
 		ID:     uuid.NewV7(),
+		Start:  time.Now(),
 		Env:    Env{},
 		Points: design.Points(),
 		Design: design,

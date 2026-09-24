@@ -20,7 +20,12 @@ func TestNewStudy(t *testing.T) {
 
 func TestNewExperiment(t *testing.T) {
 	study := Study{Factors: Factors{"foo": {1}}, Run: "echo study"}
+	before := time.Now()
 	experiment := NewExperiment(study.Design)
+	after := time.Now()
+	if experiment.Start.Before(before) || experiment.Start.After(after) {
+		t.Errorf("experiment start = %s; want within [%s, %s]", experiment.Start, before, after)
+	}
 	if version := experiment.ID[6] >> 4; version != 7 {
 		t.Errorf("ID version = %d, want 7", version)
 	}
@@ -187,13 +192,17 @@ func TestDesignSerialization(t *testing.T) {
 		t.Errorf("study = %+v, want flat YAML design", study)
 	}
 
-	data, err := json.Marshal(NewExperiment(study.Design))
+	experiment := NewExperiment(study.Design)
+	data, err := json.Marshal(experiment)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var record map[string]any
 	if err := json.Unmarshal(data, &record); err != nil {
 		t.Fatal(err)
+	}
+	if record["start"] != experiment.Start.Format(time.RFC3339Nano) {
+		t.Errorf("experiment start = %v, want %s", record["start"], experiment.Start.Format(time.RFC3339Nano))
 	}
 	if _, ok := record["factors"]; ok {
 		t.Errorf("experiment has top-level factors: %s", data)

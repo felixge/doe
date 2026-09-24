@@ -30,13 +30,18 @@ func TestReadStatusTransitions(t *testing.T) {
 	experiment := model.NewExperiment(model.Design{
 		Factors: model.Factors{"foo": {1, 2}}, Run: "echo '{}'", Replicates: 1,
 	})
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	experiment.Start = now.Add(-2 * time.Minute)
 	check := func(state State, completed, total int, errorText string) {
 		t.Helper()
-		status, err := r.Status()
+		status, err := r.statusAt(now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		want := &Status{ExperimentID: experiment.ID, State: state, Completed: completed, Total: total, Error: errorText}
+		if state == StateRunning {
+			want.ExperimentElapsed = 2 * time.Minute
+		}
 		if !reflect.DeepEqual(status, want) {
 			t.Errorf("status = %+v, want %+v", status, want)
 		}
@@ -172,6 +177,50 @@ func TestReadStatusLatestExperiment(t *testing.T) {
 	}
 }
 
+func TestStatusElapsedTimes(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 1})
+	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	experiment.Start = started
+	release, err := r.LockExperiment(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if err := r.AppendExperiment(&experiment); err != nil {
+		t.Fatal(err)
+	}
+	check := func(now time.Time, state State, experimentElapsed time.Duration, runElapsed bool, runTime time.Duration) {
+		t.Helper()
+		status, err := r.statusAt(now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State != state || status.ExperimentElapsed != experimentElapsed || (status.RunElapsed > 0) != runElapsed || status.RunElapsed != runTime {
+			t.Errorf("status at %s = %+v; want %s, experiment %s, run %s (available %t)", now, status, state, experimentElapsed, runTime, runElapsed)
+		}
+	}
+	check(started.Add(time.Second), StateRunning, time.Second, false, 0)
+	first := model.NewRun(experiment.ID, experiment.Points[0], 1)
+	first.Start, first.End = started, started.Add(5*time.Second)
+	if err := r.AppendRun(first); err != nil {
+		t.Fatal(err)
+	}
+	check(started.Add(8*time.Second), StateRunning, 8*time.Second, true, 3*time.Second)
+	second := model.NewRun(experiment.ID, experiment.Points[1], 1)
+	second.Start, second.End = first.End, started.Add(10*time.Second)
+	if err := r.AppendRun(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	check(started.Add(time.Hour), StateDone, 10*time.Second, false, 0)
+}
+
 func TestStatusEstimatesRemaining(t *testing.T) {
 	r, err := New(t.TempDir())
 	if err != nil {
@@ -193,7 +242,7 @@ func TestStatusEstimatesRemaining(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status.State != StateRunning || status.HasRemaining != available || status.Remaining != want {
+		if status.State != StateRunning || (status.Remaining > 0) != available || status.Remaining != want {
 			t.Errorf("status at %s = %+v; want remaining %s, available %t", now, status, want, available)
 		}
 	}
@@ -237,7 +286,7 @@ func TestStatusEstimateLegacyAndInactiveRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err := r.statusAt(started)
-	if err != nil || status.HasRemaining {
+	if err != nil || status.Remaining != 0 {
 		t.Fatalf("legacy-only status = %+v, %v; want no estimate", status, err)
 	}
 	run := model.NewRun(experiment.ID, experiment.Points[1], 1)
@@ -246,7 +295,7 @@ func TestStatusEstimateLegacyAndInactiveRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err = r.statusAt(started.Add(13 * time.Second))
-	if err != nil || !status.HasRemaining || status.Remaining != 17*time.Second {
+	if err != nil || status.Remaining != 17*time.Second {
 		t.Fatalf("legacy and timed status = %+v, %v; want 17s", status, err)
 	}
 	// A missing end time on the latest run disables the elapsed adjustment.
@@ -256,14 +305,14 @@ func TestStatusEstimateLegacyAndInactiveRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err = r.statusAt(started.Add(13 * time.Second))
-	if err != nil || !status.HasRemaining || status.Remaining != 10*time.Second {
+	if err != nil || status.Remaining != 10*time.Second {
 		t.Fatalf("latest legacy run status = %+v, %v; want 10s", status, err)
 	}
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
 	status, err = r.statusAt(started.Add(13 * time.Second))
-	if err != nil || status.State != StateStopped || status.HasRemaining {
+	if err != nil || status.State != StateStopped || status.Remaining != 0 {
 		t.Errorf("stopped status = %+v, %v; want no estimate", status, err)
 	}
 }
@@ -292,7 +341,7 @@ func TestStatusEstimateIgnoresOtherExperiments(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err := r.statusAt(run.End)
-	if err != nil || status.State != StateRunning || status.HasRemaining {
+	if err != nil || status.State != StateRunning || status.Remaining != 0 {
 		t.Errorf("new experiment status = %+v, %v; want no estimate", status, err)
 	}
 }
@@ -322,7 +371,7 @@ func TestStatusEstimateStopsOnErrorOrCompletion(t *testing.T) {
 				t.Fatal(err)
 			}
 			status, err := r.statusAt(run.End)
-			if err != nil || status.HasRemaining || status.Remaining != 0 {
+			if err != nil || status.Remaining != 0 {
 				t.Errorf("finished status = %+v, %v; want no estimate", status, err)
 			}
 		})
