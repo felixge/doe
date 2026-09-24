@@ -53,6 +53,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	flags.Usage = func() {}
 	file := flags.StringP("file", "f", "", "study YAML file")
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
+	replicates := flags.IntP("replicates", "n", 1, "runs per design point")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
 		experimentUsage(env.Stdout)
 		return 0
@@ -61,7 +62,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Validate the study before recording an experiment or starting any runs.
-	experiment, results, err := prepareExperiment(*file, *runScript, flags.Args())
+	experiment, results, err := prepareExperiment(*file, *runScript, *replicates, flags.Changed("replicates"), flags.Args())
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -85,9 +86,9 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	return 0
 }
 
-func prepareExperiment(path, runScript string, args []string) (*model.Experiment, *results.Results, error) {
-	// Start from the file so CLI factors can override file factors.
-	var study model.Study
+func prepareExperiment(path, runScript string, replicates int, overrideReplicates bool, args []string) (*model.Experiment, *results.Results, error) {
+	// Start from the file so CLI options can override study settings.
+	study := model.NewStudy()
 	if path != "" {
 		if err := study.Load(path); err != nil {
 			return nil, nil, err
@@ -106,16 +107,13 @@ func prepareExperiment(path, runScript string, args []string) (*model.Experiment
 	if runScript != "" {
 		experiment.Run = model.Script(runScript)
 	}
+	if overrideReplicates {
+		experiment.Replicates = replicates
+	}
 
 	// Reject incomplete designs before running anything.
-	if len(experiment.Factors) == 0 {
-		return nil, nil, errors.New("at least one factor is required")
-	}
-	if strings.TrimSpace(string(experiment.Run)) == "" {
-		return nil, nil, errors.New("a run script is required (use --run or a study file)")
-	}
-	if experiment.ReplicateCount() < 1 {
-		return nil, nil, errors.New("replicates must be a positive integer")
+	if err := experiment.Validate(); err != nil {
+		return nil, nil, err
 	}
 
 	// Keep scripts and results relative to the study file.
@@ -154,8 +152,8 @@ func resultsDir(path string) string {
 // runExperiment runs each point until a run fails.
 func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
 	for _, point := range experiment.Points() {
-		for range experiment.ReplicateCount() {
-			if err := runDesignPoint(ctx, experiment.Run, results, point); err != nil {
+		for replicate := range experiment.Replicates {
+			if err := runDesignPoint(ctx, experiment.Run, results, point, replicate+1); err != nil {
 				return err
 			}
 		}
@@ -163,12 +161,12 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, results *r
 	return nil
 }
 
-func runDesignPoint(ctx context.Context, script model.Script, results *results.Results, point model.Point) error {
+func runDesignPoint(ctx context.Context, script model.Script, results *results.Results, point model.Point, replicate int) error {
 	// Avoid starting a shell when the experiment is already canceled.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	run := model.NewRun(point)
+	run := model.NewRun(point, replicate)
 	log, err := results.CreateRunLog(run.ID)
 	if err != nil {
 		return err
@@ -228,15 +226,16 @@ Options:
 func experimentUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe experiment [-f study.yaml] [key=value ...] [-r script]
+Usage: doe experiment [-f study.yaml] [key=value ...] [-r script] [-n count]
 
 Options:
-  -f, --file  Load factors, run script, and replicates from a YAML study.
-  -r, --run   Override the run script with a shell command.
-  -h, --help  Print help text.
+  -f, --file        Load factors, run script, and replicates from a YAML study.
+  -r, --run         Override the run script with a shell command.
+  -n, --replicates  Override runs per design point (default: 1).
+  -h, --help        Print help text.
 
-Factor settings are YAML values or sequences of values. CLI factors override
-file factors. In run scripts, {factor} expands to the setting.
+Factor settings are YAML values or sequences of values. CLI options override
+study settings. In run scripts, {factor} expands to the setting.
 A study's replicates key runs each design point that many times (default: 1).
 `)
 }

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 	"uuid"
 
 	"gopkg.in/yaml.v3"
@@ -17,42 +18,47 @@ type Study struct {
 	Design `yaml:",inline"`
 }
 
+// NewStudy creates a study with one replicate per design point.
+func NewStudy() Study {
+	return Study{Replicates: 1}
+}
+
 // Load decodes a study file into the receiver.
 func (s *Study) Load(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	var loaded Study
-	if err := yaml.Unmarshal(data, &loaded); err != nil {
+	if err := yaml.Unmarshal(data, s); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
-	*s = loaded
 	return nil
 }
 
 // Design defines the factors and script for an experiment.
 type Design struct {
-	Factors    Factors     `json:"factors" yaml:"factors"`
-	Run        Script      `json:"run" yaml:"run"`
-	Replicates *Replicates `json:"replicates,omitempty" yaml:"replicates,omitempty"`
+	Factors    Factors `json:"factors" yaml:"factors"`
+	Run        Script  `json:"run" yaml:"run"`
+	Replicates int     `json:"replicates" yaml:"replicates"`
 }
 
-// ReplicateCount returns the number of runs per point, defaulting to one.
-func (d Design) ReplicateCount() int {
-	if d.Replicates == nil {
-		return 1
+// Validate checks the final design after applying study and CLI settings.
+func (d Design) Validate() error {
+	if len(d.Factors) == 0 {
+		return fmt.Errorf("at least one factor is required")
 	}
-	return int(*d.Replicates)
+	if strings.TrimSpace(string(d.Run)) == "" {
+		return fmt.Errorf("a run script is required")
+	}
+	if d.Replicates < 1 {
+		return fmt.Errorf("replicates must be a positive integer")
+	}
+	return nil
 }
 
 // Clone returns a design with an independent factors map.
 func (d Design) Clone() Design {
 	d.Factors = maps.Clone(d.Factors)
-	if d.Replicates != nil {
-		count := *d.Replicates
-		d.Replicates = &count
-	}
 	return d
 }
 
@@ -81,22 +87,6 @@ func (d Design) Points() []Point {
 	}
 	visit(0)
 	return points
-}
-
-// Replicates is the number of runs requested for each design point.
-type Replicates int
-
-// UnmarshalYAML requires an integer rather than truncating a YAML float.
-func (r *Replicates) UnmarshalYAML(node *yaml.Node) error {
-	if node.Tag != "!!int" {
-		return fmt.Errorf("replicates must be a positive integer")
-	}
-	var count int
-	if err := node.Decode(&count); err != nil {
-		return err
-	}
-	*r = Replicates(count)
-	return nil
 }
 
 // Results holds the experiments recorded by doe.
@@ -143,19 +133,20 @@ type Point map[Factor]Setting
 // Run is an execution of a design point, identified by a UUID.
 // JSON tags are unnecessary because MarshalJSON handles serialization.
 type Run struct {
-	ID      uuid.UUID
-	Point   Point
-	Outcome Outcome
+	ID        uuid.UUID
+	Point     Point
+	Replicate int
+	Outcome   Outcome
 }
 
-// NewRun creates a run for a design point with a UUIDv7 ID.
-func NewRun(point Point) Run {
-	return Run{ID: uuid.NewV7(), Point: point}
+// NewRun creates a run for a design point and one-based replicate with a UUIDv7 ID.
+func NewRun(point Point, replicate int) Run {
+	return Run{ID: uuid.NewV7(), Point: point, Replicate: replicate}
 }
 
-// MarshalJSON writes the ID, point settings, and outcome as a flat object.
+// MarshalJSON writes the ID, replicate, point settings, and outcome as a flat object.
 func (r Run) MarshalJSON() ([]byte, error) {
-	fields := map[string]any{"id": r.ID}
+	fields := map[string]any{"id": r.ID, "replicate": r.Replicate}
 	for factor, setting := range r.Point {
 		if _, exists := fields[string(factor)]; exists {
 			return nil, fmt.Errorf("run factor %q conflicts with reserved field", factor)
