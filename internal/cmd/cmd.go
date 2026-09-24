@@ -124,6 +124,9 @@ func statusCommand(env *cli.Env, args []string) int {
 	if status.Total > 0 {
 		_, _ = fmt.Fprintf(env.Stdout, "Runs: %d/%d complete (%d%%)\n", status.Completed, status.Total, status.Completed*100/status.Total)
 	}
+	if status.State == results.StateError {
+		_, _ = fmt.Fprintf(env.Stdout, "Error: %s\n", status.Error)
+	}
 	if status.RunElapsed > 0 {
 		_, _ = fmt.Fprintf(env.Stdout, "Run elapsed: %s\n", formatDuration(status.RunElapsed))
 	}

@@ -68,11 +68,11 @@ func TestStatusProgress(t *testing.T) {
 	if err := r.AppendRun(failed); err != nil {
 		t.Fatal(err)
 	}
-	check("Error", "Runs: 1/2 complete (50%)\n")
+	check("Error", "Runs: 1/2 complete (50%)\nError: exit status 7\n")
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	check("Error", "Runs: 1/2 complete (50%)\n")
+	check("Error", "Runs: 1/2 complete (50%)\nError: exit status 7\n")
 }
 
 func TestStatusShowsJustStartedTime(t *testing.T) {
@@ -235,7 +235,7 @@ func TestStatusSetupError(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := runStatusCommand(t, "status")
-	want := "Experiment: " + strings.TrimSpace(string(id)) + "\nState: Error\nRuns: 0/1 complete (0%)\n"
+	want := "Experiment: " + strings.TrimSpace(string(id)) + "\nState: Error\nRuns: 0/1 complete (0%)\nError: setup: exit status 7\n"
 	if code != 0 || stdout != want || stderr != "" {
 		t.Errorf("status = %d, %q, %q; want %q", code, stdout, stderr, want)
 	}
