@@ -70,7 +70,7 @@ run: |
 			if err := json.Unmarshal([]byte(records[len(records)-1]), &experiment); err != nil {
 				t.Fatal(err)
 			}
-			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" || experiment.Env == nil || len(experiment.Env) != 0 {
+			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" || experiment.Env == nil || len(experiment.Env) != 0 || experiment.SetupError != "" {
 				t.Errorf("invalid experiment record: %+v", experiment)
 			}
 			if want := experiment.ID.String() + "\n"; stdout.String() != want {
@@ -106,11 +106,12 @@ run: |
 					Foo          int       `json:"foo"`
 					Bar          int       `json:"bar"`
 					Result       int       `json:"result"`
+					Error        string    `json:"error"`
 				}
 				if err := json.Unmarshal([]byte(line), &got); err != nil {
 					t.Fatal(err)
 				}
-				if got.ID == (uuid.UUID{}) || got.ExperimentID != experiment.ID || got.Result != got.Foo+got.Bar {
+				if got.ID == (uuid.UUID{}) || got.ExperimentID != experiment.ID || got.Result != got.Foo+got.Bar || got.Error != "" {
 					t.Errorf("invalid run record: %+v", got)
 				}
 			}
@@ -191,8 +192,8 @@ func TestExperimentSetup(t *testing.T) {
 			if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(experiment.Setup), tc.want) || !reflect.DeepEqual(experiment.Env, tc.env) {
-				t.Errorf("recorded setup = %q, env = %v; want %q, %v", experiment.Setup, experiment.Env, tc.want, tc.env)
+			if !strings.Contains(string(experiment.Setup), tc.want) || !reflect.DeepEqual(experiment.Env, tc.env) || experiment.SetupError != "" {
+				t.Errorf("recorded setup = %q, env = %v, error = %q; want %q, %v, no error", experiment.Setup, experiment.Env, experiment.SetupError, tc.want, tc.env)
 			}
 			data, err = os.ReadFile(filepath.Join(dir, "marker"))
 			if err != nil || string(data) != tc.want+"\n" {
@@ -222,19 +223,86 @@ func TestExperimentSetupFailure(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr.String(), "setup: exit status 7") || stdout.Len() != 0 {
 		t.Fatalf("exit code %d, stdout %q, stderr %q; want setup error", code, &stdout, &stderr)
 	}
-	if _, err := os.Stat(filepath.Join("results", "experiments.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("setup failure recorded an experiment: %v", err)
-	}
-	id, err := os.ReadFile(filepath.Join("results", "experiment.lock"))
+	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join("results", "logs", strings.TrimSpace(string(id))+".setup.log"))
+	var experiment model.Experiment
+	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(experiment.SetupError, "exit status 7") || experiment.Env == nil || len(experiment.Env) != 0 {
+		t.Errorf("failed setup record = %+v; want exit status 7 and empty environment", experiment)
+	}
+	id, err := os.ReadFile(filepath.Join("results", "experiment.lock"))
+	if err != nil || strings.TrimSpace(string(id)) != experiment.ID.String() {
+		t.Errorf("lock ID = %q, %v; want %s", id, err, experiment.ID)
+	}
+	data, err = os.ReadFile(filepath.Join("results", "logs", experiment.ID.String()+".setup.log"))
 	if err != nil || string(data) != "failed\n" {
 		t.Errorf("failed setup log = %q, %v", data, err)
 	}
 	if _, err := os.Stat(filepath.Join("results", "runs.jsonl")); !os.IsNotExist(err) {
 		t.Errorf("setup failure recorded runs: %v", err)
+	}
+}
+
+func TestExecuteScriptErrors(t *testing.T) {
+	r, err := results.New(filepath.Join(t.TempDir(), "results"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		script string
+		cancel bool
+		want   string
+	}{
+		{"success", "exit 0", false, ""},
+		{"failure", "exit 7", false, "exit status 7"},
+		{"not started", "exit 0", true, "context canceled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancel {
+				cancel()
+			}
+			log, err := r.CreateSetupLog(model.NewExperiment(model.Design{}).ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = executeScript(ctx, tc.script, r, log)
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Errorf("executeScript error = %v; want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestExperimentSetupCanceled(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	code := Main(ctx, &cli.Env{Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=1", "-s", "echo '{}'", "-r", "echo '{}'"})
+	if code != 130 || stdout.Len() != 0 {
+		t.Errorf("canceled setup = %d, stdout %q, stderr %q; want 130 and no output", code, &stdout, &stderr)
+	}
+	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var experiment model.Experiment
+	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(experiment.SetupError, "context canceled") || experiment.Env == nil || len(experiment.Env) != 0 {
+		t.Errorf("canceled setup record = %s; want cancellation error and empty environment", data)
+	}
+	if _, err := os.Stat(filepath.Join("results", "runs.jsonl")); !os.IsNotExist(err) {
+		t.Errorf("canceled setup recorded runs: %v", err)
 	}
 }
 
@@ -658,6 +726,7 @@ func TestRunOutcomeErrors(t *testing.T) {
 		{"array", `echo '[1]'`},
 		{"number", `echo 42`},
 		{"conflicting response", `echo '{"foo":2}'`},
+		{"reserved error response", `echo '{"error":"user"}'`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
@@ -668,10 +737,70 @@ func TestRunOutcomeErrors(t *testing.T) {
 				t.Errorf("exit code %d, stdout %q, stderr %q; want error", code, &stdout, &stderr)
 			}
 			data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
-			if err != nil && !os.IsNotExist(err) || len(data) != 0 {
-				t.Errorf("invalid run was recorded: %q, %v", data, err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var run struct {
+				Error string    `json:"error"`
+				Foo   int       `json:"foo"`
+				ID    uuid.UUID `json:"id"`
+			}
+			if err := json.Unmarshal(bytes.TrimSpace(data), &run); err != nil {
+				t.Fatal(err)
+			}
+			if run.Error == "" || run.Foo != 1 || run.ID == (uuid.UUID{}) {
+				t.Errorf("invalid run record = %s; want error for failed attempt", data)
 			}
 		})
+	}
+}
+
+func TestFailedRunKeepsOutcome(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=1", "-r", `echo '{"value":42}'; exit 7`})
+	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "exit status 7") {
+		t.Errorf("failed experiment = %d, stdout %q, stderr %q", code, &stdout, &stderr)
+	}
+	data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var run struct {
+		Foo   int    `json:"foo"`
+		Value int    `json:"value"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(data), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Foo != 1 || run.Value != 42 || !strings.Contains(run.Error, "exit status 7") {
+		t.Errorf("failed run record = %s; want measurement and exit status 7", data)
+	}
+}
+
+func TestFailedRunStopsSchedule(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=[1,2]", "-r", `if [ {foo} -eq 1 ]; then exit 7; fi; echo '{}'`})
+	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "exit status 7") {
+		t.Errorf("failed experiment = %d, stdout %q, stderr %q", code, &stdout, &stderr)
+	}
+	data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var run struct {
+		Foo   int    `json:"foo"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(data), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Foo != 1 || !strings.Contains(run.Error, "exit status 7") || bytes.Count(data, []byte("\n")) != 1 {
+		t.Errorf("recorded attempts = %s; want only failed foo=1", data)
 	}
 }
 
@@ -879,6 +1008,22 @@ func TestExperimentErrors(t *testing.T) {
 	}
 	if output, err := os.ReadFile(logs[0]); err != nil || string(output) != "partial\nwarning\n" {
 		t.Errorf("failed run log = %q, %v; want partial stdout and stderr", output, err)
+	}
+	runData, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failedRun struct {
+		ID    uuid.UUID `json:"id"`
+		Foo   int       `json:"foo"`
+		Error string    `json:"error"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(runData), &failedRun); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(failedRun.Error, "exit status 7") || failedRun.Foo != 1 ||
+		filepath.Base(logs[0]) != failedRun.ID.String()+".run.log" {
+		t.Errorf("failed run record = %s; want failed foo=1 with exit status 7 and matching log", runData)
 	}
 	for _, line := range lines {
 		var experiment model.Experiment

@@ -145,7 +145,7 @@ func (r *Results) logPath(id uuid.UUID, kind string) string {
 	return filepath.Join(r.dir, "logs", id.String()+"."+kind+".log")
 }
 
-// AppendRun records a completed run as a JSON line.
+// AppendRun records a run attempt as a JSON line.
 func (r *Results) AppendRun(run *model.Run) error {
 	return jsonl.AppendFile(filepath.Join(r.dir, "runs.jsonl"), run)
 }

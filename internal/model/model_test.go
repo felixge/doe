@@ -118,6 +118,7 @@ func TestDesignValidate(t *testing.T) {
 		{"empty run", Design{Factors: Factors{"foo": {1}}, Replicates: 1}, "run script is required"},
 		{"zero replicates", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'"}, "replicates must be a positive integer"},
 		{"negative replicates", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'", Replicates: -2}, "replicates must be a positive integer"},
+		{"reserved error factor", Design{Factors: Factors{"error": {1}}, Run: "echo '{}'", Replicates: 1}, `run factor "error" conflicts with reserved field`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.design.Validate()
@@ -202,6 +203,9 @@ func TestDesignSerialization(t *testing.T) {
 	if _, ok := record["preset"]; ok {
 		t.Errorf("experiment without preset records one: %s", data)
 	}
+	if setupError, ok := record["setup_error"]; !ok || setupError != "" {
+		t.Errorf("experiment without setup error omits its column: %s", data)
+	}
 	if !reflect.DeepEqual(record["points"], []any{map[string]any{"foo": float64(1)}}) {
 		t.Errorf("experiment has wrong points: %s", data)
 	}
@@ -247,11 +251,16 @@ func TestRunSerialization(t *testing.T) {
 		outcome Outcome
 		want    map[string]any
 	}{
-		{"with settings and measurements", point, outcome, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "foo": float64(42), "bar": true, "sum": float64(43), "ok": true}},
-		{"without settings or measurements", nil, nil, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2)}},
+		{"with settings and measurements", point, outcome, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "error": "", "foo": float64(42), "bar": true, "sum": float64(43), "ok": true}},
+		{"without settings or measurements", nil, nil, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "error": ""}},
+		{"formerly reserved fields", Point{"failed": true}, Outcome{"exit_code": 7}, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "error": "", "failed": true, "exit_code": float64(7)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			data, err := json.Marshal(&Run{ID: id, ExperimentID: experimentID, Point: tc.point, Replicate: 2, Outcome: tc.outcome})
+			run := &Run{ID: id, ExperimentID: experimentID, Point: tc.point, Replicate: 2, Outcome: tc.outcome}
+			if err := run.Valid(); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(run)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -269,6 +278,29 @@ func TestRunSerialization(t *testing.T) {
 	}
 }
 
+func TestFailedRunSerialization(t *testing.T) {
+	run := &Run{Point: Point{"foo": 1}, Error: "exit status 7"}
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Foo   int    `json:"foo"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil || got.Foo != 1 || got.Error != "exit status 7" {
+		t.Errorf("failed run JSON = %s, %v", data, err)
+	}
+	run.Error = ""
+	data, err = json.Marshal(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil || got.Error != "" || !strings.Contains(string(data), `"error":""`) {
+		t.Errorf("empty error column should be present: %s, %v", data, err)
+	}
+}
+
 func TestRunSerializationConflict(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -278,12 +310,17 @@ func TestRunSerializationConflict(t *testing.T) {
 		{"reserved factor", &Run{Point: Point{"id": 1}}, `run factor "id" conflicts with reserved field`},
 		{"replicate factor", &Run{Point: Point{"replicate": 1}}, `run factor "replicate" conflicts with reserved field`},
 		{"experiment ID factor", &Run{Point: Point{"experiment_id": 1}}, `run factor "experiment_id" conflicts with reserved field`},
+		{"error factor", &Run{Point: Point{"error": 1}}, `run factor "error" conflicts with reserved field`},
 		{"reserved response", &Run{Outcome: Outcome{"id": 1}}, `run response "id" conflicts with reserved field`},
+		{"error response", &Run{Outcome: Outcome{"error": 1}}, `run response "error" conflicts with reserved field`},
 		{"replicate response", &Run{Outcome: Outcome{"replicate": 1}}, `run response "replicate" conflicts with reserved field`},
 		{"experiment ID response", &Run{Outcome: Outcome{"experiment_id": 1}}, `run response "experiment_id" conflicts with reserved field`},
 		{"factor and response", &Run{Point: Point{"foo": 1}, Outcome: Outcome{"foo": 2}}, `run outcome conflicts with factor "foo"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.run.Valid(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Valid() = %v, want %q", err, tc.want)
+			}
 			_, err := json.Marshal(tc.run)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("conflicting run JSON error = %v, want %q", err, tc.want)

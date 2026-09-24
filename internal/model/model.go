@@ -70,6 +70,11 @@ func (d Design) Validate() error {
 	if d.Replicates < 1 {
 		return fmt.Errorf("replicates must be a positive integer")
 	}
+	for factor := range d.Factors {
+		if reservedRunField(string(factor)) {
+			return fmt.Errorf("run factor %q conflicts with reserved field", factor)
+		}
+	}
 	return nil
 }
 
@@ -114,11 +119,12 @@ type Results struct {
 
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
-	ID     uuid.UUID `json:"id"`
-	Env    Env       `json:"env"`
-	Preset string    `json:"preset,omitempty"`
-	Points []Point   `json:"points"`
-	Design `json:"design"`
+	ID         uuid.UUID `json:"id"`
+	Env        Env       `json:"env"`
+	Preset     string    `json:"preset,omitempty"`
+	Points     []Point   `json:"points"`
+	SetupError string    `json:"setup_error"`
+	Design     `json:"design"`
 }
 
 // NewExperiment creates an experiment from a design with a UUIDv7 ID.
@@ -164,6 +170,7 @@ type Run struct {
 	ExperimentID uuid.UUID
 	Point        Point
 	Replicate    int
+	Error        string
 	Outcome      Outcome
 }
 
@@ -172,25 +179,45 @@ func NewRun(experimentID uuid.UUID, point Point, replicate int) *Run {
 	return &Run{ID: uuid.NewV7(), ExperimentID: experimentID, Point: point, Replicate: replicate}
 }
 
+// Valid checks that point and outcome fields can coexist with run metadata.
+func (r *Run) Valid() error {
+	for factor := range r.Point {
+		if reservedRunField(string(factor)) {
+			return fmt.Errorf("run factor %q conflicts with reserved field", factor)
+		}
+	}
+	for response := range r.Outcome {
+		if _, factor := r.Point[Factor(response)]; factor {
+			return fmt.Errorf("run outcome conflicts with factor %q", response)
+		}
+		if reservedRunField(string(response)) {
+			return fmt.Errorf("run response %q conflicts with reserved field", response)
+		}
+	}
+	return nil
+}
+
 // MarshalJSON writes the ID, replicate, point settings, and outcome as a flat object.
 func (r *Run) MarshalJSON() ([]byte, error) {
-	fields := map[string]any{"id": r.ID, "experiment_id": r.ExperimentID, "replicate": r.Replicate}
+	if err := r.Valid(); err != nil {
+		return nil, err
+	}
+	fields := map[string]any{"id": r.ID, "experiment_id": r.ExperimentID, "replicate": r.Replicate, "error": r.Error}
 	for factor, setting := range r.Point {
-		if _, exists := fields[string(factor)]; exists {
-			return nil, fmt.Errorf("run factor %q conflicts with reserved field", factor)
-		}
 		fields[string(factor)] = setting
 	}
 	for response, measurement := range r.Outcome {
-		if _, exists := fields[string(response)]; exists {
-			if _, factor := r.Point[Factor(response)]; factor {
-				return nil, fmt.Errorf("run outcome conflicts with factor %q", response)
-			}
-			return nil, fmt.Errorf("run response %q conflicts with reserved field", response)
-		}
 		fields[string(response)] = measurement
 	}
 	return json.Marshal(fields)
+}
+
+func reservedRunField(name string) bool {
+	switch name {
+	case "id", "experiment_id", "replicate", "error":
+		return true
+	}
+	return false
 }
 
 // Outcome maps each response to its measurement for a run.

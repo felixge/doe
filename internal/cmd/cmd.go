@@ -19,6 +19,7 @@ import (
 	"github.com/felixge/doe2/internal/model"
 	"github.com/felixge/doe2/internal/results"
 	"github.com/spf13/pflag"
+	"uuid"
 )
 
 var factorPlaceholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
@@ -145,13 +146,15 @@ func resultsDir(path string) string {
 
 // runExperiment records the setup environment before starting any runs.
 func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
+	var setupErr error
 	if experiment.Setup != "" {
-		if err := runSetup(ctx, experiment, results); err != nil {
-			return err
+		experiment.Env, setupErr = runSetup(ctx, results, experiment.ID, experiment.Setup)
+		if setupErr != nil {
+			experiment.SetupError = setupErr.Error()
 		}
 	}
-	if err := results.AppendExperiment(experiment); err != nil {
-		return err
+	if err := results.AppendExperiment(experiment); err != nil || setupErr != nil {
+		return errors.Join(setupErr, err)
 	}
 	for replicate, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
 		for _, index := range row {
@@ -163,23 +166,22 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, results *r
 	return nil
 }
 
-func runSetup(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
+func runSetup(ctx context.Context, results *results.Results, experimentID uuid.UUID, script model.Script) (model.Env, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return model.Env{}, err
 	}
-	log, err := results.CreateSetupLog(experiment.ID)
+	log, err := results.CreateSetupLog(experimentID)
 	if err != nil {
-		return err
+		return model.Env{}, err
 	}
-	if err := executeScript(ctx, string(experiment.Setup), results, log); err != nil {
-		return fmt.Errorf("setup: %w", err)
+	if err := executeScript(ctx, string(script), results, log); err != nil {
+		return model.Env{}, fmt.Errorf("setup: %w", err)
 	}
-	environment, err := results.SetupEnv(experiment.ID)
+	environment, err := results.SetupEnv(experimentID)
 	if err != nil {
-		return fmt.Errorf("setup: %w", err)
+		return model.Env{}, fmt.Errorf("setup: %w", err)
 	}
-	experiment.Env = environment
-	return nil
+	return environment, nil
 }
 
 func runDesignPoint(ctx context.Context, experiment *model.Experiment, results *results.Results, point model.Point, replicate int) error {
@@ -192,15 +194,19 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, results *
 	if err != nil {
 		return err
 	}
-	if err := executeScript(ctx, expandRunScript(experiment.Run, point), results, log); err != nil {
-		return fmt.Errorf("run %v: %w", point, err)
-	}
-	outcome, err := results.RunOutcome(run.ID)
-	if err != nil {
-		return fmt.Errorf("run %v: %w", point, err)
-	}
+	err = executeScript(ctx, expandRunScript(experiment.Run, point), results, log)
+	outcome, outcomeErr := results.RunOutcome(run.ID)
 	run.Outcome = outcome
-	if err := results.AppendRun(run); err != nil {
+	validationErr := run.Valid()
+	if validationErr != nil {
+		run.Outcome = nil
+	}
+	err = errors.Join(err, outcomeErr, validationErr)
+	if err != nil {
+		run.Error = err.Error()
+	}
+	err = errors.Join(err, results.AppendRun(run))
+	if err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
 	return nil
