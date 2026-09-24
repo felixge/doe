@@ -68,14 +68,8 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return env.Fail(err)
 	}
 
-	// Clear previous results only after the experiment has been validated.
-	dir := resultsDir(*file)
-	if *clean {
-		if err := os.RemoveAll(dir); err != nil {
-			return env.Fail(fmt.Errorf("remove results directory: %w", err))
-		}
-	}
-	results, err := results.New(dir)
+	// Validate before touching previous results, and lock before cleaning them.
+	results, err := results.New(resultsDir(*file))
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -86,6 +80,11 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return env.Fail(err)
 	}
 	defer func() { _ = release() }()
+	if *clean {
+		if err := results.Clean(); err != nil {
+			return env.Fail(err)
+		}
+	}
 	if err := runExperiment(ctx, experiment, results); err != nil {
 		if ctx.Err() != nil {
 			return 130

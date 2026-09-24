@@ -742,6 +742,11 @@ func TestExperimentClean(t *testing.T) {
 			if err := os.WriteFile(marker, []byte("old"), 0600); err != nil {
 				t.Fatal(err)
 			}
+			lockPath := filepath.Join(dir, "experiment.lock")
+			originalLock, err := os.Stat(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
 			cleanFlag := "--clean"
 			if tc.file {
 				cleanFlag = "-c"
@@ -751,6 +756,13 @@ func TestExperimentClean(t *testing.T) {
 			}
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {
 				t.Errorf("old results still exist: %v", err)
+			}
+			cleanedLock, err := os.Stat(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(originalLock, cleanedLock) {
+				t.Error("clean replaced experiment lock")
 			}
 			for _, name := range []string{"experiments.jsonl", "runs.jsonl"} {
 				data, err := os.ReadFile(filepath.Join(dir, name))
@@ -765,6 +777,51 @@ func TestExperimentClean(t *testing.T) {
 				t.Errorf("invalid experiment removed results: %v", err)
 			}
 		})
+	}
+}
+
+func TestExperimentCleanWhileRunning(t *testing.T) {
+	t.Chdir(t.TempDir())
+	r, err := results.New("results")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := model.NewExperiment(model.Design{}).ID
+	release, err := r.LockExperiment(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	marker := filepath.Join(r.Dir(), "old-file")
+	if err := os.WriteFile(marker, []byte("keep me"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(r.Dir(), "experiment.lock")
+	originalLock, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=1", "-r", "echo '{}'", "-c"})
+	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "another experiment is running: "+id.String()) {
+		t.Errorf("clean experiment = %d, stdout %q, stderr %q; want lock error", code, &stdout, &stderr)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil || string(data) != "keep me" {
+		t.Errorf("active results changed: %q, %v", data, err)
+	}
+	lock, err := os.ReadFile(lockPath)
+	if err != nil || strings.TrimSpace(string(lock)) != id.String() {
+		t.Errorf("active lock changed: %q, %v", lock, err)
+	}
+	currentLock, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(originalLock, currentLock) {
+		t.Error("active lock replaced")
 	}
 }
 

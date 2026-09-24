@@ -40,6 +40,25 @@ func (r *Results) ProjectDir() string {
 	return filepath.Dir(r.dir)
 }
 
+// Clean removes previous results while preserving the lock file and directory.
+// The caller must hold the experiment lock so another process cannot write here.
+func (r *Results) Clean() error {
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		return fmt.Errorf("read results directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "experiment.lock" {
+			continue
+		}
+		path := filepath.Join(r.dir, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove result %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // CreateSetupLog creates a log for an experiment's setup script.
 func (r *Results) CreateSetupLog(experimentID uuid.UUID) (*os.File, error) {
 	return r.createLog(experimentID, "setup")
