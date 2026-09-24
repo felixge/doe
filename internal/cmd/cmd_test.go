@@ -37,6 +37,7 @@ run: |
 	}{
 		{"file", []string{"experiment", "-f", path}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
 		{"override", []string{"experiment", "-f", path, "foo=9"}, [][2]int{{9, 4}, {9, 5}}},
+		{"empty run flag", []string{"experiment", "-f", path, "-r", ""}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
 		{"flags and factors interspersed", []string{"experiment", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"result":%s}\n' "$(({foo} + {bar}))"`}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

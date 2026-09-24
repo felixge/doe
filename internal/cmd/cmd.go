@@ -59,7 +59,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Validate the study before recording an experiment or starting any runs.
-	experiment, results, err := prepareExperiment(*file, *runScript, flags.Changed("run"), flags.Args())
+	experiment, results, err := prepareExperiment(*file, *runScript, flags.Args())
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -83,7 +83,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	return 0
 }
 
-func prepareExperiment(path, runScript string, overrideRun bool, args []string) (*model.Experiment, *results.Results, error) {
+func prepareExperiment(path, runScript string, args []string) (*model.Experiment, *results.Results, error) {
 	// Start from the file so CLI factors can override file factors.
 	var study model.Study
 	if path != "" {
@@ -101,7 +101,7 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 			return nil, nil, err
 		}
 	}
-	if overrideRun {
+	if runScript != "" {
 		experiment.Run = model.Script(runScript)
 	}
 
