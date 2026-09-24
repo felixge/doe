@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/felixge/doe2/internal/model"
+	"github.com/felixge/doe/internal/model"
 )
 
 func TestReadStatusTransitions(t *testing.T) {

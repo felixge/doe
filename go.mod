@@ -1,4 +1,4 @@
-module github.com/felixge/doe2
+module github.com/felixge/doe
 
 go 1.27.0
 

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/felixge/doe2/internal/cli"
-	"github.com/felixge/doe2/internal/model"
-	"github.com/felixge/doe2/internal/results"
+	"github.com/felixge/doe/internal/cli"
+	"github.com/felixge/doe/internal/model"
+	"github.com/felixge/doe/internal/results"
 	"gopkg.in/yaml.v3"
 	"uuid"
 )

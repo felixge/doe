@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/felixge/doe2/internal/model"
+	"github.com/felixge/doe/internal/model"
 )
 
 func TestExperimentLock(t *testing.T) {

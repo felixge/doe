@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"github.com/felixge/doe2/internal/cli"
-	"github.com/felixge/doe2/internal/cmd"
+	"github.com/felixge/doe/internal/cli"
+	"github.com/felixge/doe/internal/cmd"
 	"os"
 )
 

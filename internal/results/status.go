@@ -10,8 +10,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/felixge/doe2/internal/jsonl"
-	"github.com/felixge/doe2/internal/model"
+	"github.com/felixge/doe/internal/jsonl"
+	"github.com/felixge/doe/internal/model"
 )
 
 // State describes an experiment's observed progress.

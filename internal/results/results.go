@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"uuid"
 
-	"github.com/felixge/doe2/internal/jsonl"
-	"github.com/felixge/doe2/internal/model"
+	"github.com/felixge/doe/internal/jsonl"
+	"github.com/felixge/doe/internal/model"
 )
 
 const experimentLockFile = "experiment.lock"
