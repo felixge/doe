@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/felixge/doe2/internal/model"
 )
@@ -168,6 +169,163 @@ func TestReadStatusLatestExperiment(t *testing.T) {
 	status, err = r.Status()
 	if err != nil || status == nil || status.ExperimentID != third.ID || status.State != StateSetup || status.Total != 0 {
 		t.Errorf("new setup with older records = %+v, %v", status, err)
+	}
+}
+
+func TestStatusEstimatesRemaining(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2, 3}}, Replicates: 2})
+	release, err := r.LockExperiment(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if err := r.AppendExperiment(&experiment); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	check := func(now time.Time, want time.Duration, available bool) {
+		t.Helper()
+		status, err := r.statusAt(now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State != StateRunning || status.HasRemaining != available || status.Remaining != want {
+			t.Errorf("status at %s = %+v; want remaining %s, available %t", now, status, want, available)
+		}
+	}
+	check(started, 0, false)
+	appendRun := func(point int, start, end time.Time) {
+		t.Helper()
+		run := model.NewRun(experiment.ID, experiment.Points[point], 1)
+		run.Start, run.End = start, end
+		if err := r.AppendRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendRun(0, started, started.Add(2*time.Second))
+	// The remaining five runs all fall back to the sole 2s sample.
+	check(started.Add(3*time.Second), 9*time.Second, true)
+	appendRun(1, started.Add(2*time.Second), started.Add(12*time.Second))
+	// The next point is unseen: 6s global average minus 1s elapsed.
+	// The other points use their own averages (10s and 2s).
+	check(started.Add(13*time.Second), 23*time.Second, true)
+	check(started.Add(30*time.Second), 18*time.Second, true)
+}
+
+func TestStatusEstimateLegacyAndInactiveRuns(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 2})
+	release, err := r.LockExperiment(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if err := r.AppendExperiment(&experiment); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	legacy := model.NewRun(experiment.ID, experiment.Points[0], 1)
+	legacy.Start = time.Time{}
+	if err := r.AppendRun(legacy); err != nil {
+		t.Fatal(err)
+	}
+	status, err := r.statusAt(started)
+	if err != nil || status.HasRemaining {
+		t.Fatalf("legacy-only status = %+v, %v; want no estimate", status, err)
+	}
+	run := model.NewRun(experiment.ID, experiment.Points[1], 1)
+	run.Start, run.End = started, started.Add(10*time.Second)
+	if err := r.AppendRun(run); err != nil {
+		t.Fatal(err)
+	}
+	status, err = r.statusAt(started.Add(13 * time.Second))
+	if err != nil || !status.HasRemaining || status.Remaining != 17*time.Second {
+		t.Fatalf("legacy and timed status = %+v, %v; want 17s", status, err)
+	}
+	// A missing end time on the latest run disables the elapsed adjustment.
+	legacy = model.NewRun(experiment.ID, experiment.Points[1], 2)
+	legacy.End = time.Time{}
+	if err := r.AppendRun(legacy); err != nil {
+		t.Fatal(err)
+	}
+	status, err = r.statusAt(started.Add(13 * time.Second))
+	if err != nil || !status.HasRemaining || status.Remaining != 10*time.Second {
+		t.Fatalf("latest legacy run status = %+v, %v; want 10s", status, err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	status, err = r.statusAt(started.Add(13 * time.Second))
+	if err != nil || status.State != StateStopped || status.HasRemaining {
+		t.Errorf("stopped status = %+v, %v; want no estimate", status, err)
+	}
+}
+
+func TestStatusEstimateIgnoresOtherExperiments(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
+	if err := r.AppendExperiment(&old); err != nil {
+		t.Fatal(err)
+	}
+	run := model.NewRun(old.ID, old.Points[0], 1)
+	run.End = run.Start.Add(10 * time.Second)
+	if err := r.AppendRun(run); err != nil {
+		t.Fatal(err)
+	}
+	current := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 1})
+	release, err := r.LockExperiment(current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if err := r.AppendExperiment(&current); err != nil {
+		t.Fatal(err)
+	}
+	status, err := r.statusAt(run.End)
+	if err != nil || status.State != StateRunning || status.HasRemaining {
+		t.Errorf("new experiment status = %+v, %v; want no estimate", status, err)
+	}
+}
+
+func TestStatusEstimateStopsOnErrorOrCompletion(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "done", true: "error"}[fail], func(t *testing.T) {
+			r, err := New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
+			release, err := r.LockExperiment(experiment.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = release() }()
+			if err := r.AppendExperiment(&experiment); err != nil {
+				t.Fatal(err)
+			}
+			run := model.NewRun(experiment.ID, experiment.Points[0], 1)
+			run.End = run.Start.Add(time.Second)
+			if fail {
+				run.Error = "failed"
+			}
+			if err := r.AppendRun(run); err != nil {
+				t.Fatal(err)
+			}
+			status, err := r.statusAt(run.End)
+			if err != nil || status.HasRemaining || status.Remaining != 0 {
+				t.Errorf("finished status = %+v, %v; want no estimate", status, err)
+			}
+		})
 	}
 }
 

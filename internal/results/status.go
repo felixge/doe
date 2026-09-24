@@ -29,14 +29,20 @@ const (
 type Status struct {
 	ExperimentID uuid.UUID
 	State        State
-	Completed    int // Runs recorded without an error.
-	Total        int // Planned runs; zero until the experiment record is written.
+	Completed    int           // Runs recorded without an error.
+	Total        int           // Planned runs; zero until the experiment record is written.
+	Remaining    time.Duration // Estimated time left, when HasRemaining is true.
+	HasRemaining bool
 	Error        string
 }
 
 // Status reads a snapshot without creating or changing the results directory.
 // A nil status means no experiment has been attempted there.
 func (r *Results) Status() (*Status, error) {
+	return r.statusAt(time.Now())
+}
+
+func (r *Results) statusAt(now time.Time) (*Status, error) {
 	lock, err := r.readStatusLock()
 	if err != nil {
 		return nil, err
@@ -63,21 +69,41 @@ func (r *Results) Status() (*Status, error) {
 		id = latest.ID
 	}
 	status := &Status{ExperimentID: id}
+	var schedule [][]int
+	var samples map[int][]time.Duration
+	var lastEnd time.Time
 	if latest != nil {
 		status.Total = len(latest.Points) * latest.Replicates
 		status.Error = latest.SetupError
+		schedule = model.Schedule(len(latest.Points), latest.Replicates)
+		samples = make(map[int][]time.Duration)
 		type runRecord struct {
 			ExperimentID uuid.UUID `json:"experiment_id"`
 			Error        string    `json:"error"`
+			Start        time.Time `json:"start"`
+			End          time.Time `json:"end"`
 		}
 		if err := jsonl.ScanFile(filepath.Join(r.dir, "runs.jsonl"), func(run runRecord) error {
-			if run.ExperimentID == id {
-				if run.Error == "" {
-					status.Completed++
-				} else if status.Error == "" {
+			if run.ExperimentID != id {
+				return nil
+			}
+			if run.Error != "" {
+				if status.Error == "" {
 					status.Error = run.Error
 				}
+				return nil
 			}
+			// Successful runs are appended in schedule order. Legacy runs
+			// without timestamps still occupy their position in the schedule.
+			lastEnd = time.Time{}
+			if !run.Start.IsZero() && !run.End.IsZero() && !run.End.Before(run.Start) {
+				lastEnd = run.End
+				if status.Completed < status.Total {
+					point := schedule[status.Completed/len(latest.Points)][status.Completed%len(latest.Points)]
+					samples[point] = append(samples[point], run.End.Sub(run.Start))
+				}
+			}
+			status.Completed++
 			return nil
 		}); err != nil {
 			return nil, err
@@ -94,6 +120,18 @@ func (r *Results) Status() (*Status, error) {
 		status.State = StateDone
 	default:
 		status.State = StateStopped
+	}
+	if status.State == StateRunning && status.Completed < status.Total {
+		var elapsed time.Duration
+		if !lastEnd.IsZero() {
+			// The previous run's end approximates the active run's start.
+			elapsed = max(now.Sub(lastEnd), 0)
+		}
+		pointIndexes := make([]int, 0, status.Total)
+		for _, row := range schedule {
+			pointIndexes = append(pointIndexes, row...)
+		}
+		status.Remaining, status.HasRemaining = model.EstimateTotalDuration(pointIndexes[status.Completed:], samples, elapsed)
 	}
 	return status, nil
 }
