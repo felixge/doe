@@ -17,6 +17,8 @@ import (
 	"github.com/felixge/doe2/internal/model"
 )
 
+const experimentLockFile = "experiment.lock"
+
 // Results identifies the directory containing result files.
 type Results struct {
 	dir string
@@ -27,7 +29,12 @@ func New(dir string) (*Results, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create results directory: %w", err)
 	}
-	return &Results{dir: dir}, nil
+	return Open(dir), nil
+}
+
+// Open returns Results for dir without creating it. The directory may be absent.
+func Open(dir string) *Results {
+	return &Results{dir: dir}
 }
 
 // Dir returns the results directory.
@@ -48,7 +55,7 @@ func (r *Results) Clean() error {
 		return fmt.Errorf("read results directory: %w", err)
 	}
 	for _, entry := range entries {
-		if entry.Name() == "experiment.lock" {
+		if entry.Name() == experimentLockFile {
 			continue
 		}
 		path := filepath.Join(r.dir, entry.Name())
@@ -182,7 +189,7 @@ func (r *Results) LockExperiment(id uuid.UUID) (func() error, error) {
 }
 
 func (r *Results) lockPath() string {
-	return filepath.Join(r.dir, "experiment.lock")
+	return filepath.Join(r.dir, experimentLockFile)
 }
 
 func readExperimentID(file *os.File) (uuid.UUID, error) {
