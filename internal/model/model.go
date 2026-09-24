@@ -105,6 +105,7 @@ type Experiment struct {
 func NewExperiment(study Study) Experiment {
 	return Experiment{
 		ID:     uuid.NewV7(),
+		Env:    Env{},
 		Design: study.Clone(),
 	}
 }
@@ -145,12 +146,12 @@ type Run struct {
 }
 
 // NewRun creates a run for an experiment, design point, and one-based replicate with a UUIDv7 ID.
-func NewRun(experimentID uuid.UUID, point Point, replicate int) Run {
-	return Run{ID: uuid.NewV7(), ExperimentID: experimentID, Point: point, Replicate: replicate}
+func NewRun(experimentID uuid.UUID, point Point, replicate int) *Run {
+	return &Run{ID: uuid.NewV7(), ExperimentID: experimentID, Point: point, Replicate: replicate}
 }
 
 // MarshalJSON writes the ID, replicate, point settings, and outcome as a flat object.
-func (r Run) MarshalJSON() ([]byte, error) {
+func (r *Run) MarshalJSON() ([]byte, error) {
 	fields := map[string]any{"id": r.ID, "experiment_id": r.ExperimentID, "replicate": r.Replicate}
 	for factor, setting := range r.Point {
 		if _, exists := fields[string(factor)]; exists {

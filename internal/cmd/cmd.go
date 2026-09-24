@@ -154,7 +154,6 @@ func resultsDir(path string) string {
 
 // runExperiment records the setup environment before starting any runs.
 func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
-	experiment.Env = model.Env{}
 	if experiment.Setup != "" {
 		if err := runSetup(ctx, experiment, results); err != nil {
 			return err
@@ -211,7 +210,7 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, results *
 		return fmt.Errorf("run %v: %w", point, err)
 	}
 	run.Outcome = outcome
-	if err := results.AppendRun(&run); err != nil {
+	if err := results.AppendRun(run); err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
 	return nil
