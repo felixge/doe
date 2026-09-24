@@ -39,6 +39,8 @@ func TestStatusProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 1})
+	// Legacy experiment records do not have a start timestamp.
+	experiment.Start = time.Time{}
 	release, err := r.LockExperiment(experiment.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +75,28 @@ func TestStatusProgress(t *testing.T) {
 	check("Error", "Runs: 1/2 complete (50%)\n")
 }
 
+func TestStatusShowsJustStartedTime(t *testing.T) {
+	t.Chdir(t.TempDir())
+	r, err := results.New("results")
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
+	release, err := r.LockExperiment(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if err := r.AppendExperiment(&experiment); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runStatusCommand(t, "status")
+	want := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 0/1 complete (0%)\nExperiment elapsed: "
+	if code != 0 || !strings.HasPrefix(stdout, want) || stderr != "" {
+		t.Errorf("status = %d, %q, %q; want %q followed by duration", code, stdout, stderr, want)
+	}
+}
+
 func TestStatusShowsEstimatedRemaining(t *testing.T) {
 	t.Chdir(t.TempDir())
 	r, err := results.New("results")
@@ -85,30 +109,50 @@ func TestStatusShowsEstimatedRemaining(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = release() }()
+	experiment.Start = time.Now().Add(-20 * time.Second)
 	if err := r.AppendExperiment(&experiment); err != nil {
 		t.Fatal(err)
 	}
 	run := model.NewRun(experiment.ID, experiment.Points[0], 1)
-	run.Start = time.Now().Add(-10 * time.Second)
+	run.Start = experiment.Start.Add(8 * time.Second)
 	run.End = run.Start.Add(10 * time.Second)
 	if err := r.AppendRun(run); err != nil {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := runStatusCommand(t, "status")
-	prefix := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 1/2 complete (50%)\nRemaining: "
+	prefix := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 1/2 complete (50%)\n"
 	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, prefix) {
-		t.Fatalf("status = %d, %q, %q; want %q followed by duration", code, stdout, stderr, prefix)
+		t.Fatalf("status = %d, %q, %q; want %q followed by elapsed and remaining times", code, stdout, stderr, prefix)
 	}
-	remaining, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(stdout, prefix)))
-	if err != nil || remaining < 8*time.Second || remaining > 10*time.Second {
-		t.Errorf("remaining = %s, %v; want approximately 10s", remaining, err)
+	lines := strings.Split(strings.TrimSpace(strings.TrimPrefix(stdout, prefix)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("status times = %q; want run elapsed, experiment elapsed, and experiment remaining", stdout)
+	}
+	for i, tc := range []struct {
+		label string
+		min   time.Duration
+		max   time.Duration
+	}{
+		{"Run elapsed: ", time.Second, 4 * time.Second},
+		{"Experiment elapsed: ", 18 * time.Second, 22 * time.Second},
+		{"Experiment remaining: ", 6 * time.Second, 9 * time.Second},
+	} {
+		if !strings.HasPrefix(lines[i], tc.label) {
+			t.Errorf("time line %q; want %q", lines[i], tc.label)
+			continue
+		}
+		duration, err := time.ParseDuration(strings.TrimPrefix(lines[i], tc.label))
+		if err != nil || duration < tc.min || duration > tc.max {
+			t.Errorf("time line %q = %s, %v; want %s to %s", lines[i], duration, err, tc.min, tc.max)
+		}
 	}
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
 	code, stdout, stderr = runStatusCommand(t, "status")
-	if code != 0 || stderr != "" || strings.Contains(stdout, "Remaining:") {
-		t.Errorf("stopped status = %d, %q, %q; want no remaining time", code, stdout, stderr)
+	want := "Experiment: " + experiment.ID.String() + "\nState: Stopped\nRuns: 1/2 complete (50%)\n"
+	if code != 0 || stderr != "" || stdout != want {
+		t.Errorf("stopped status = %d, %q, %q; want %q", code, stdout, stderr, want)
 	}
 }
 
@@ -118,6 +162,7 @@ func TestFormatDuration(t *testing.T) {
 		want     string
 	}{
 		{0, "0s"},
+		{200 * time.Millisecond, "0s"},
 		{-time.Second, "0s"},
 		{1500 * time.Millisecond, "2s"},
 		{3*time.Minute + 42*time.Second, "3m 42s"},
@@ -162,7 +207,7 @@ func TestStatusStopped(t *testing.T) {
 func TestStatusCompletedStudy(t *testing.T) {
 	t.Chdir(t.TempDir())
 	study := filepath.Join(t.TempDir(), "study.yaml")
-	if err := os.WriteFile(study, []byte("factors: {foo: [1]}\nrun: echo '{}'\n"), 0600); err != nil {
+	if err := os.WriteFile(study, []byte("factors: {foo: [1]}\nrun: sleep 1; echo '{}'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	code, id, stderr := runStatusCommand(t, "experiment", "-f", study)
@@ -170,9 +215,9 @@ func TestStatusCompletedStudy(t *testing.T) {
 		t.Fatalf("experiment = %d, %q, %q", code, id, stderr)
 	}
 	code, stdout, stderr := runStatusCommand(t, "status", "-f", study)
-	want := "Experiment: " + strings.TrimSpace(id) + "\nState: Done\nRuns: 1/1 complete (100%)\n"
-	if code != 0 || stdout != want || stderr != "" {
-		t.Errorf("status = %d, %q, %q; want %q", code, stdout, stderr, want)
+	want := "Experiment: " + strings.TrimSpace(id) + "\nState: Done\nRuns: 1/1 complete (100%)\nExperiment elapsed: "
+	if code != 0 || !strings.HasPrefix(stdout, want) || stderr != "" || strings.Contains(stdout, "Run elapsed:") || strings.Contains(stdout, "Experiment remaining:") {
+		t.Errorf("status = %d, %q, %q; want %q followed by duration", code, stdout, stderr, want)
 	}
 	if _, err := os.Stat("results"); !os.IsNotExist(err) {
 		t.Errorf("status created results in current directory: %v", err)
