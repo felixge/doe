@@ -13,6 +13,7 @@ import (
 	"github.com/felixge/doe2/internal/cli"
 	"github.com/felixge/doe2/internal/model"
 	"github.com/felixge/doe2/internal/results"
+	"uuid"
 )
 
 func TestExperimentIntegration(t *testing.T) {
@@ -28,6 +29,7 @@ run: |
 		t.Fatal(err)
 	}
 	recorded := make(map[string]model.Results)
+	seenLogs := make(map[string]map[string]bool)
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -46,23 +48,8 @@ run: |
 			if stderr.Len() != 0 {
 				t.Fatalf("stderr = %q", &stderr)
 			}
-			lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-			if len(lines) != len(tc.want) {
-				t.Fatalf("got %d results, want %d: %s", len(lines), len(tc.want), &stdout)
-			}
-			for i, line := range lines {
-				var got struct {
-					Foo    int `json:"foo"`
-					Bar    int `json:"bar"`
-					Result int `json:"result"`
-				}
-				if err := json.Unmarshal([]byte(line), &got); err != nil {
-					t.Fatal(err)
-				}
-				want := tc.want[i]
-				if got.Foo != want[0] || got.Bar != want[1] || got.Result != want[0]+want[1] {
-					t.Errorf("result %d = %+v, want %v", i, got, want)
-				}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q, want empty", &stdout)
 			}
 			resultsDir := "."
 			if tc.name != "flags and factors interspersed" {
@@ -94,6 +81,43 @@ run: |
 			}
 			if len(experiment.Factors["foo"]) != len(tc.want)/len(experiment.Factors["bar"]) {
 				t.Errorf("recorded factors = %v, want design for %v", experiment.Factors, tc.want)
+			}
+			logs, err := filepath.Glob(filepath.Join(resultsDir, "results", "runs", "*.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(logs) != len(seenLogs[resultsDir])+len(tc.want) {
+				t.Fatalf("got %d run logs, want %d", len(logs), len(seenLogs[resultsDir])+len(tc.want))
+			}
+			if seenLogs[resultsDir] == nil {
+				seenLogs[resultsDir] = make(map[string]bool)
+			}
+			counts := make(map[int]int)
+			for _, path := range logs {
+				if seenLogs[resultsDir][path] {
+					continue
+				}
+				seenLogs[resultsDir][path] = true
+				if _, err := uuid.Parse(strings.TrimSuffix(filepath.Base(path), ".log")); err != nil {
+					t.Errorf("invalid run log name %q: %v", path, err)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got struct {
+					Result int `json:"result"`
+				}
+				if err := json.Unmarshal(data, &got); err != nil {
+					t.Fatal(err)
+				}
+				counts[got.Result]++
+			}
+			for _, want := range tc.want {
+				if counts[want[0]+want[1]] == 0 {
+					t.Errorf("missing result for point %v", want)
+				}
+				counts[want[0]+want[1]]--
 			}
 			lock, err := os.ReadFile(filepath.Join(resultsDir, "results", "experiment.lock"))
 			if err != nil || strings.TrimSpace(string(lock)) != experiment.ID.String() {
@@ -144,6 +168,24 @@ func TestExperimentRecordedWhileRunning(t *testing.T) {
 	}
 }
 
+func TestRunDoesNotReadCLIStdin(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdin: strings.NewReader("injected\n"), Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=1", "-r", `if read value; then printf 'read %s\n' "$value"; else printf 'no input\n'; fi`})
+	if code != 0 {
+		t.Fatalf("exit code %d: %s", code, &stderr)
+	}
+	logs, err := filepath.Glob(filepath.Join("results", "runs", "*.log"))
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("run logs = %v, %v; want one", logs, err)
+	}
+	data, err := os.ReadFile(logs[0])
+	if err != nil || string(data) != "no input\n" {
+		t.Errorf("run log = %q, %v; want no input", data, err)
+	}
+}
+
 func TestExpandRunScript(t *testing.T) {
 	point := model.Point{"foo": "a'b; {bar}", "bar": 42}
 	got := expandRunScript(`{foo} {bar} {missing} {"result":1}`, point)
@@ -176,8 +218,7 @@ func TestExperimentErrors(t *testing.T) {
 		want string
 	}{
 		{[]string{"experiment", "foo=1"}, "run script is required"},
-		{[]string{"experiment", "foo=1", "--run", "exit 7"}, "exit status 7"},
-		{[]string{"experiment", "foo=1", "--run", "echo nope"}, "JSON object"},
+		{[]string{"experiment", "foo=1", "--run", "printf 'partial\\n'; printf 'warning\\n' >&2; exit 7"}, "exit status 7"},
 		{[]string{"execute"}, "unknown command"},
 		{[]string{"run"}, "unknown command"},
 		{[]string{"results"}, "unknown command"},
@@ -193,12 +234,19 @@ func TestExperimentErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d records, want two failed experiments", len(lines))
+	if len(lines) != 1 {
+		t.Fatalf("got %d records, want one failed experiment", len(lines))
 	}
 	r, err := results.New("results")
 	if err != nil {
 		t.Fatal(err)
+	}
+	logs, err := filepath.Glob(filepath.Join("results", "runs", "*.log"))
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("run logs = %v, %v; want one failed run log", logs, err)
+	}
+	if output, err := os.ReadFile(logs[0]); err != nil || string(output) != "partial\nwarning\n" {
+		t.Errorf("failed run log = %q, %v; want partial stdout and stderr", output, err)
 	}
 	for _, line := range lines {
 		var experiment model.Experiment

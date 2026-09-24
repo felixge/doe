@@ -3,7 +3,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +18,7 @@ import (
 	"github.com/felixge/doe2/internal/model"
 	"github.com/felixge/doe2/internal/results"
 	"github.com/spf13/pflag"
+	"uuid"
 )
 
 var factorPlaceholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
@@ -73,7 +73,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	if err := results.AppendExperiment(experiment); err != nil {
 		return env.Fail(err)
 	}
-	if err := runExperiment(ctx, env, experiment, results); err != nil {
+	if err := runExperiment(ctx, experiment, results); err != nil {
 		if ctx.Err() != nil {
 			return 130
 		}
@@ -122,55 +122,34 @@ func prepareExperiment(path, runScript string, overrideRun bool, args []string) 
 }
 
 // runExperiment runs each point until a run fails.
-func runExperiment(ctx context.Context, env *cli.Env, experiment *model.Experiment, results *results.Results) error {
+func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
 	for _, point := range experiment.Points() {
-		if err := runDesignPoint(ctx, env, experiment.Run, results, point); err != nil {
+		if err := runDesignPoint(ctx, experiment.Run, results, point); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func runDesignPoint(ctx context.Context, env *cli.Env, script model.Script, results *results.Results, point model.Point) error {
+func runDesignPoint(ctx context.Context, script model.Script, results *results.Results, point model.Point) error {
 	// Avoid starting a shell when the experiment is already canceled.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(script, point))
-	command.Dir = filepath.Dir(results.Dir())
-	command.Stdin = env.Stdin
-	command.Stderr = env.Stderr
-	output, err := command.Output()
-	if err != nil {
-		return fmt.Errorf("run %v: %w", point, err)
-	}
-
-	// Reject conflicts so script output cannot silently replace inputs.
-	result, err := decodeRunOutput(output, point)
+	log, err := results.OpenRunLog(uuid.NewV7())
 	if err != nil {
 		return err
 	}
-	for factor, setting := range point {
-		if _, exists := result[string(factor)]; exists {
-			return fmt.Errorf("run output conflicts with factor %q", factor)
-		}
-		result[string(factor)] = setting
+	command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(script, point))
+	command.Dir = results.ProjectDir()
+	command.Stdout = log
+	command.Stderr = log
+	runErr := command.Run()
+	closeErr := log.Close()
+	if runErr != nil {
+		return fmt.Errorf("run %v: %w", point, runErr)
 	}
-	return json.NewEncoder(env.Stdout).Encode(result)
-}
-
-func decodeRunOutput(output []byte, point model.Point) (map[string]any, error) {
-	// Reject trailing values so each run contributes exactly one JSONL result.
-	var result map[string]any
-	decoder := json.NewDecoder(strings.NewReader(string(output)))
-	if err := decoder.Decode(&result); err != nil || result == nil {
-		return nil, fmt.Errorf("run %v: output must be a JSON object: %v", point, err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("run %v: output must contain exactly one JSON object", point)
-	}
-	return result, nil
+	return closeErr
 }
 
 func expandRunScript(script model.Script, point model.Point) string {
@@ -189,7 +168,7 @@ func rootUsage(w io.Writer) {
 Usage: doe <command> [command options] [arguments]
 
 Commands:
-  experiment  Run an experiment and print JSON results.
+  experiment  Run an experiment and save run logs.
 
 Run "doe <command> -h" for command-specific help.
 `)

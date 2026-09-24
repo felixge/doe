@@ -58,6 +58,9 @@ func TestAppendExperiment(t *testing.T) {
 	if got := results.Dir(); got != dir {
 		t.Errorf("Dir() = %q, want %q", got, dir)
 	}
+	if got, want := results.ProjectDir(), filepath.Dir(dir); got != want {
+		t.Errorf("ProjectDir() = %q, want %q", got, want)
+	}
 	first := model.NewExperiment(model.Study{})
 	second := model.NewExperiment(model.Study{})
 	for _, experiment := range []*model.Experiment{&first, &second} {

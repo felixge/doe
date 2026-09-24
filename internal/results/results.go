@@ -33,6 +33,25 @@ func (r *Results) Dir() string {
 	return r.dir
 }
 
+// ProjectDir returns the directory containing the results directory.
+func (r *Results) ProjectDir() string {
+	return filepath.Dir(r.dir)
+}
+
+// OpenRunLog creates a log for a run and returns it for streaming output.
+func (r *Results) OpenRunLog(runID uuid.UUID) (*os.File, error) {
+	dir := filepath.Join(r.dir, "runs")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create run logs directory %s: %w", dir, err)
+	}
+	path := filepath.Join(dir, runID.String()+".log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open run log %s: %w", path, err)
+	}
+	return file, nil
+}
+
 // LockExperiment writes the experiment ID and holds the shared results lock
 // until the returned release function is called. Only one experiment can run per directory.
 func (r *Results) LockExperiment(id uuid.UUID) (func() error, error) {
