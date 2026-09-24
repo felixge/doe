@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -69,7 +70,7 @@ run: |
 			if err := json.Unmarshal([]byte(records[len(records)-1]), &experiment); err != nil {
 				t.Fatal(err)
 			}
-			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" {
+			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" || experiment.Env == nil || len(experiment.Env) != 0 {
 				t.Errorf("invalid experiment record: %+v", experiment)
 			}
 			if want := experiment.ID.String() + "\n"; stdout.String() != want {
@@ -93,15 +94,16 @@ run: |
 			}
 			for _, line := range runLines[len(runLines)-len(tc.want):] {
 				var got struct {
-					ID     uuid.UUID `json:"id"`
-					Foo    int       `json:"foo"`
-					Bar    int       `json:"bar"`
-					Result int       `json:"result"`
+					ID           uuid.UUID `json:"id"`
+					ExperimentID uuid.UUID `json:"experiment_id"`
+					Foo          int       `json:"foo"`
+					Bar          int       `json:"bar"`
+					Result       int       `json:"result"`
 				}
 				if err := json.Unmarshal([]byte(line), &got); err != nil {
 					t.Fatal(err)
 				}
-				if got.ID == (uuid.UUID{}) || got.Result != got.Foo+got.Bar {
+				if got.ID == (uuid.UUID{}) || got.ExperimentID != experiment.ID || got.Result != got.Foo+got.Bar {
 					t.Errorf("invalid run record: %+v", got)
 				}
 			}
@@ -157,14 +159,15 @@ func TestExperimentSetup(t *testing.T) {
 		name string
 		args []string
 		want string
+		env  model.Env
 	}{
-		{"study", nil, "study"},
-		{"CLI override", []string{"--setup", `echo CLI >> marker; echo '{foo}'`}, "CLI"},
+		{"study", nil, "study", model.Env{"os": "test"}},
+		{"CLI override", []string{"--setup", `echo CLI >> marker; echo '{foo}'`}, "CLI", model.Env{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "study.yaml")
-			study := "factors:\n  foo: [1, 2]\nsetup: echo study >> marker; echo '{foo}'\nrun: test -f marker && echo '{}'\n"
+			study := "factors:\n  foo: [1, 2]\nsetup: echo study >> marker; echo '{foo}'; echo '{\"os\":\"test\"}'\nrun: test -f marker && echo '{}'\n"
 			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -181,16 +184,20 @@ func TestExperimentSetup(t *testing.T) {
 			if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(experiment.Setup), tc.want) {
-				t.Errorf("recorded setup = %q, want %q", experiment.Setup, tc.want)
+			if !strings.Contains(string(experiment.Setup), tc.want) || !reflect.DeepEqual(experiment.Env, tc.env) {
+				t.Errorf("recorded setup = %q, env = %v; want %q, %v", experiment.Setup, experiment.Env, tc.want, tc.env)
 			}
 			data, err = os.ReadFile(filepath.Join(dir, "marker"))
 			if err != nil || string(data) != tc.want+"\n" {
 				t.Errorf("marker = %q, %v; want %q", data, err, tc.want)
 			}
 			data, err = os.ReadFile(filepath.Join(dir, "results", "logs", experiment.ID.String()+".setup.log"))
-			if err != nil || string(data) != "{foo}\n" {
-				t.Errorf("setup log = %q, %v; want literal placeholder", data, err)
+			wantLog := "{foo}\n"
+			if tc.name == "study" {
+				wantLog += "{\"os\":\"test\"}\n"
+			}
+			if err != nil || string(data) != wantLog {
+				t.Errorf("setup log = %q, %v; want %q", data, err, wantLog)
 			}
 			runLogs, err := filepath.Glob(filepath.Join(dir, "results", "logs", "*.run.log"))
 			if err != nil || len(runLogs) != 2 {
@@ -208,15 +215,14 @@ func TestExperimentSetupFailure(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr.String(), "setup: exit status 7") || stdout.Len() != 0 {
 		t.Fatalf("exit code %d, stdout %q, stderr %q; want setup error", code, &stdout, &stderr)
 	}
-	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
+	if _, err := os.Stat(filepath.Join("results", "experiments.jsonl")); !os.IsNotExist(err) {
+		t.Errorf("setup failure recorded an experiment: %v", err)
+	}
+	id, err := os.ReadFile(filepath.Join("results", "experiment.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var experiment model.Experiment
-	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
-		t.Fatal(err)
-	}
-	data, err = os.ReadFile(filepath.Join("results", "logs", experiment.ID.String()+".setup.log"))
+	data, err := os.ReadFile(filepath.Join("results", "logs", strings.TrimSpace(string(id))+".setup.log"))
 	if err != nil || string(data) != "failed\n" {
 		t.Errorf("failed setup log = %q, %v", data, err)
 	}

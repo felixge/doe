@@ -63,12 +63,41 @@ func (r *Results) createLog(id uuid.UUID, kind string) (*os.File, error) {
 	return file, nil
 }
 
+// SetupEnv reads an optional JSON object on the setup log's last line.
+func (r *Results) SetupEnv(experimentID uuid.UUID) (model.Env, error) {
+	path := r.logPath(experimentID, "setup")
+	last, err := lastLogLine(path, "setup")
+	if err != nil {
+		return nil, err
+	}
+	var environment model.Env
+	if json.Unmarshal(last, &environment) != nil || environment == nil {
+		return model.Env{}, nil
+	}
+	return environment, nil
+}
+
 // RunOutcome reads the final log line as a JSON object. Earlier lines may contain diagnostics.
 func (r *Results) RunOutcome(runID uuid.UUID) (model.Outcome, error) {
 	path := r.runLogPath(runID)
+	last, err := lastLogLine(path, "run")
+	if err != nil {
+		return nil, err
+	}
+	var outcome model.Outcome
+	if err := json.Unmarshal(last, &outcome); err != nil {
+		return nil, fmt.Errorf("run log %s has no JSON object on its last line: %w", path, err)
+	}
+	if outcome == nil {
+		return nil, fmt.Errorf("run log %s has no JSON object on its last line", path)
+	}
+	return outcome, nil
+}
+
+func lastLogLine(path, kind string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open run log %s: %w", path, err)
+		return nil, fmt.Errorf("open %s log %s: %w", kind, path, err)
 	}
 	defer func() { _ = file.Close() }()
 
@@ -81,19 +110,12 @@ func (r *Results) RunOutcome(runID uuid.UUID) (model.Outcome, error) {
 		}
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				return nil, fmt.Errorf("read run log %s: %w", path, readErr)
+				return nil, fmt.Errorf("read %s log %s: %w", kind, path, readErr)
 			}
 			break
 		}
 	}
-	var outcome model.Outcome
-	if err := json.Unmarshal(last, &outcome); err != nil {
-		return nil, fmt.Errorf("run log %s has no JSON object on its last line: %w", path, err)
-	}
-	if outcome == nil {
-		return nil, fmt.Errorf("run log %s has no JSON object on its last line", path)
-	}
-	return outcome, nil
+	return last, nil
 }
 
 func (r *Results) runLogPath(runID uuid.UUID) string {

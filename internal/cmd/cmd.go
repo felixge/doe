@@ -74,9 +74,6 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return env.Fail(err)
 	}
 	defer func() { _ = release() }()
-	if err := results.AppendExperiment(experiment); err != nil {
-		return env.Fail(err)
-	}
 	if err := runExperiment(ctx, experiment, results); err != nil {
 		if ctx.Err() != nil {
 			return 130
@@ -155,17 +152,21 @@ func resultsDir(path string) string {
 	return filepath.Join(dir, "results")
 }
 
-// runExperiment runs setup once, then each point until a script fails.
+// runExperiment records the setup environment before starting any runs.
 func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
+	experiment.Env = model.Env{}
 	if experiment.Setup != "" {
 		if err := runSetup(ctx, experiment, results); err != nil {
 			return err
 		}
 	}
+	if err := results.AppendExperiment(experiment); err != nil {
+		return err
+	}
 	points := experiment.Points()
 	for replicate, row := range model.Schedule(len(points), experiment.Replicates) {
 		for _, index := range row {
-			if err := runDesignPoint(ctx, experiment.Run, results, points[index], replicate+1); err != nil {
+			if err := runDesignPoint(ctx, experiment, results, points[index], replicate+1); err != nil {
 				return err
 			}
 		}
@@ -184,20 +185,25 @@ func runSetup(ctx context.Context, experiment *model.Experiment, results *result
 	if err := executeScript(ctx, string(experiment.Setup), results, log); err != nil {
 		return fmt.Errorf("setup: %w", err)
 	}
+	environment, err := results.SetupEnv(experiment.ID)
+	if err != nil {
+		return fmt.Errorf("setup: %w", err)
+	}
+	experiment.Env = environment
 	return nil
 }
 
-func runDesignPoint(ctx context.Context, script model.Script, results *results.Results, point model.Point, replicate int) error {
+func runDesignPoint(ctx context.Context, experiment *model.Experiment, results *results.Results, point model.Point, replicate int) error {
 	// Avoid starting a shell when the experiment is already canceled.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	run := model.NewRun(point, replicate)
+	run := model.NewRun(experiment.ID, point, replicate)
 	log, err := results.CreateRunLog(run.ID)
 	if err != nil {
 		return err
 	}
-	if err := executeScript(ctx, expandRunScript(script, point), results, log); err != nil {
+	if err := executeScript(ctx, expandRunScript(experiment.Run, point), results, log); err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
 	outcome, err := results.RunOutcome(run.ID)

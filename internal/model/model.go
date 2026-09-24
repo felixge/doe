@@ -97,6 +97,7 @@ type Results struct {
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
 	ID     uuid.UUID `json:"id"`
+	Env    Env       `json:"env"`
 	Design `json:"design"`
 }
 
@@ -107,6 +108,9 @@ func NewExperiment(study Study) Experiment {
 		Design: study.Clone(),
 	}
 }
+
+// Env holds the environment information emitted by an experiment's setup script.
+type Env map[string]any
 
 // Factors maps each factor to its possible settings.
 type Factors map[Factor]Settings
@@ -133,20 +137,21 @@ type Point map[Factor]Setting
 // Run is an execution of a design point, identified by a UUID.
 // JSON tags are unnecessary because MarshalJSON handles serialization.
 type Run struct {
-	ID        uuid.UUID
-	Point     Point
-	Replicate int
-	Outcome   Outcome
+	ID           uuid.UUID
+	ExperimentID uuid.UUID
+	Point        Point
+	Replicate    int
+	Outcome      Outcome
 }
 
-// NewRun creates a run for a design point and one-based replicate with a UUIDv7 ID.
-func NewRun(point Point, replicate int) Run {
-	return Run{ID: uuid.NewV7(), Point: point, Replicate: replicate}
+// NewRun creates a run for an experiment, design point, and one-based replicate with a UUIDv7 ID.
+func NewRun(experimentID uuid.UUID, point Point, replicate int) Run {
+	return Run{ID: uuid.NewV7(), ExperimentID: experimentID, Point: point, Replicate: replicate}
 }
 
 // MarshalJSON writes the ID, replicate, point settings, and outcome as a flat object.
 func (r Run) MarshalJSON() ([]byte, error) {
-	fields := map[string]any{"id": r.ID, "replicate": r.Replicate}
+	fields := map[string]any{"id": r.ID, "experiment_id": r.ExperimentID, "replicate": r.Replicate}
 	for factor, setting := range r.Point {
 		if _, exists := fields[string(factor)]; exists {
 			return nil, fmt.Errorf("run factor %q conflicts with reserved field", factor)

@@ -161,17 +161,19 @@ func TestDesignSerialization(t *testing.T) {
 
 func TestNewRun(t *testing.T) {
 	point := Point{"foo": 42}
-	run := NewRun(point, 2)
-	if run.ID[6]>>4 != 7 || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.Outcome != nil {
+	experimentID := uuid.NewV7()
+	run := NewRun(experimentID, point, 2)
+	if run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.Outcome != nil {
 		t.Errorf("NewRun = %+v, want UUIDv7 and point %v", run, point)
 	}
-	if other := NewRun(point, 2); other.ID == run.ID {
+	if other := NewRun(experimentID, point, 2); other.ID == run.ID {
 		t.Errorf("NewRun reused ID %s", run.ID)
 	}
 }
 
 func TestRunSerialization(t *testing.T) {
 	id := uuid.NewV7()
+	experimentID := uuid.NewV7()
 	point := Point{"foo": 42, "bar": true}
 	outcome := Outcome{"sum": 43, "ok": true}
 	for _, tc := range []struct {
@@ -180,11 +182,11 @@ func TestRunSerialization(t *testing.T) {
 		outcome Outcome
 		want    map[string]any
 	}{
-		{"with settings and measurements", point, outcome, map[string]any{"id": id.String(), "replicate": float64(2), "foo": float64(42), "bar": true, "sum": float64(43), "ok": true}},
-		{"without settings or measurements", nil, nil, map[string]any{"id": id.String(), "replicate": float64(2)}},
+		{"with settings and measurements", point, outcome, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "foo": float64(42), "bar": true, "sum": float64(43), "ok": true}},
+		{"without settings or measurements", nil, nil, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			data, err := json.Marshal(Run{ID: id, Point: tc.point, Replicate: 2, Outcome: tc.outcome})
+			data, err := json.Marshal(Run{ID: id, ExperimentID: experimentID, Point: tc.point, Replicate: 2, Outcome: tc.outcome})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -210,8 +212,10 @@ func TestRunSerializationConflict(t *testing.T) {
 	}{
 		{"reserved factor", Run{Point: Point{"id": 1}}, `run factor "id" conflicts with reserved field`},
 		{"replicate factor", Run{Point: Point{"replicate": 1}}, `run factor "replicate" conflicts with reserved field`},
+		{"experiment ID factor", Run{Point: Point{"experiment_id": 1}}, `run factor "experiment_id" conflicts with reserved field`},
 		{"reserved response", Run{Outcome: Outcome{"id": 1}}, `run response "id" conflicts with reserved field`},
 		{"replicate response", Run{Outcome: Outcome{"replicate": 1}}, `run response "replicate" conflicts with reserved field`},
+		{"experiment ID response", Run{Outcome: Outcome{"experiment_id": 1}}, `run response "experiment_id" conflicts with reserved field`},
 		{"factor and response", Run{Point: Point{"foo": 1}, Outcome: Outcome{"foo": 2}}, `run outcome conflicts with factor "foo"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
