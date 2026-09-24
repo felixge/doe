@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -23,8 +22,6 @@ import (
 	"gopkg.in/yaml.v3"
 	"uuid"
 )
-
-var factorPlaceholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
 
 // Main executes the doe command.
 func Main(ctx context.Context, env *cli.Env, args []string) int {
@@ -302,13 +299,7 @@ func executeScript(ctx context.Context, script string, results *results.Results,
 }
 
 func expandRunScript(script model.Script, point model.Point) string {
-	return factorPlaceholder.ReplaceAllStringFunc(string(script), func(placeholder string) string {
-		setting, ok := point[model.Factor(placeholder[1:len(placeholder)-1])]
-		if !ok {
-			return placeholder
-		}
-		return fmt.Sprint(setting)
-	})
+	return script.Expand(point)
 }
 
 func rootUsage(w io.Writer) {

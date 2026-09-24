@@ -207,7 +207,7 @@ func TestStatusStopped(t *testing.T) {
 func TestStatusCompletedStudy(t *testing.T) {
 	t.Chdir(t.TempDir())
 	study := filepath.Join(t.TempDir(), "study.yaml")
-	if err := os.WriteFile(study, []byte("factors: {foo: [1]}\nrun: sleep 1; echo '{}'\n"), 0600); err != nil {
+	if err := os.WriteFile(study, []byte("factors: {foo: [1]}\nrun: sleep 1; echo '{}' ; true '{foo}'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	code, id, stderr := runStatusCommand(t, "experiment", "-f", study)
@@ -226,7 +226,7 @@ func TestStatusCompletedStudy(t *testing.T) {
 
 func TestStatusSetupError(t *testing.T) {
 	t.Chdir(t.TempDir())
-	code, _, stderr := runStatusCommand(t, "experiment", "foo=1", "-s", "exit 7", "-r", "echo '{}'")
+	code, _, stderr := runStatusCommand(t, "experiment", "foo=1", "-s", "exit 7", "-r", "echo '{}' ; true '{foo}'")
 	if code != 1 || !strings.Contains(stderr, "exit status 7") {
 		t.Fatalf("setup failure = %d, %q", code, stderr)
 	}

@@ -176,7 +176,7 @@ func TestExperimentSetup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "study.yaml")
-			study := "factors:\n  foo: [1, 2]\nsetup: echo study >> marker; echo '{foo}'; echo '{\"os\":\"test\"}'\nrun: test -f marker && echo '{}'\n"
+			study := "factors:\n  foo: [1, 2]\nsetup: echo study >> marker; echo '{foo}'; echo '{\"os\":\"test\"}'\nrun: test -f marker && echo '{}' ; true '{foo}'\n"
 			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -220,7 +220,7 @@ func TestExperimentSetupFailure(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-s", "echo failed >&2; exit 7", "-r", "echo '{}'"})
+		[]string{"experiment", "foo=1", "-s", "echo failed >&2; exit 7", "-r", "echo '{}' ; true '{foo}'"})
 	if code != 1 || !strings.Contains(stderr.String(), "setup: exit status 7") || stdout.Len() != 0 {
 		t.Fatalf("exit code %d, stdout %q, stderr %q; want setup error", code, &stdout, &stderr)
 	}
@@ -287,7 +287,7 @@ func TestExperimentSetupCanceled(t *testing.T) {
 	cancel()
 	var stdout, stderr bytes.Buffer
 	code := Main(ctx, &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-s", "echo '{}'", "-r", "echo '{}'"})
+		[]string{"experiment", "foo=1", "-s", "echo '{}'", "-r", "echo '{}' ; true '{foo}'"})
 	if code != 130 || stdout.Len() != 0 {
 		t.Errorf("canceled setup = %d, stdout %q, stderr %q; want 130 and no output", code, &stdout, &stderr)
 	}
@@ -390,7 +390,7 @@ func TestExperimentPresets(t *testing.T) {
 			path := filepath.Join(dir, "study.yaml")
 			study := `factors:
   foo: [1]
-run: echo '{"ok":true}'
+run: echo '{"ok":true}' ; true '{foo}'
 replicates: 3
 presets:
   smoke: {}
@@ -443,7 +443,7 @@ func TestExperimentDesign(t *testing.T) {
   foo: [1, 2]
   bar: true
 setup: "  touch setup-ran  "
-run: "  touch run-ran  "
+run: "  touch run-ran; true '{foo}' '{bar}'  "
 replicates: 3
 presets:
   full:
@@ -465,7 +465,7 @@ presets:
 	}
 	want := model.Design{
 		Factors: model.Factors{"foo": {7, 8}, "bar": {true}},
-		Setup:   "touch setup-ran", Run: "touch run-ran", Replicates: 2,
+		Setup:   "touch setup-ran", Run: "touch run-ran; true '{foo}' '{bar}'", Replicates: 2,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("design = %+v, want %+v", got, want)
@@ -484,7 +484,7 @@ func TestExperimentDesignDefaultAndValidation(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	env := &cli.Env{Stdout: &stdout, Stderr: &stderr}
-	if code := Main(context.Background(), env, []string{"experiment", "foo=1", "-r", "echo '{}'", "--design"}); code != 0 {
+	if code := Main(context.Background(), env, []string{"experiment", "foo=1", "-r", "echo '{}' ; true '{foo}'", "--design"}); code != 0 {
 		t.Fatalf("exit code %d: %s", code, &stderr)
 	}
 	var design model.Design
@@ -493,11 +493,40 @@ func TestExperimentDesignDefaultAndValidation(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Main(context.Background(), env, []string{"experiment", "foo=[]", "-r", "echo '{}'", "--design"}); code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `factor "foo" has no settings`) {
+	if code := Main(context.Background(), env, []string{"experiment", "foo=[]", "-r", "echo '{}' ; true '{foo}'", "--design"}); code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `factor "foo" has no settings`) {
 		t.Errorf("invalid design: exit code %d, stdout %q, stderr %q", code, &stdout, &stderr)
 	}
 	if _, err := os.Stat("results"); !os.IsNotExist(err) {
 		t.Errorf("--design created results: %v", err)
+	}
+}
+
+func TestExperimentMissingFactorPlaceholder(t *testing.T) {
+	t.Chdir(t.TempDir())
+	study := `factors:
+  foo: 1
+run: echo {foo}
+presets:
+  full:
+    factors:
+      bar: 2
+`
+	if err := os.WriteFile("study.yaml", []byte(study), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-f", "study.yaml", "-p", "full"},
+		{"-f", "study.yaml", "bar=2", "--design"},
+		{"foo=1", "bar=2", "-r", "echo {foo}"},
+	} {
+		var stdout, stderr bytes.Buffer
+		command := append([]string{"experiment"}, args...)
+		if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, command); code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "missing placeholder {bar}") {
+			t.Errorf("Main(%q) = %d, stdout %q, stderr %q", command, code, &stdout, &stderr)
+		}
+	}
+	if _, err := os.Stat("results"); !os.IsNotExist(err) {
+		t.Errorf("invalid design created results: %v", err)
 	}
 }
 
@@ -507,7 +536,7 @@ func TestPrepareExperimentPresetPrecedence(t *testing.T) {
   foo: [1]
   bar: [2]
 setup: echo study
-run: echo study
+run: echo study; true '{foo}'
 replicates: 4
 presets:
   full:
@@ -515,17 +544,17 @@ presets:
       foo: [3]
       baz: [4]
     setup: echo preset
-    run: echo preset
+    run: echo preset; true '{foo}'
     replicates: 0
 `
 	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	experiment, err := prepareExperiment(path, "full", "", "echo CLI", 0, []string{"bar=[5, 6]"})
+	experiment, err := prepareExperiment(path, "full", "", "echo CLI; true '{foo}'; true '{bar}'; true '{baz}'", 0, []string{"bar=[5, 6]"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if experiment.Preset != "full" || experiment.Setup != "echo preset" || experiment.Run != "echo CLI" || experiment.Replicates != 4 ||
+	if experiment.Preset != "full" || experiment.Setup != "echo preset" || experiment.Run != "echo CLI; true '{foo}'; true '{bar}'; true '{baz}'" || experiment.Replicates != 4 ||
 		!reflect.DeepEqual(experiment.Factors, model.Factors{"foo": {3}, "bar": {5, 6}, "baz": {4}}) {
 		t.Errorf("resolved experiment = %+v", experiment)
 	}
@@ -535,7 +564,7 @@ func TestExperimentEmptySettings(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=[]", "-r", "echo '{}'"})
+		[]string{"experiment", "foo=[]", "-r", "echo '{}' ; true '{foo}'"})
 	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `factor "foo" has no settings`) {
 		t.Errorf("empty design = %d, stdout %q, stderr %q; want validation error", code, &stdout, &stderr)
 	}
@@ -575,7 +604,7 @@ func TestCompressionPresets(t *testing.T) {
 
 func TestExperimentUnknownPreset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "study.yaml")
-	if err := os.WriteFile(path, []byte("factors: {foo: 1}\nrun: echo '{}'\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("factors: {foo: 1}\nrun: echo '{}' ; true '{foo}'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -593,7 +622,7 @@ func TestExperimentReplicates(t *testing.T) {
 	study := `factors:
   foo: [1, 2]
 replicates: 3
-run: echo '{"ok":true}'
+run: echo '{"ok":true}' ; true '{foo}'
 `
 	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 		t.Fatal(err)
@@ -679,7 +708,7 @@ func TestExperimentScheduleOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 			var stdout, stderr bytes.Buffer
-			args := []string{"experiment", "foo=" + tc.settings, "-n", tc.replicates, "-r", "echo '{}'"}
+			args := []string{"experiment", "foo=" + tc.settings, "-n", tc.replicates, "-r", "echo '{}' ; true '{foo}'"}
 			if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 {
 				t.Fatalf("exit code %d: %s", code, &stderr)
 			}
@@ -714,14 +743,14 @@ func TestExperimentReplicatesFlag(t *testing.T) {
 		args  []string
 		want  int
 	}{
-		{"override study", "factors:\n  foo: 1\nreplicates: 3\nrun: echo '{}'\n", []string{"-n", "2"}, 2},
-		{"override invalid study count", "factors:\n  foo: 1\nreplicates: 0\nrun: echo '{}'\n", []string{"--replicates=2"}, 2},
-		{"override fractional YAML count", "factors:\n  foo: 1\nreplicates: 1.5\nrun: echo '{}'\n", []string{"--replicates=2"}, 2},
-		{"study default", "factors:\n  foo: 1\nrun: echo '{}'\n", nil, 1},
-		{"zero means absent", "factors:\n  foo: 1\nreplicates: 0\nrun: echo '{}'\n", nil, 1},
-		{"zero CLI means absent", "factors:\n  foo: 1\nreplicates: 3\nrun: echo '{}'\n", []string{"-n", "0"}, 3},
-		{"no study", "", []string{"foo=1", "-r", "echo '{}'", "--replicates=2"}, 2},
-		{"default", "", []string{"foo=1", "-r", "echo '{}'"}, 1},
+		{"override study", "factors:\n  foo: 1\nreplicates: 3\nrun: echo '{}' ; true '{foo}'\n", []string{"-n", "2"}, 2},
+		{"override invalid study count", "factors:\n  foo: 1\nreplicates: 0\nrun: echo '{}' ; true '{foo}'\n", []string{"--replicates=2"}, 2},
+		{"override fractional YAML count", "factors:\n  foo: 1\nreplicates: 1.5\nrun: echo '{}' ; true '{foo}'\n", []string{"--replicates=2"}, 2},
+		{"study default", "factors:\n  foo: 1\nrun: echo '{}' ; true '{foo}'\n", nil, 1},
+		{"zero means absent", "factors:\n  foo: 1\nreplicates: 0\nrun: echo '{}' ; true '{foo}'\n", nil, 1},
+		{"zero CLI means absent", "factors:\n  foo: 1\nreplicates: 3\nrun: echo '{}' ; true '{foo}'\n", []string{"-n", "0"}, 3},
+		{"no study", "", []string{"foo=1", "-r", "echo '{}' ; true '{foo}'", "--replicates=2"}, 2},
+		{"default", "", []string{"foo=1", "-r", "echo '{}' ; true '{foo}'"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
@@ -775,7 +804,7 @@ func TestExperimentInvalidReplicates(t *testing.T) {
 	for _, value := range []string{"-1", "many"} {
 		t.Run(value, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "study.yaml")
-			study := "factors:\n  foo: 1\nrun: echo '{}'\nreplicates: " + value + "\n"
+			study := "factors:\n  foo: 1\nrun: echo '{}' ; true '{foo}'\nreplicates: " + value + "\n"
 			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -794,7 +823,7 @@ func TestExperimentInvalidReplicates(t *testing.T) {
 			t.Chdir(t.TempDir())
 			var stdout, stderr bytes.Buffer
 			code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-				[]string{"experiment", "foo=1", "-r", "echo '{}'", "--replicates=" + value})
+				[]string{"experiment", "foo=1", "-r", "echo '{}' ; true '{foo}'", "--replicates=" + value})
 			if code != 1 || stdout.Len() != 0 || stderr.Len() == 0 {
 				t.Errorf("invalid flag %s: exit code %d, stdout %q, stderr %q", value, code, &stdout, &stderr)
 			}
@@ -812,7 +841,7 @@ func TestExperimentRecordedWhileRunning(t *testing.T) {
 	done := make(chan int, 1)
 	var experiment model.Experiment
 	go func() {
-		done <- Main(context.Background(), env, []string{"experiment", "foo=1", "-r", `while [ ! -f gate ]; do sleep 0.01; done; echo '{}'`})
+		done <- Main(context.Background(), env, []string{"experiment", "foo=1", "-r", `while [ ! -f gate ]; do sleep 0.01; done; echo '{}' ; true '{foo}'`})
 	}()
 	defer func() {
 		if err := os.WriteFile("gate", nil, 0600); err != nil {
@@ -842,7 +871,7 @@ func TestExperimentRecordedWhileRunning(t *testing.T) {
 	}
 	var otherStderr bytes.Buffer
 	otherEnv := &cli.Env{Stdin: strings.NewReader(""), Stdout: &bytes.Buffer{}, Stderr: &otherStderr}
-	if code := Main(context.Background(), otherEnv, []string{"experiment", "foo=2", "-r", `echo '{}'`}); code != 1 || !strings.Contains(otherStderr.String(), "another experiment is running: "+experiment.ID.String()) {
+	if code := Main(context.Background(), otherEnv, []string{"experiment", "foo=2", "-r", `echo '{}' ; true '{foo}'`}); code != 1 || !strings.Contains(otherStderr.String(), "another experiment is running: "+experiment.ID.String()) {
 		t.Errorf("concurrent experiment = code %d, stderr %q; want running experiment ID", code, &otherStderr)
 	}
 }
@@ -851,7 +880,7 @@ func TestRunDoesNotReadCLIStdin(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdin: strings.NewReader("injected\n"), Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", `if read value; then printf 'read %s\n' "$value"; else printf 'no input\n'; fi; echo '{}'`})
+		[]string{"experiment", "foo=1", "-r", `if read value; then printf 'read %s\n' "$value"; else printf 'no input\n'; fi; echo '{}' ; true '{foo}'`})
 	if code != 0 {
 		t.Fatalf("exit code %d: %s", code, &stderr)
 	}
@@ -884,7 +913,7 @@ func TestRunOutcomeErrors(t *testing.T) {
 			t.Chdir(t.TempDir())
 			var stdout, stderr bytes.Buffer
 			code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-				[]string{"experiment", "foo=1", "-r", tc.script})
+				[]string{"experiment", "foo=1", "-r", "true '{foo}'; " + tc.script})
 			if code != 1 || stdout.Len() != 0 {
 				t.Errorf("exit code %d, stdout %q, stderr %q; want error", code, &stdout, &stderr)
 			}
@@ -911,7 +940,7 @@ func TestFailedRunKeepsOutcome(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", `echo '{"value":42}'; exit 7`})
+		[]string{"experiment", "foo=1", "-r", `echo '{"value":42}' ; true '{foo}'; exit 7`})
 	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "exit status 7") {
 		t.Errorf("failed experiment = %d, stdout %q, stderr %q", code, &stdout, &stderr)
 	}
@@ -962,7 +991,7 @@ func TestRunOutcomeWithoutFinalNewline(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", `echo warning >&2; printf '{"ok":true}'`})
+		[]string{"experiment", "foo=1", "-r", `echo warning >&2; true '{foo}'; printf '{"ok":true}'`})
 	if code != 0 {
 		t.Fatalf("exit code %d: %s", code, &stderr)
 	}
@@ -998,12 +1027,12 @@ func TestExperimentClean(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			args := []string{"experiment", "foo=1", "-r", `echo '{"ok":true}'`}
+			args := []string{"experiment", "foo=1", "-r", `echo '{"ok":true}' ; true '{foo}'`}
 			dir := "results"
 			if tc.file {
 				project := t.TempDir()
 				path := filepath.Join(project, "study.yaml")
-				if err := os.WriteFile(path, []byte("factors: {foo: [1]}\nrun: echo '{\"ok\":true}'\n"), 0600); err != nil {
+				if err := os.WriteFile(path, []byte("factors: {foo: [1]}\nrun: echo '{\"ok\":true}' ; true '{foo}'\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 				args = []string{"experiment", "-f", path}
@@ -1087,7 +1116,7 @@ func TestExperimentCleanWhileRunning(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", "echo '{}'", "-c"})
+		[]string{"experiment", "foo=1", "-r", "echo '{}' ; true '{foo}'", "-c"})
 	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "another experiment is running: "+id.String()) {
 		t.Errorf("clean experiment = %d, stdout %q, stderr %q; want lock error", code, &stdout, &stderr)
 	}
@@ -1132,7 +1161,7 @@ func TestExperimentErrors(t *testing.T) {
 	}{
 		{[]string{"experiment", "foo=1"}, "run script is required"},
 		{[]string{"experiment", "foo=1", "--run", "  "}, "run script is required"},
-		{[]string{"experiment", "foo=1", "--run", "printf 'partial\\n'; printf 'warning\\n' >&2; exit 7"}, "exit status 7"},
+		{[]string{"experiment", "foo=1", "--run", "true '{foo}'; printf 'partial\\n'; printf 'warning\\n' >&2; exit 7"}, "exit status 7"},
 		{[]string{"execute"}, "unknown command"},
 		{[]string{"run"}, "unknown command"},
 		{[]string{"results"}, "unknown command"},
@@ -1202,7 +1231,7 @@ func TestExperimentRecordError(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "--run", `echo '{"result":1}'`})
+		[]string{"experiment", "foo=1", "--run", `echo '{"result":1}' ; true '{foo}'`})
 	if code != 1 || !strings.Contains(stderr.String(), "create results directory") {
 		t.Errorf("Main = %d, stderr %q; want results directory error", code, &stderr)
 	}

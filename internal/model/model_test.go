@@ -119,7 +119,12 @@ func TestDesignValidate(t *testing.T) {
 		design Design
 		want   string
 	}{
-		{"valid", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'", Replicates: 2}, ""},
+		{"valid", Design{Factors: Factors{"foo": {1}}, Run: "echo '{foo}'", Replicates: 2}, ""},
+		{"multiple factors", Design{Factors: Factors{"foo": {1}, "bar": {2}}, Run: "echo {foo} {bar}", Replicates: 1}, ""},
+		{"missing placeholder", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'", Replicates: 1}, `missing placeholder {foo}`},
+		{"missing one of two", Design{Factors: Factors{"foo": {1}, "bar": {2}}, Run: "echo {foo}", Replicates: 1}, `missing placeholder {bar}`},
+		{"partial name", Design{Factors: Factors{"foo": {1}}, Run: "echo {foobar}", Replicates: 1}, `missing placeholder {foo}`},
+		{"invalid placeholder syntax", Design{Factors: Factors{"foo-bar": {1}}, Run: "echo {foo-bar}", Replicates: 1}, `missing placeholder {foo-bar}`},
 		{"no factors", Design{Run: "echo '{}'", Replicates: 1}, "at least one factor is required"},
 		{"empty settings", Design{Factors: Factors{"foo": {}}, Run: "echo '{}'", Replicates: 1}, `factor "foo" has no settings`},
 		{"empty run", Design{Factors: Factors{"foo": {1}}, Replicates: 1}, "run script is required"},

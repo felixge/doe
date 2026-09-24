@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"time"
 	"uuid"
@@ -36,6 +37,8 @@ func (s *Study) Load(path string) error {
 	}
 	return nil
 }
+
+var factorPlaceholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
 
 // Design defines the factors and scripts for an experiment.
 type Design struct {
@@ -77,6 +80,15 @@ func (d Design) Validate() error {
 		}
 		if reservedRunField(string(factor)) {
 			return fmt.Errorf("run factor %q conflicts with reserved field", factor)
+		}
+	}
+	placeholders := make(map[Factor]bool)
+	for _, placeholder := range factorPlaceholder.FindAllString(string(d.Run), -1) {
+		placeholders[Factor(placeholder[1:len(placeholder)-1])] = true
+	}
+	for _, factor := range slices.Sorted(maps.Keys(d.Factors)) {
+		if !placeholders[factor] {
+			return fmt.Errorf("run script is missing placeholder {%s} for factor %q", factor, factor)
 		}
 	}
 	return nil
@@ -269,3 +281,14 @@ type Setting any
 
 // Script is a shell command executed by doe.
 type Script string
+
+// Expand replaces factor placeholders with the point's settings.
+func (s Script) Expand(point Point) string {
+	return factorPlaceholder.ReplaceAllStringFunc(string(s), func(placeholder string) string {
+		setting, ok := point[Factor(placeholder[1:len(placeholder)-1])]
+		if !ok {
+			return placeholder
+		}
+		return fmt.Sprint(setting)
+	})
+}
