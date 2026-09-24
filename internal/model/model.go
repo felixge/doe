@@ -33,13 +33,26 @@ func (s *Study) Load(path string) error {
 
 // Design defines the factors and script for an experiment.
 type Design struct {
-	Factors Factors `json:"factors" yaml:"factors"`
-	Run     Script  `json:"run" yaml:"run"`
+	Factors    Factors     `json:"factors" yaml:"factors"`
+	Run        Script      `json:"run" yaml:"run"`
+	Replicates *Replicates `json:"replicates,omitempty" yaml:"replicates,omitempty"`
+}
+
+// ReplicateCount returns the number of runs per point, defaulting to one.
+func (d Design) ReplicateCount() int {
+	if d.Replicates == nil {
+		return 1
+	}
+	return int(*d.Replicates)
 }
 
 // Clone returns a design with an independent factors map.
 func (d Design) Clone() Design {
 	d.Factors = maps.Clone(d.Factors)
+	if d.Replicates != nil {
+		count := *d.Replicates
+		d.Replicates = &count
+	}
 	return d
 }
 
@@ -68,6 +81,22 @@ func (d Design) Points() []Point {
 	}
 	visit(0)
 	return points
+}
+
+// Replicates is the number of runs requested for each design point.
+type Replicates int
+
+// UnmarshalYAML requires an integer rather than truncating a YAML float.
+func (r *Replicates) UnmarshalYAML(node *yaml.Node) error {
+	if node.Tag != "!!int" {
+		return fmt.Errorf("replicates must be a positive integer")
+	}
+	var count int
+	if err := node.Decode(&count); err != nil {
+		return err
+	}
+	*r = Replicates(count)
+	return nil
 }
 
 // Results holds the experiments recorded by doe.

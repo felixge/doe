@@ -152,6 +152,85 @@ run: |
 	}
 }
 
+func TestExperimentReplicates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "study.yaml")
+	study := `factors:
+  foo: [1, 2]
+replicates: 3
+run: echo '{"ok":true}'
+`
+	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, []string{"experiment", "-f", path}); code != 0 {
+		t.Fatalf("exit code %d: %s", code, &stderr)
+	}
+	dir := filepath.Join(filepath.Dir(path), "results")
+	experiments, err := os.ReadFile(filepath.Join(dir, "experiments.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var experiment model.Experiment
+	if err := json.Unmarshal(bytes.TrimSpace(experiments), &experiment); err != nil {
+		t.Fatal(err)
+	}
+	if got := experiment.ReplicateCount(); got != 3 {
+		t.Errorf("recorded replicates = %d, want 3", got)
+	}
+	runs, err := os.ReadFile(filepath.Join(dir, "runs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(runs), []byte("\n"))
+	if len(lines) != 6 {
+		t.Fatalf("run count = %d, want 6", len(lines))
+	}
+	counts := make(map[int]int)
+	ids := make(map[uuid.UUID]bool)
+	for _, line := range lines {
+		var run struct {
+			ID  uuid.UUID `json:"id"`
+			Foo int       `json:"foo"`
+			OK  bool      `json:"ok"`
+		}
+		if err := json.Unmarshal(line, &run); err != nil {
+			t.Fatal(err)
+		}
+		if run.ID == (uuid.UUID{}) || ids[run.ID] || !run.OK {
+			t.Errorf("invalid replicated run: %+v", run)
+		}
+		ids[run.ID] = true
+		counts[run.Foo]++
+		if _, err := os.Stat(filepath.Join(dir, "runs", run.ID.String()+".log")); err != nil {
+			t.Errorf("missing log for run %s: %v", run.ID, err)
+		}
+	}
+	if counts[1] != 3 || counts[2] != 3 {
+		t.Errorf("runs by point = %v, want 3 each", counts)
+	}
+}
+
+func TestExperimentInvalidReplicates(t *testing.T) {
+	for _, value := range []string{"0", "-1", "1.5", "many"} {
+		t.Run(value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "study.yaml")
+			study := "factors:\n  foo: 1\nrun: echo '{}'\nreplicates: " + value + "\n"
+			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, []string{"experiment", "-f", path})
+			if code != 1 || stdout.Len() != 0 || stderr.Len() == 0 {
+				t.Errorf("invalid replicates %s: exit code %d, stdout %q, stderr %q", value, code, &stdout, &stderr)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(path), "results")); !os.IsNotExist(err) {
+				t.Errorf("invalid replicates created results: %v", err)
+			}
+		})
+	}
+}
+
 func TestExperimentRecordedWhileRunning(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer

@@ -27,6 +27,37 @@ func TestNewExperiment(t *testing.T) {
 	}
 }
 
+func TestDesignReplicates(t *testing.T) {
+	var study Study
+	if err := yaml.Unmarshal([]byte("factors:\n  foo: [1, 2]\nrun: echo '{}'\nreplicates: 3\n"), &study); err != nil {
+		t.Fatal(err)
+	}
+	experiment := NewExperiment(study)
+	if got := experiment.ReplicateCount(); got != 3 {
+		t.Errorf("replicate count = %d, want 3", got)
+	}
+	data, err := json.Marshal(experiment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Design Design `json:"design"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if got := record.Design.ReplicateCount(); got != 3 {
+		t.Errorf("recorded replicate count = %d, want 3: %s", got, data)
+	}
+	*experiment.Replicates = 9
+	if got := study.ReplicateCount(); got != 3 {
+		t.Errorf("changing experiment changed study replicate count to %d", got)
+	}
+	if got := (Design{}).ReplicateCount(); got != 1 {
+		t.Errorf("default replicate count = %d, want 1", got)
+	}
+}
+
 func TestDesignPoints(t *testing.T) {
 	design := Design{Factors: Factors{
 		"foo": {1, 2, 3},

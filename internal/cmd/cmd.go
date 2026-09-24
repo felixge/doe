@@ -114,6 +114,9 @@ func prepareExperiment(path, runScript string, args []string) (*model.Experiment
 	if strings.TrimSpace(string(experiment.Run)) == "" {
 		return nil, nil, errors.New("a run script is required (use --run or a study file)")
 	}
+	if experiment.ReplicateCount() < 1 {
+		return nil, nil, errors.New("replicates must be a positive integer")
+	}
 
 	// Keep scripts and results relative to the study file.
 	results, err := results.New(resultsDir(path))
@@ -151,8 +154,10 @@ func resultsDir(path string) string {
 // runExperiment runs each point until a run fails.
 func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
 	for _, point := range experiment.Points() {
-		if err := runDesignPoint(ctx, experiment.Run, results, point); err != nil {
-			return err
+		for range experiment.ReplicateCount() {
+			if err := runDesignPoint(ctx, experiment.Run, results, point); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -226,11 +231,12 @@ func experimentUsage(w io.Writer) {
 Usage: doe experiment [-f study.yaml] [key=value ...] [-r script]
 
 Options:
-  -f, --file  Load factors and run script from a YAML study.
+  -f, --file  Load factors, run script, and replicates from a YAML study.
   -r, --run   Override the run script with a shell command.
   -h, --help  Print help text.
 
 Factor settings are YAML values or sequences of values. CLI factors override
 file factors. In run scripts, {factor} expands to the setting.
+A study's replicates key runs each design point that many times (default: 1).
 `)
 }
