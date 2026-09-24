@@ -151,9 +151,10 @@ func resultsDir(path string) string {
 
 // runExperiment runs each point until a run fails.
 func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
-	for _, point := range experiment.Points() {
-		for replicate := range experiment.Replicates {
-			if err := runDesignPoint(ctx, experiment.Run, results, point, replicate+1); err != nil {
+	points := experiment.Points()
+	for replicate, row := range model.Schedule(len(points), experiment.Replicates) {
+		for _, index := range row {
+			if err := runDesignPoint(ctx, experiment.Run, results, points[index], replicate+1); err != nil {
 				return err
 			}
 		}

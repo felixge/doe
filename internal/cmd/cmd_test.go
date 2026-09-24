@@ -220,6 +220,55 @@ run: echo '{"ok":true}'
 	}
 }
 
+func TestExperimentScheduleOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		settings   string
+		replicates string
+		want       [][2]int
+	}{
+		{"even first replicate", "[0, 1, 2, 3]", "1", [][2]int{{0, 1}, {1, 1}, {3, 1}, {2, 1}}},
+		{"odd cycle repeats", "[0, 1, 2]", "7", [][2]int{
+			{0, 1}, {1, 1}, {2, 1},
+			{1, 2}, {2, 2}, {0, 2},
+			{2, 3}, {0, 3}, {1, 3},
+			{2, 4}, {1, 4}, {0, 4},
+			{0, 5}, {2, 5}, {1, 5},
+			{1, 6}, {0, 6}, {2, 6},
+			{0, 7}, {1, 7}, {2, 7},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var stdout, stderr bytes.Buffer
+			args := []string{"experiment", "foo=" + tc.settings, "-n", tc.replicates, "-r", "echo '{}'"}
+			if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 {
+				t.Fatalf("exit code %d: %s", code, &stderr)
+			}
+			data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+			if len(lines) != len(tc.want) {
+				t.Fatalf("run count = %d, want %d", len(lines), len(tc.want))
+			}
+			for i, line := range lines {
+				var run struct {
+					Foo       int `json:"foo"`
+					Replicate int `json:"replicate"`
+				}
+				if err := json.Unmarshal(line, &run); err != nil {
+					t.Fatal(err)
+				}
+				if got := [2]int{run.Foo, run.Replicate}; got != tc.want[i] {
+					t.Errorf("run %d = %v, want %v", i, got, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestExperimentReplicatesFlag(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
