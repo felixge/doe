@@ -88,6 +88,24 @@ func TestAppendExperiment(t *testing.T) {
 	}
 }
 
+func TestRunOutcomeAndAppendErrors(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &model.Run{ID: model.NewExperiment(model.Study{}).ID, Point: model.Point{"foo": 1}}
+	if _, err := r.RunOutcome(run.ID); err == nil || !strings.Contains(err.Error(), "open run log") {
+		t.Errorf("missing log error = %v", err)
+	}
+	path := filepath.Join(r.Dir(), "runs.jsonl")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.AppendRun(run); err == nil || !strings.Contains(err.Error(), path) {
+		t.Errorf("AppendRun with invalid file = %v, want path error", err)
+	}
+}
+
 func TestAppendExperimentErrors(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "results")
 	if err := os.WriteFile(dir, []byte("not a directory"), 0600); err != nil {

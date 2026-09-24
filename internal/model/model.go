@@ -119,6 +119,11 @@ type Run struct {
 	Outcome Outcome
 }
 
+// NewRun creates a run for a design point with a UUIDv7 ID.
+func NewRun(point Point) Run {
+	return Run{ID: uuid.NewV7(), Point: point}
+}
+
 // MarshalJSON writes the ID, point settings, and outcome as a flat object.
 func (r Run) MarshalJSON() ([]byte, error) {
 	fields := map[string]any{"id": r.ID}

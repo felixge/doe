@@ -2,6 +2,8 @@
 package results
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,12 +46,54 @@ func (r *Results) OpenRunLog(runID uuid.UUID) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create run logs directory %s: %w", dir, err)
 	}
-	path := filepath.Join(dir, runID.String()+".log")
+	path := r.runLogPath(runID)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open run log %s: %w", path, err)
 	}
 	return file, nil
+}
+
+// RunOutcome reads the final log line as a JSON object. Earlier lines may contain diagnostics.
+func (r *Results) RunOutcome(runID uuid.UUID) (model.Outcome, error) {
+	path := r.runLogPath(runID)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open run log %s: %w", path, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	reader := bufio.NewReader(file)
+	var last []byte
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			last = line
+		}
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				return nil, fmt.Errorf("read run log %s: %w", path, readErr)
+			}
+			break
+		}
+	}
+	var outcome model.Outcome
+	if err := json.Unmarshal(last, &outcome); err != nil {
+		return nil, fmt.Errorf("run log %s has no JSON object on its last line: %w", path, err)
+	}
+	if outcome == nil {
+		return nil, fmt.Errorf("run log %s has no JSON object on its last line", path)
+	}
+	return outcome, nil
+}
+
+func (r *Results) runLogPath(runID uuid.UUID) string {
+	return filepath.Join(r.dir, "runs", runID.String()+".log")
+}
+
+// AppendRun records a completed run as a JSON line.
+func (r *Results) AppendRun(run *model.Run) error {
+	return jsonl.AppendFile(filepath.Join(r.dir, "runs.jsonl"), run)
 }
 
 // LockExperiment writes the experiment ID and holds the shared results lock

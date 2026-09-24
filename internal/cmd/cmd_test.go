@@ -83,6 +83,28 @@ run: |
 			if len(experiment.Factors["foo"]) != len(tc.want)/len(experiment.Factors["bar"]) {
 				t.Errorf("recorded factors = %v, want design for %v", experiment.Factors, tc.want)
 			}
+			runData, err := os.ReadFile(filepath.Join(resultsDir, "results", "runs.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			runLines := strings.Split(strings.TrimSpace(string(runData)), "\n")
+			if len(runLines) != len(seenLogs[resultsDir])+len(tc.want) {
+				t.Fatalf("got %d run records, want %d", len(runLines), len(seenLogs[resultsDir])+len(tc.want))
+			}
+			for _, line := range runLines[len(runLines)-len(tc.want):] {
+				var got struct {
+					ID     uuid.UUID `json:"id"`
+					Foo    int       `json:"foo"`
+					Bar    int       `json:"bar"`
+					Result int       `json:"result"`
+				}
+				if err := json.Unmarshal([]byte(line), &got); err != nil {
+					t.Fatal(err)
+				}
+				if got.ID == (uuid.UUID{}) || got.Result != got.Foo+got.Bar {
+					t.Errorf("invalid run record: %+v", got)
+				}
+			}
 			logs, err := filepath.Glob(filepath.Join(resultsDir, "results", "runs", "*.log"))
 			if err != nil {
 				t.Fatal(err)
@@ -176,7 +198,7 @@ func TestRunDoesNotReadCLIStdin(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdin: strings.NewReader("injected\n"), Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", `if read value; then printf 'read %s\n' "$value"; else printf 'no input\n'; fi`})
+		[]string{"experiment", "foo=1", "-r", `if read value; then printf 'read %s\n' "$value"; else printf 'no input\n'; fi; echo '{}'`})
 	if code != 0 {
 		t.Fatalf("exit code %d: %s", code, &stderr)
 	}
@@ -185,8 +207,59 @@ func TestRunDoesNotReadCLIStdin(t *testing.T) {
 		t.Fatalf("run logs = %v, %v; want one", logs, err)
 	}
 	data, err := os.ReadFile(logs[0])
-	if err != nil || string(data) != "no input\n" {
+	if err != nil || string(data) != "no input\n{}\n" {
 		t.Errorf("run log = %q, %v; want no input", data, err)
+	}
+}
+
+func TestRunOutcomeErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+	}{
+		{"empty log", `:`},
+		{"non-JSON", `echo 'not JSON'`},
+		{"blank last line", `printf '{}\n\n'`},
+		{"malformed JSON", `echo '{broken}'`},
+		{"null", `echo null`},
+		{"array", `echo '[1]'`},
+		{"number", `echo 42`},
+		{"conflicting response", `echo '{"foo":2}'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var stdout, stderr bytes.Buffer
+			code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
+				[]string{"experiment", "foo=1", "-r", tc.script})
+			if code != 1 || stdout.Len() != 0 {
+				t.Errorf("exit code %d, stdout %q, stderr %q; want error", code, &stdout, &stderr)
+			}
+			data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
+			if err != nil && !os.IsNotExist(err) || len(data) != 0 {
+				t.Errorf("invalid run was recorded: %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestRunOutcomeWithoutFinalNewline(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=1", "-r", `echo warning >&2; printf '{"ok":true}'`})
+	if code != 0 {
+		t.Fatalf("exit code %d: %s", code, &stderr)
+	}
+	data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Foo int  `json:"foo"`
+		OK  bool `json:"ok"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(data), &got); err != nil || got.Foo != 1 || !got.OK {
+		t.Errorf("run record %q: %v", data, err)
 	}
 }
 

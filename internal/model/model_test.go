@@ -96,6 +96,17 @@ func TestDesignSerialization(t *testing.T) {
 	}
 }
 
+func TestNewRun(t *testing.T) {
+	point := Point{"foo": 42}
+	run := NewRun(point)
+	if run.ID[6]>>4 != 7 || !reflect.DeepEqual(run.Point, point) || run.Outcome != nil {
+		t.Errorf("NewRun = %+v, want UUIDv7 and point %v", run, point)
+	}
+	if other := NewRun(point); other.ID == run.ID {
+		t.Errorf("NewRun reused ID %s", run.ID)
+	}
+}
+
 func TestRunSerialization(t *testing.T) {
 	id := uuid.NewV7()
 	point := Point{"foo": 42, "bar": true}

@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -18,7 +19,6 @@ import (
 	"github.com/felixge/doe2/internal/model"
 	"github.com/felixge/doe2/internal/results"
 	"github.com/spf13/pflag"
-	"uuid"
 )
 
 var factorPlaceholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
@@ -163,7 +163,8 @@ func runDesignPoint(ctx context.Context, script model.Script, results *results.R
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	log, err := results.OpenRunLog(uuid.NewV7())
+	run := model.NewRun(point)
+	log, err := results.OpenRunLog(run.ID)
 	if err != nil {
 		return err
 	}
@@ -171,12 +172,18 @@ func runDesignPoint(ctx context.Context, script model.Script, results *results.R
 	command.Dir = results.ProjectDir()
 	command.Stdout = log
 	command.Stderr = log
-	runErr := command.Run()
-	closeErr := log.Close()
-	if runErr != nil {
-		return fmt.Errorf("run %v: %w", point, runErr)
+	if err := cmp.Or(command.Run(), log.Close()); err != nil {
+		return fmt.Errorf("run %v: %w", point, err)
 	}
-	return closeErr
+	outcome, err := results.RunOutcome(run.ID)
+	if err != nil {
+		return fmt.Errorf("run %v: %w", point, err)
+	}
+	run.Outcome = outcome
+	if err := results.AppendRun(&run); err != nil {
+		return fmt.Errorf("run %v: %w", point, err)
+	}
+	return nil
 }
 
 func expandRunScript(script model.Script, point model.Point) string {
