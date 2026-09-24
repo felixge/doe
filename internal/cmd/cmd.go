@@ -38,6 +38,8 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 		return 0
 	case "experiment":
 		return experimentCommand(ctx, env, args[1:])
+	case "status":
+		return statusCommand(env, args[1:])
 	default:
 		_, _ = fmt.Fprintf(env.Stderr, "unknown command: %s\n", args[0])
 		return 1
@@ -93,6 +95,34 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return env.Fail(err)
 	}
 	_, _ = fmt.Fprintln(env.Stdout, experiment.ID)
+	return 0
+}
+
+func statusCommand(env *cli.Env, args []string) int {
+	flags := pflag.NewFlagSet("doe status", pflag.ContinueOnError)
+	flags.SetOutput(env.Stderr)
+	flags.Usage = func() {}
+	file := flags.StringP("file", "f", "", "study YAML file")
+	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
+		statusUsage(env.Stdout)
+		return 0
+	} else if err != nil {
+		return env.Fail(err)
+	}
+	if len(flags.Args()) != 0 {
+		return env.Fail(fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " ")))
+	}
+	status, err := results.Open(resultsDir(*file)).Status()
+	if err != nil {
+		return env.Fail(err)
+	}
+	if status == nil {
+		return env.Fail(fmt.Errorf("no experiment found in %s", resultsDir(*file)))
+	}
+	_, _ = fmt.Fprintf(env.Stdout, "Experiment: %s\nState: %s\n", status.ExperimentID, status.State)
+	if status.Total > 0 {
+		_, _ = fmt.Fprintf(env.Stdout, "Runs: %d/%d complete (%d%%)\n", status.Completed, status.Total, status.Completed*100/status.Total)
+	}
 	return 0
 }
 
@@ -238,8 +268,20 @@ Usage: doe <command> [command options] [arguments]
 
 Commands:
   experiment  Run an experiment and save run logs.
+  status      Show the latest experiment's progress.
 
 Run "doe <command> -h" for command-specific help.
+`)
+}
+
+func statusUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, `Show the latest experiment's progress.
+
+Usage: doe status [-f study.yaml]
+
+Options:
+  -f, --file  Read results next to the study YAML file.
+  -h, --help  Print help text.
 `)
 }
 
