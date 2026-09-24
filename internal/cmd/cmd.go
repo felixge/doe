@@ -58,7 +58,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return env.Fail(err)
 	}
 
-	// Separate configuration errors from run failures, which may be cancellations.
+	// Validate the study before recording an experiment or starting any runs.
 	experiment, results, err := prepareExperiment(*file, *runScript, flags.Changed("run"), flags.Args())
 	if err != nil {
 		return env.Fail(err)
