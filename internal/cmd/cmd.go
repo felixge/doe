@@ -211,7 +211,7 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, results *r
 	var setupErr error
 	if experiment.Setup != "" {
 		experiment.Env, setupErr = runSetup(ctx, results, experiment.ID, experiment.Setup)
-		if setupErr != nil {
+		if setupErr != nil && ctx.Err() == nil {
 			experiment.SetupError = setupErr.Error()
 		}
 	}
@@ -257,6 +257,11 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, results *
 		return err
 	}
 	err = executeScript(ctx, expandRunScript(experiment.Run, point), results, log)
+	// An interrupted run has no outcome. Keep its log, but do not record it
+	// as a failed run: status should report the experiment as stopped.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	run.End = time.Now()
 	outcome, outcomeErr := results.RunOutcome(run.ID)
 	run.Outcome = outcome

@@ -298,11 +298,76 @@ func TestExperimentSetupCanceled(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(experiment.SetupError, "context canceled") || experiment.Env == nil || len(experiment.Env) != 0 {
-		t.Errorf("canceled setup record = %s; want cancellation error and empty environment", data)
+	if experiment.SetupError != "" || experiment.Env == nil || len(experiment.Env) != 0 {
+		t.Errorf("canceled setup record = %s; want no error and empty environment", data)
+	}
+	status, err := results.Open("results").Status()
+	if err != nil || status == nil || status.State != results.StateStopped {
+		t.Errorf("canceled setup status = %+v, %v; want stopped", status, err)
 	}
 	if _, err := os.Stat(filepath.Join("results", "runs.jsonl")); !os.IsNotExist(err) {
 		t.Errorf("canceled setup recorded runs: %v", err)
+	}
+}
+
+func TestExperimentRunCanceled(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- Main(ctx, &cli.Env{Stdout: &stdout, Stderr: &stderr}, []string{
+			"experiment", "foo=[1, 2]", "-r",
+			`if [ {foo} = 1 ]; then echo '{}'; else printf 'partial'; touch started; while :; do sleep 0.01; done; fi`,
+		})
+	}()
+	deadline := time.After(5 * time.Second)
+	for {
+		if _, err := os.Stat("started"); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		select {
+		case code := <-done:
+			t.Fatalf("experiment exited early with code %d: %s", code, &stderr)
+		case <-deadline:
+			t.Fatal("second run did not start")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 130 || stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Errorf("canceled run = %d, stdout %q, stderr %q; want 130 and no output", code, &stdout, &stderr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("experiment did not stop after cancellation")
+	}
+	status, err := results.Open("results").Status()
+	if err != nil || status == nil || status.State != results.StateStopped || status.Completed != 1 || status.Total != 2 || status.Error != "" {
+		t.Errorf("canceled run status = %+v, %v; want stopped with 1/2 complete", status, err)
+	}
+	runs, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
+	if err != nil || len(bytes.Split(bytes.TrimSpace(runs), []byte("\n"))) != 1 {
+		t.Errorf("run records = %q, %v; want only the completed run", runs, err)
+	}
+	logs, err := filepath.Glob(filepath.Join("results", "logs", "*.run.log"))
+	if err != nil || len(logs) != 2 {
+		t.Fatalf("run logs = %v, %v; want both logs", logs, err)
+	}
+	var partial bool
+	for _, path := range logs {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		partial = partial || string(data) == "partial"
+	}
+	if !partial {
+		t.Error("interrupted run log did not retain partial output")
 	}
 }
 
