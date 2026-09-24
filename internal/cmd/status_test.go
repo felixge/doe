@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/felixge/doe2/internal/cli"
 	"github.com/felixge/doe2/internal/model"
@@ -70,6 +71,63 @@ func TestStatusProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("Error", "Runs: 1/2 complete (50%)\n")
+}
+
+func TestStatusShowsEstimatedRemaining(t *testing.T) {
+	t.Chdir(t.TempDir())
+	r, err := results.New("results")
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 1})
+	release, err := r.LockExperiment(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if err := r.AppendExperiment(&experiment); err != nil {
+		t.Fatal(err)
+	}
+	run := model.NewRun(experiment.ID, experiment.Points[0], 1)
+	run.Start = time.Now().Add(-10 * time.Second)
+	run.End = run.Start.Add(10 * time.Second)
+	if err := r.AppendRun(run); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runStatusCommand(t, "status")
+	prefix := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 1/2 complete (50%)\nRemaining: "
+	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, prefix) {
+		t.Fatalf("status = %d, %q, %q; want %q followed by duration", code, stdout, stderr, prefix)
+	}
+	remaining, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(stdout, prefix)))
+	if err != nil || remaining < 8*time.Second || remaining > 10*time.Second {
+		t.Errorf("remaining = %s, %v; want approximately 10s", remaining, err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr = runStatusCommand(t, "status")
+	if code != 0 || stderr != "" || strings.Contains(stdout, "Remaining:") {
+		t.Errorf("stopped status = %d, %q, %q; want no remaining time", code, stdout, stderr)
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	for _, tc := range []struct {
+		duration time.Duration
+		want     string
+	}{
+		{0, "0s"},
+		{-time.Second, "0s"},
+		{1500 * time.Millisecond, "2s"},
+		{3*time.Minute + 42*time.Second, "3m 42s"},
+		{time.Hour + 2*time.Minute + 3*time.Second, "1h 2m 3s"},
+		{2 * time.Hour, "2h"},
+	} {
+		if got := formatDuration(tc.duration); got != tc.want {
+			t.Errorf("formatDuration(%s) = %q, want %q", tc.duration, got, tc.want)
+		}
+	}
 }
 
 func TestStatusStopped(t *testing.T) {

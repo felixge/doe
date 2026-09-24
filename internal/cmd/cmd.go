@@ -124,7 +124,29 @@ func statusCommand(env *cli.Env, args []string) int {
 	if status.Total > 0 {
 		_, _ = fmt.Fprintf(env.Stdout, "Runs: %d/%d complete (%d%%)\n", status.Completed, status.Total, status.Completed*100/status.Total)
 	}
+	if status.HasRemaining {
+		_, _ = fmt.Fprintf(env.Stdout, "Remaining: %s\n", formatDuration(status.Remaining))
+	}
 	return 0
+}
+
+func formatDuration(duration time.Duration) string {
+	duration = max(duration.Round(time.Second), 0)
+	hours := duration / time.Hour
+	duration %= time.Hour
+	minutes := duration / time.Minute
+	seconds := duration % time.Minute / time.Second
+	parts := make([]string, 0, 3)
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+	}
+	if minutes > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", minutes))
+	}
+	if seconds > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%ds", seconds))
+	}
+	return strings.Join(parts, " ")
 }
 
 func prepareExperiment(path, preset, setupScript, runScript string, replicates int, args []string) (*model.Experiment, error) {
