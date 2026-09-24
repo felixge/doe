@@ -1,0 +1,6 @@
+factors:
+  file: [sample.txt]
+  algorithm: [gzip, zstd]
+  preset: [default]
+setup: ./setup.bash
+run: ./run.bash {algorithm} {preset} {file}
