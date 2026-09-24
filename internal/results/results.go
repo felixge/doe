@@ -40,16 +40,25 @@ func (r *Results) ProjectDir() string {
 	return filepath.Dir(r.dir)
 }
 
+// CreateSetupLog creates a log for an experiment's setup script.
+func (r *Results) CreateSetupLog(experimentID uuid.UUID) (*os.File, error) {
+	return r.createLog(experimentID, "setup")
+}
+
 // CreateRunLog creates a log for a run and returns it for streaming output.
 func (r *Results) CreateRunLog(runID uuid.UUID) (*os.File, error) {
-	dir := filepath.Join(r.dir, "runs")
+	return r.createLog(runID, "run")
+}
+
+func (r *Results) createLog(id uuid.UUID, kind string) (*os.File, error) {
+	dir := filepath.Join(r.dir, "logs")
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("create run logs directory %s: %w", dir, err)
+		return nil, fmt.Errorf("create logs directory %s: %w", dir, err)
 	}
-	path := r.runLogPath(runID)
+	path := r.logPath(id, kind)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("open run log %s: %w", path, err)
+		return nil, fmt.Errorf("open %s log %s: %w", kind, path, err)
 	}
 	return file, nil
 }
@@ -88,7 +97,11 @@ func (r *Results) RunOutcome(runID uuid.UUID) (model.Outcome, error) {
 }
 
 func (r *Results) runLogPath(runID uuid.UUID) string {
-	return filepath.Join(r.dir, "runs", runID.String()+".log")
+	return r.logPath(runID, "run")
+}
+
+func (r *Results) logPath(id uuid.UUID, kind string) string {
+	return filepath.Join(r.dir, "logs", id.String()+"."+kind+".log")
 }
 
 // AppendRun records a completed run as a JSON line.

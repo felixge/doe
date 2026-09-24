@@ -52,6 +52,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
 	file := flags.StringP("file", "f", "", "study YAML file")
+	setupScript := flags.StringP("setup", "s", "", "shell script to run before any runs")
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
 	replicates := flags.IntP("replicates", "n", 1, "runs per design point")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
@@ -62,7 +63,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Validate the study before recording an experiment or starting any runs.
-	experiment, results, err := prepareExperiment(*file, *runScript, *replicates, flags.Changed("replicates"), flags.Args())
+	experiment, results, err := prepareExperiment(*file, *setupScript, *runScript, *replicates, flags.Changed("replicates"), flags.Args())
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -86,7 +87,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	return 0
 }
 
-func prepareExperiment(path, runScript string, replicates int, overrideReplicates bool, args []string) (*model.Experiment, *results.Results, error) {
+func prepareExperiment(path, setupScript, runScript string, replicates int, overrideReplicates bool, args []string) (*model.Experiment, *results.Results, error) {
 	// Start from the file so CLI options can override study settings.
 	study := model.NewStudy()
 	if path != "" {
@@ -104,9 +105,14 @@ func prepareExperiment(path, runScript string, replicates int, overrideReplicate
 			return nil, nil, err
 		}
 	}
+	if setupScript != "" {
+		experiment.Setup = model.Script(setupScript)
+	}
+	experiment.Setup = model.Script(strings.TrimSpace(string(experiment.Setup)))
 	if runScript != "" {
 		experiment.Run = model.Script(runScript)
 	}
+	experiment.Run = model.Script(strings.TrimSpace(string(experiment.Run)))
 	if overrideReplicates {
 		experiment.Replicates = replicates
 	}
@@ -149,8 +155,13 @@ func resultsDir(path string) string {
 	return filepath.Join(dir, "results")
 }
 
-// runExperiment runs each point until a run fails.
+// runExperiment runs setup once, then each point until a script fails.
 func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
+	if experiment.Setup != "" {
+		if err := runSetup(ctx, experiment, results); err != nil {
+			return err
+		}
+	}
 	points := experiment.Points()
 	for replicate, row := range model.Schedule(len(points), experiment.Replicates) {
 		for _, index := range row {
@@ -158,6 +169,20 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, results *r
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func runSetup(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	log, err := results.CreateSetupLog(experiment.ID)
+	if err != nil {
+		return err
+	}
+	if err := executeScript(ctx, string(experiment.Setup), results, log); err != nil {
+		return fmt.Errorf("setup: %w", err)
 	}
 	return nil
 }
@@ -172,11 +197,7 @@ func runDesignPoint(ctx context.Context, script model.Script, results *results.R
 	if err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, "/bin/sh", "-c", expandRunScript(script, point))
-	command.Dir = results.ProjectDir()
-	command.Stdout = log
-	command.Stderr = log
-	if err := cmp.Or(command.Run(), log.Close()); err != nil {
+	if err := executeScript(ctx, expandRunScript(script, point), results, log); err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
 	outcome, err := results.RunOutcome(run.ID)
@@ -188,6 +209,15 @@ func runDesignPoint(ctx context.Context, script model.Script, results *results.R
 		return fmt.Errorf("run %v: %w", point, err)
 	}
 	return nil
+}
+
+// executeScript streams both output streams to the log and closes it even on failure.
+func executeScript(ctx context.Context, script string, results *results.Results, log *os.File) error {
+	command := exec.CommandContext(ctx, "/bin/sh", "-c", script)
+	command.Dir = results.ProjectDir()
+	command.Stdout = log
+	command.Stderr = log
+	return cmp.Or(command.Run(), log.Close())
 }
 
 func expandRunScript(script model.Script, point model.Point) string {
@@ -227,16 +257,18 @@ Options:
 func experimentUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe experiment [-f study.yaml] [key=value ...] [-r script] [-n count]
+Usage: doe experiment [-f study.yaml] [key=value ...] [-s script] [-r script] [-n count]
 
 Options:
-  -f, --file        Load factors, run script, and replicates from a YAML study.
+  -f, --file        Load factors, scripts, and replicates from a YAML study.
+  -s, --setup       Override the setup script, run once before any runs.
   -r, --run         Override the run script with a shell command.
   -n, --replicates  Override runs per design point (default: 1).
   -h, --help        Print help text.
 
 Factor settings are YAML values or sequences of values. CLI options override
 study settings. In run scripts, {factor} expands to the setting.
+Setup scripts do not expand factor placeholders.
 A study's replicates key runs each design point that many times (default: 1).
 `)
 }

@@ -73,7 +73,7 @@ func TestDesignValidate(t *testing.T) {
 	}{
 		{"valid", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'", Replicates: 2}, ""},
 		{"no factors", Design{Run: "echo '{}'", Replicates: 1}, "at least one factor is required"},
-		{"blank run", Design{Factors: Factors{"foo": {1}}, Run: "  ", Replicates: 1}, "run script is required"},
+		{"empty run", Design{Factors: Factors{"foo": {1}}, Replicates: 1}, "run script is required"},
 		{"zero replicates", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'"}, "replicates must be a positive integer"},
 		{"negative replicates", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'", Replicates: -2}, "replicates must be a positive integer"},
 	} {

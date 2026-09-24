@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"strings"
 	"uuid"
 
 	"gopkg.in/yaml.v3"
@@ -35,9 +34,10 @@ func (s *Study) Load(path string) error {
 	return nil
 }
 
-// Design defines the factors and script for an experiment.
+// Design defines the factors and scripts for an experiment.
 type Design struct {
 	Factors    Factors `json:"factors" yaml:"factors"`
+	Setup      Script  `json:"setup,omitempty" yaml:"setup"`
 	Run        Script  `json:"run" yaml:"run"`
 	Replicates int     `json:"replicates" yaml:"replicates"`
 }
@@ -47,7 +47,7 @@ func (d Design) Validate() error {
 	if len(d.Factors) == 0 {
 		return fmt.Errorf("at least one factor is required")
 	}
-	if strings.TrimSpace(string(d.Run)) == "" {
+	if d.Run == "" {
 		return fmt.Errorf("a run script is required")
 	}
 	if d.Replicates < 1 {

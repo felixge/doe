@@ -105,7 +105,7 @@ run: |
 					t.Errorf("invalid run record: %+v", got)
 				}
 			}
-			logs, err := filepath.Glob(filepath.Join(resultsDir, "results", "runs", "*.log"))
+			logs, err := filepath.Glob(filepath.Join(resultsDir, "results", "logs", "*.run.log"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ run: |
 					continue
 				}
 				seenLogs[resultsDir][path] = true
-				if _, err := uuid.Parse(strings.TrimSuffix(filepath.Base(path), ".log")); err != nil {
+				if _, err := uuid.Parse(strings.TrimSuffix(filepath.Base(path), ".run.log")); err != nil {
 					t.Errorf("invalid run log name %q: %v", path, err)
 				}
 				data, err := os.ReadFile(path)
@@ -149,6 +149,79 @@ run: |
 			previous.Experiments = append(previous.Experiments, experiment)
 			recorded[resultsDir] = previous
 		})
+	}
+}
+
+func TestExperimentSetup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"study", nil, "study"},
+		{"CLI override", []string{"--setup", `echo CLI >> marker; echo '{foo}'`}, "CLI"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "study.yaml")
+			study := "factors:\n  foo: [1, 2]\nsetup: echo study >> marker; echo '{foo}'\nrun: test -f marker && echo '{}'\n"
+			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string{"experiment", "-f", path}, tc.args...)
+			var stdout, stderr bytes.Buffer
+			if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 {
+				t.Fatalf("exit code %d: %s", code, &stderr)
+			}
+			var experiment model.Experiment
+			data, err := os.ReadFile(filepath.Join(dir, "results", "experiments.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(experiment.Setup), tc.want) {
+				t.Errorf("recorded setup = %q, want %q", experiment.Setup, tc.want)
+			}
+			data, err = os.ReadFile(filepath.Join(dir, "marker"))
+			if err != nil || string(data) != tc.want+"\n" {
+				t.Errorf("marker = %q, %v; want %q", data, err, tc.want)
+			}
+			data, err = os.ReadFile(filepath.Join(dir, "results", "logs", experiment.ID.String()+".setup.log"))
+			if err != nil || string(data) != "{foo}\n" {
+				t.Errorf("setup log = %q, %v; want literal placeholder", data, err)
+			}
+			runLogs, err := filepath.Glob(filepath.Join(dir, "results", "logs", "*.run.log"))
+			if err != nil || len(runLogs) != 2 {
+				t.Errorf("run logs = %v, %v; want two", runLogs, err)
+			}
+		})
+	}
+}
+
+func TestExperimentSetupFailure(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=1", "-s", "echo failed >&2; exit 7", "-r", "echo '{}'"})
+	if code != 1 || !strings.Contains(stderr.String(), "setup: exit status 7") || stdout.Len() != 0 {
+		t.Fatalf("exit code %d, stdout %q, stderr %q; want setup error", code, &stdout, &stderr)
+	}
+	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var experiment model.Experiment
+	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join("results", "logs", experiment.ID.String()+".setup.log"))
+	if err != nil || string(data) != "failed\n" {
+		t.Errorf("failed setup log = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join("results", "runs.jsonl")); !os.IsNotExist(err) {
+		t.Errorf("setup failure recorded runs: %v", err)
 	}
 }
 
@@ -211,7 +284,7 @@ run: echo '{"ok":true}'
 			t.Errorf("invalid replicate for point %d: %d", run.Foo, run.Replicate)
 		}
 		seen[run.Foo][run.Replicate] = true
-		if _, err := os.Stat(filepath.Join(dir, "runs", run.ID.String()+".log")); err != nil {
+		if _, err := os.Stat(filepath.Join(dir, "logs", run.ID.String()+".run.log")); err != nil {
 			t.Errorf("missing log for run %s: %v", run.ID, err)
 		}
 	}
@@ -415,7 +488,7 @@ func TestRunDoesNotReadCLIStdin(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code %d: %s", code, &stderr)
 	}
-	logs, err := filepath.Glob(filepath.Join("results", "runs", "*.log"))
+	logs, err := filepath.Glob(filepath.Join("results", "logs", "*.run.log"))
 	if err != nil || len(logs) != 1 {
 		t.Fatalf("run logs = %v, %v; want one", logs, err)
 	}
@@ -508,6 +581,7 @@ func TestExperimentErrors(t *testing.T) {
 		want string
 	}{
 		{[]string{"experiment", "foo=1"}, "run script is required"},
+		{[]string{"experiment", "foo=1", "--run", "  "}, "run script is required"},
 		{[]string{"experiment", "foo=1", "--run", "printf 'partial\\n'; printf 'warning\\n' >&2; exit 7"}, "exit status 7"},
 		{[]string{"execute"}, "unknown command"},
 		{[]string{"run"}, "unknown command"},
@@ -531,7 +605,7 @@ func TestExperimentErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	logs, err := filepath.Glob(filepath.Join("results", "runs", "*.log"))
+	logs, err := filepath.Glob(filepath.Join("results", "logs", "*.run.log"))
 	if err != nil || len(logs) != 1 {
 		t.Fatalf("run logs = %v, %v; want one failed run log", logs, err)
 	}
