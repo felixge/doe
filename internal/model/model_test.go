@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"gopkg.in/yaml.v3"
@@ -120,6 +121,8 @@ func TestDesignValidate(t *testing.T) {
 		{"zero replicates", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'"}, "replicates must be a positive integer"},
 		{"negative replicates", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'", Replicates: -2}, "replicates must be a positive integer"},
 		{"reserved error factor", Design{Factors: Factors{"error": {1}}, Run: "echo '{}'", Replicates: 1}, `run factor "error" conflicts with reserved field`},
+		{"reserved start factor", Design{Factors: Factors{"start": {1}}, Run: "echo '{}'", Replicates: 1}, `run factor "start" conflicts with reserved field`},
+		{"reserved end factor", Design{Factors: Factors{"end": {1}}, Run: "echo '{}'", Replicates: 1}, `run factor "end" conflicts with reserved field`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.design.Validate()
@@ -232,9 +235,14 @@ func TestNewExperimentEmptyPoints(t *testing.T) {
 func TestNewRun(t *testing.T) {
 	point := Point{"foo": 42}
 	experimentID := uuid.NewV7()
+	before := time.Now()
 	run := NewRun(experimentID, point, 2)
+	after := time.Now()
 	if run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.Outcome != nil {
 		t.Errorf("NewRun = %+v, want UUIDv7 and point %v", run, point)
+	}
+	if run.Start.Before(before) || run.Start.After(after) || !run.End.IsZero() {
+		t.Errorf("NewRun timing = %s to %s; want start within [%s, %s] and no end", run.Start, run.End, before, after)
 	}
 	if other := NewRun(experimentID, point, 2); other.ID == run.ID {
 		t.Errorf("NewRun reused ID %s", run.ID)
@@ -246,18 +254,20 @@ func TestRunSerialization(t *testing.T) {
 	experimentID := uuid.NewV7()
 	point := Point{"foo": 42, "bar": true}
 	outcome := Outcome{"sum": 43, "ok": true}
+	start := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	end := start.Add(1500 * time.Millisecond)
 	for _, tc := range []struct {
 		name    string
 		point   Point
 		outcome Outcome
 		want    map[string]any
 	}{
-		{"with settings and measurements", point, outcome, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "error": "", "foo": float64(42), "bar": true, "sum": float64(43), "ok": true}},
-		{"without settings or measurements", nil, nil, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "error": ""}},
-		{"formerly reserved fields", Point{"failed": true}, Outcome{"exit_code": 7}, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "error": "", "failed": true, "exit_code": float64(7)}},
+		{"with settings and measurements", point, outcome, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "start": start.Format(time.RFC3339Nano), "end": end.Format(time.RFC3339Nano), "error": "", "foo": float64(42), "bar": true, "sum": float64(43), "ok": true}},
+		{"without settings or measurements", nil, nil, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "start": start.Format(time.RFC3339Nano), "end": end.Format(time.RFC3339Nano), "error": ""}},
+		{"formerly reserved fields", Point{"failed": true}, Outcome{"exit_code": 7}, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "start": start.Format(time.RFC3339Nano), "end": end.Format(time.RFC3339Nano), "error": "", "failed": true, "exit_code": float64(7)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			run := &Run{ID: id, ExperimentID: experimentID, Point: tc.point, Replicate: 2, Outcome: tc.outcome}
+			run := &Run{ID: id, ExperimentID: experimentID, Point: tc.point, Replicate: 2, Start: start, End: end, Outcome: tc.outcome}
 			if err := run.Valid(); err != nil {
 				t.Fatal(err)
 			}
@@ -312,8 +322,12 @@ func TestRunSerializationConflict(t *testing.T) {
 		{"replicate factor", &Run{Point: Point{"replicate": 1}}, `run factor "replicate" conflicts with reserved field`},
 		{"experiment ID factor", &Run{Point: Point{"experiment_id": 1}}, `run factor "experiment_id" conflicts with reserved field`},
 		{"error factor", &Run{Point: Point{"error": 1}}, `run factor "error" conflicts with reserved field`},
+		{"start factor", &Run{Point: Point{"start": 1}}, `run factor "start" conflicts with reserved field`},
+		{"end factor", &Run{Point: Point{"end": 1}}, `run factor "end" conflicts with reserved field`},
 		{"reserved response", &Run{Outcome: Outcome{"id": 1}}, `run response "id" conflicts with reserved field`},
 		{"error response", &Run{Outcome: Outcome{"error": 1}}, `run response "error" conflicts with reserved field`},
+		{"start response", &Run{Outcome: Outcome{"start": 1}}, `run response "start" conflicts with reserved field`},
+		{"end response", &Run{Outcome: Outcome{"end": 1}}, `run response "end" conflicts with reserved field`},
 		{"replicate response", &Run{Outcome: Outcome{"replicate": 1}}, `run response "replicate" conflicts with reserved field`},
 		{"experiment ID response", &Run{Outcome: Outcome{"experiment_id": 1}}, `run response "experiment_id" conflicts with reserved field`},
 		{"factor and response", &Run{Point: Point{"foo": 1}, Outcome: Outcome{"foo": 2}}, `run outcome conflicts with factor "foo"`},

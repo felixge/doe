@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"time"
 	"uuid"
 
 	"gopkg.in/yaml.v3"
@@ -173,13 +174,15 @@ type Run struct {
 	ExperimentID uuid.UUID
 	Point        Point
 	Replicate    int
+	Start        time.Time
+	End          time.Time
 	Error        string
 	Outcome      Outcome
 }
 
 // NewRun creates a run for an experiment, design point, and one-based replicate with a UUIDv7 ID.
 func NewRun(experimentID uuid.UUID, point Point, replicate int) *Run {
-	return &Run{ID: uuid.NewV7(), ExperimentID: experimentID, Point: point, Replicate: replicate}
+	return &Run{ID: uuid.NewV7(), ExperimentID: experimentID, Point: point, Replicate: replicate, Start: time.Now()}
 }
 
 // Valid checks that point and outcome fields can coexist with run metadata.
@@ -200,12 +203,12 @@ func (r *Run) Valid() error {
 	return nil
 }
 
-// MarshalJSON writes the ID, replicate, point settings, and outcome as a flat object.
+// MarshalJSON writes run metadata, point settings, and outcome as a flat object.
 func (r *Run) MarshalJSON() ([]byte, error) {
 	if err := r.Valid(); err != nil {
 		return nil, err
 	}
-	fields := map[string]any{"id": r.ID, "experiment_id": r.ExperimentID, "replicate": r.Replicate, "error": r.Error}
+	fields := map[string]any{"id": r.ID, "experiment_id": r.ExperimentID, "replicate": r.Replicate, "start": r.Start, "end": r.End, "error": r.Error}
 	for factor, setting := range r.Point {
 		fields[string(factor)] = setting
 	}
@@ -217,7 +220,7 @@ func (r *Run) MarshalJSON() ([]byte, error) {
 
 func reservedRunField(name string) bool {
 	switch name {
-	case "id", "experiment_id", "replicate", "error":
+	case "id", "experiment_id", "replicate", "start", "end", "error":
 		return true
 	}
 	return false

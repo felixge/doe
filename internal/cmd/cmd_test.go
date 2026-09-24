@@ -493,12 +493,14 @@ run: echo '{"ok":true}'
 			ID        uuid.UUID `json:"id"`
 			Foo       int       `json:"foo"`
 			Replicate int       `json:"replicate"`
+			Start     time.Time `json:"start"`
+			End       time.Time `json:"end"`
 			OK        bool      `json:"ok"`
 		}
 		if err := json.Unmarshal(line, &run); err != nil {
 			t.Fatal(err)
 		}
-		if run.ID == (uuid.UUID{}) || ids[run.ID] || !run.OK {
+		if run.ID == (uuid.UUID{}) || ids[run.ID] || !run.OK || run.Start.IsZero() || run.End.Before(run.Start) {
 			t.Errorf("invalid replicated run: %+v", run)
 		}
 		ids[run.ID] = true
@@ -781,15 +783,17 @@ func TestFailedRunKeepsOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	var run struct {
-		Foo   int    `json:"foo"`
-		Value int    `json:"value"`
-		Error string `json:"error"`
+		Foo   int       `json:"foo"`
+		Value int       `json:"value"`
+		Error string    `json:"error"`
+		Start time.Time `json:"start"`
+		End   time.Time `json:"end"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(data), &run); err != nil {
 		t.Fatal(err)
 	}
-	if run.Foo != 1 || run.Value != 42 || !strings.Contains(run.Error, "exit status 7") {
-		t.Errorf("failed run record = %s; want measurement and exit status 7", data)
+	if run.Foo != 1 || run.Value != 42 || !strings.Contains(run.Error, "exit status 7") || run.Start.IsZero() || run.End.Before(run.Start) {
+		t.Errorf("failed run record = %s; want measurement, error, and timestamps", data)
 	}
 }
 

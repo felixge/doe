@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/felixge/doe2/internal/cli"
 	"github.com/felixge/doe2/internal/model"
@@ -225,6 +226,7 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, results *
 		return err
 	}
 	err = executeScript(ctx, expandRunScript(experiment.Run, point), results, log)
+	run.End = time.Now()
 	outcome, outcomeErr := results.RunOutcome(run.ID)
 	run.Outcome = outcome
 	validationErr := run.Valid()
