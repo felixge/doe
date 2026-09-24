@@ -114,19 +114,40 @@ type Point map[Factor]Setting
 // Run is an execution of a design point, identified by a UUID.
 // JSON tags are unnecessary because MarshalJSON handles serialization.
 type Run struct {
-	ID    uuid.UUID
-	Point Point
+	ID      uuid.UUID
+	Point   Point
+	Outcome Outcome
 }
 
-// MarshalJSON writes the ID and point settings as a flat object.
+// MarshalJSON writes the ID, point settings, and outcome as a flat object.
 func (r Run) MarshalJSON() ([]byte, error) {
-	fields := maps.Clone(r.Point)
-	if fields == nil {
-		fields = make(Point)
+	fields := map[string]any{"id": r.ID}
+	for factor, setting := range r.Point {
+		if _, exists := fields[string(factor)]; exists {
+			return nil, fmt.Errorf("run factor %q conflicts with reserved field", factor)
+		}
+		fields[string(factor)] = setting
 	}
-	fields["id"] = r.ID
+	for response, measurement := range r.Outcome {
+		if _, exists := fields[string(response)]; exists {
+			if _, factor := r.Point[Factor(response)]; factor {
+				return nil, fmt.Errorf("run outcome conflicts with factor %q", response)
+			}
+			return nil, fmt.Errorf("run response %q conflicts with reserved field", response)
+		}
+		fields[string(response)] = measurement
+	}
 	return json.Marshal(fields)
 }
+
+// Outcome maps each response to its measurement for a run.
+type Outcome map[Response]Measurement
+
+// Response names a measured outcome of a run.
+type Response string
+
+// Measurement is a response value of any type.
+type Measurement any
 
 // Settings lists possible settings for a factor. A nil or empty slice represents
 // a factor that doesn't have a setting.

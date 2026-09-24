@@ -98,17 +98,19 @@ func TestDesignSerialization(t *testing.T) {
 
 func TestRunSerialization(t *testing.T) {
 	id := uuid.NewV7()
-	point := Point{"foo": 42, "bar": true, "id": "factor value"}
+	point := Point{"foo": 42, "bar": true}
+	outcome := Outcome{"sum": 43, "ok": true}
 	for _, tc := range []struct {
-		name  string
-		point Point
-		want  map[string]any
+		name    string
+		point   Point
+		outcome Outcome
+		want    map[string]any
 	}{
-		{"with settings", point, map[string]any{"id": id.String(), "foo": float64(42), "bar": true}},
-		{"without settings", nil, map[string]any{"id": id.String()}},
+		{"with settings and measurements", point, outcome, map[string]any{"id": id.String(), "foo": float64(42), "bar": true, "sum": float64(43), "ok": true}},
+		{"without settings or measurements", nil, nil, map[string]any{"id": id.String()}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			data, err := json.Marshal(Run{ID: id, Point: tc.point})
+			data, err := json.Marshal(Run{ID: id, Point: tc.point, Outcome: tc.outcome})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,8 +123,27 @@ func TestRunSerialization(t *testing.T) {
 			}
 		})
 	}
-	if point["id"] != "factor value" {
-		t.Errorf("marshaling changed point: %v", point)
+	if point["foo"] != 42 || outcome["sum"] != 43 {
+		t.Errorf("marshaling changed point or outcome: %v, %v", point, outcome)
+	}
+}
+
+func TestRunSerializationConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  Run
+		want string
+	}{
+		{"reserved factor", Run{Point: Point{"id": 1}}, `run factor "id" conflicts with reserved field`},
+		{"reserved response", Run{Outcome: Outcome{"id": 1}}, `run response "id" conflicts with reserved field`},
+		{"factor and response", Run{Point: Point{"foo": 1}, Outcome: Outcome{"foo": 2}}, `run outcome conflicts with factor "foo"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := json.Marshal(tc.run)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("conflicting run JSON error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
