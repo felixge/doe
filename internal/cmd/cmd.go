@@ -79,6 +79,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		}
 		return env.Fail(err)
 	}
+	_, _ = fmt.Fprintln(env.Stdout, experiment.ID)
 	return 0
 }
 

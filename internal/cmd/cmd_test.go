@@ -48,9 +48,6 @@ run: |
 			if stderr.Len() != 0 {
 				t.Fatalf("stderr = %q", &stderr)
 			}
-			if stdout.Len() != 0 {
-				t.Errorf("stdout = %q, want empty", &stdout)
-			}
 			resultsDir := "."
 			if tc.name != "flags and factors interspersed" {
 				resultsDir = filepath.Dir(path)
@@ -73,6 +70,9 @@ run: |
 			}
 			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" {
 				t.Errorf("invalid experiment record: %+v", experiment)
+			}
+			if want := experiment.ID.String() + "\n"; stdout.String() != want {
+				t.Errorf("stdout = %q, want %q", &stdout, want)
 			}
 			for _, prior := range previous.Experiments {
 				if experiment.ID == prior.ID {
@@ -134,6 +134,7 @@ func TestExperimentRecordedWhileRunning(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	env := &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}
 	done := make(chan int, 1)
+	var experiment model.Experiment
 	go func() {
 		done <- Main(context.Background(), env, []string{"experiment", "foo=1", "-r", `while [ ! -f gate ]; do sleep 0.01; done; echo '{}'`})
 	}()
@@ -143,6 +144,9 @@ func TestExperimentRecordedWhileRunning(t *testing.T) {
 		}
 		if code := <-done; code != 0 {
 			t.Errorf("exit code %d: %s", code, &stderr)
+		}
+		if want := experiment.ID.String() + "\n"; stdout.String() != want {
+			t.Errorf("stdout = %q, want %q", &stdout, want)
 		}
 	}()
 
@@ -157,7 +161,6 @@ func TestExperimentRecordedWhileRunning(t *testing.T) {
 			data, _ = os.ReadFile(path)
 		}
 	}
-	var experiment model.Experiment
 	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
 		t.Fatal(err)
 	}
@@ -225,8 +228,8 @@ func TestExperimentErrors(t *testing.T) {
 	} {
 		var stdout, stderr bytes.Buffer
 		code := Main(context.Background(), &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}, tc.args)
-		if code != 1 || !strings.Contains(stderr.String(), tc.want) {
-			t.Errorf("Main(%q) = %d, stderr %q; want %q", tc.args, code, &stderr, tc.want)
+		if code != 1 || !strings.Contains(stderr.String(), tc.want) || stdout.Len() != 0 {
+			t.Errorf("Main(%q) = %d, stdout %q, stderr %q; want error %q and empty stdout", tc.args, code, &stdout, &stderr, tc.want)
 		}
 	}
 	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
