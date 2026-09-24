@@ -131,7 +131,7 @@ func prepareExperiment(path, preset, setupScript, runScript string, replicates i
 	if err := design.Validate(); err != nil {
 		return nil, err
 	}
-	experiment := model.NewExperiment(model.Study{Design: design})
+	experiment := model.NewExperiment(design)
 	experiment.Preset = preset
 	return &experiment, nil
 }
@@ -154,10 +154,9 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, results *r
 	if err := results.AppendExperiment(experiment); err != nil {
 		return err
 	}
-	points := experiment.Points()
-	for replicate, row := range model.Schedule(len(points), experiment.Replicates) {
+	for replicate, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
 		for _, index := range row {
-			if err := runDesignPoint(ctx, experiment, results, points[index], replicate+1); err != nil {
+			if err := runDesignPoint(ctx, experiment, results, experiment.Points[index], replicate+1); err != nil {
 				return err
 			}
 		}

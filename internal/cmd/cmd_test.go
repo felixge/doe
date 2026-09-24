@@ -84,6 +84,13 @@ run: |
 			if len(experiment.Factors["foo"]) != len(tc.want)/len(experiment.Factors["bar"]) {
 				t.Errorf("recorded factors = %v, want design for %v", experiment.Factors, tc.want)
 			}
+			wantPoints := make([]model.Point, len(tc.want))
+			for i, pair := range tc.want {
+				wantPoints[i] = model.Point{"foo": float64(pair[0]), "bar": float64(pair[1])}
+			}
+			if !reflect.DeepEqual(experiment.Points, wantPoints) {
+				t.Errorf("recorded points = %v, want %v", experiment.Points, wantPoints)
+			}
 			runData, err := os.ReadFile(filepath.Join(resultsDir, "results", "runs.jsonl"))
 			if err != nil {
 				t.Fatal(err)
@@ -341,8 +348,8 @@ func TestCompressionPresets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(experiment.Points()) != tc.points || experiment.Replicates != tc.replicates || experiment.Setup != "./setup.bash" || experiment.Run != "./run.bash {algorithm} {preset} {file}" {
-				t.Errorf("compression design = %+v, points = %d", experiment.Design, len(experiment.Points()))
+			if len(experiment.Points) != tc.points || experiment.Replicates != tc.replicates || experiment.Setup != "./setup.bash" || experiment.Run != "./run.bash {algorithm} {preset} {file}" {
+				t.Errorf("compression design = %+v, points = %d", experiment.Design, len(experiment.Points))
 			}
 		})
 	}

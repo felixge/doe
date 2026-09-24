@@ -19,7 +19,7 @@ func TestNewStudy(t *testing.T) {
 
 func TestNewExperiment(t *testing.T) {
 	study := Study{Factors: Factors{"foo": {1}}, Run: "echo study"}
-	experiment := NewExperiment(study)
+	experiment := NewExperiment(study.Design)
 	if version := experiment.ID[6] >> 4; version != 7 {
 		t.Errorf("ID version = %d, want 7", version)
 	}
@@ -28,6 +28,9 @@ func TestNewExperiment(t *testing.T) {
 	}
 	if experiment.Run != study.Run || !reflect.DeepEqual(experiment.Factors, study.Factors) {
 		t.Errorf("experiment = %+v, want factors and run from study %+v", experiment, study)
+	}
+	if !reflect.DeepEqual(experiment.Points, []Point{{"foo": 1}}) {
+		t.Errorf("points = %v, want [{foo:1}]", experiment.Points)
 	}
 	if err := experiment.Factors.Set("foo", []byte("[2, 3]")); err != nil {
 		t.Fatal(err)
@@ -42,7 +45,7 @@ func TestDesignReplicates(t *testing.T) {
 	if err := yaml.Unmarshal([]byte("factors:\n  foo: [1, 2]\nrun: echo '{}'\nreplicates: 3\n"), &study); err != nil {
 		t.Fatal(err)
 	}
-	experiment := NewExperiment(study)
+	experiment := NewExperiment(study.Design)
 	if got := experiment.Replicates; got != 3 {
 		t.Errorf("replicate count = %d, want 3", got)
 	}
@@ -159,8 +162,8 @@ func TestDesignPointsEmpty(t *testing.T) {
 		want    []Point
 	}{
 		{"no factors", nil, []Point{{}}},
-		{"empty settings", Factors{"foo": {}}, nil},
-		{"empty with other factors", Factors{"foo": {1}, "bar": nil}, nil},
+		{"empty settings", Factors{"foo": {}}, []Point{}},
+		{"empty with other factors", Factors{"foo": {1}, "bar": nil}, []Point{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := (Design{Factors: tc.factors}).Points(); !reflect.DeepEqual(got, tc.want) {
@@ -179,7 +182,7 @@ func TestDesignSerialization(t *testing.T) {
 		t.Errorf("study = %+v, want flat YAML design", study)
 	}
 
-	data, err := json.Marshal(NewExperiment(study))
+	data, err := json.Marshal(NewExperiment(study.Design))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,6 +201,26 @@ func TestDesignSerialization(t *testing.T) {
 	}
 	if _, ok := record["preset"]; ok {
 		t.Errorf("experiment without preset records one: %s", data)
+	}
+	if !reflect.DeepEqual(record["points"], []any{map[string]any{"foo": float64(1)}}) {
+		t.Errorf("experiment has wrong points: %s", data)
+	}
+}
+
+func TestNewExperimentEmptyPoints(t *testing.T) {
+	experiment := NewExperiment(Design{Factors: Factors{"foo": {}}})
+	data, err := json.Marshal(experiment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Points []Point `json:"points"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Points == nil || len(record.Points) != 0 {
+		t.Errorf("points = %s, want []", data)
 	}
 }
 

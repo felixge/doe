@@ -80,7 +80,8 @@ func (d Design) Clone() Design {
 }
 
 // Points returns the cartesian product of the design's factor settings.
-// Factors are sorted so the resulting order is stable.
+// Factors are sorted so the resulting order is stable. If any factor has no
+// settings, Points returns an empty slice.
 func (d Design) Points() []Point {
 	factors := make([]Factor, 0, len(d.Factors))
 	for factor := range d.Factors {
@@ -88,7 +89,7 @@ func (d Design) Points() []Point {
 	}
 	slices.Sort(factors)
 
-	var points []Point
+	points := []Point{}
 	current := make(Point, len(factors))
 	var visit func(int)
 	visit = func(index int) {
@@ -116,15 +117,18 @@ type Experiment struct {
 	ID     uuid.UUID `json:"id"`
 	Env    Env       `json:"env"`
 	Preset string    `json:"preset,omitempty"`
+	Points []Point   `json:"points"`
 	Design `json:"design"`
 }
 
-// NewExperiment creates an experiment from a study with a UUIDv7 ID.
-func NewExperiment(study Study) Experiment {
+// NewExperiment creates an experiment from a design with a UUIDv7 ID.
+func NewExperiment(design Design) Experiment {
+	design = design.Clone()
 	return Experiment{
 		ID:     uuid.NewV7(),
 		Env:    Env{},
-		Design: study.Clone(),
+		Points: design.Points(),
+		Design: design,
 	}
 }
 

@@ -15,8 +15,8 @@ func TestExperimentLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := model.NewExperiment(model.Study{}).ID
-	other := model.NewExperiment(model.Study{}).ID
+	id := model.NewExperiment(model.Design{}).ID
+	other := model.NewExperiment(model.Design{}).ID
 	release, err := r.LockExperiment(id)
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +61,8 @@ func TestAppendExperiment(t *testing.T) {
 	if got, want := results.ProjectDir(), filepath.Dir(dir); got != want {
 		t.Errorf("ProjectDir() = %q, want %q", got, want)
 	}
-	first := model.NewExperiment(model.Study{})
-	second := model.NewExperiment(model.Study{})
+	first := model.NewExperiment(model.Design{})
+	second := model.NewExperiment(model.Design{})
 	for _, experiment := range []*model.Experiment{&first, &second} {
 		if err := results.AppendExperiment(experiment); err != nil {
 			t.Fatal(err)
@@ -93,7 +93,7 @@ func TestRunOutcomeAndAppendErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := &model.Run{ID: model.NewExperiment(model.Study{}).ID, Point: model.Point{"foo": 1}}
+	run := &model.Run{ID: model.NewExperiment(model.Design{}).ID, Point: model.Point{"foo": 1}}
 	if _, err := r.RunOutcome(run.ID); err == nil || !strings.Contains(err.Error(), "open run log") {
 		t.Errorf("missing log error = %v", err)
 	}
