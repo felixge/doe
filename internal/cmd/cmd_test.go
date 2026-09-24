@@ -400,6 +400,19 @@ presets:
 	}
 }
 
+func TestExperimentEmptySettings(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
+		[]string{"experiment", "foo=[]", "-r", "echo '{}'"})
+	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `factor "foo" has no settings`) {
+		t.Errorf("empty design = %d, stdout %q, stderr %q; want validation error", code, &stdout, &stderr)
+	}
+	if _, err := os.Stat("results"); !os.IsNotExist(err) {
+		t.Errorf("empty design created results: %v", err)
+	}
+}
+
 func TestCompressionPresets(t *testing.T) {
 	path := filepath.Join("..", "..", "example", "compression", "compression.study.yaml")
 	for _, tc := range []struct {

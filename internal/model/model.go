@@ -70,7 +70,10 @@ func (d Design) Validate() error {
 	if d.Replicates < 1 {
 		return fmt.Errorf("replicates must be a positive integer")
 	}
-	for factor := range d.Factors {
+	for factor, settings := range d.Factors {
+		if len(settings) == 0 {
+			return fmt.Errorf("factor %q has no settings", factor)
+		}
 		if reservedRunField(string(factor)) {
 			return fmt.Errorf("run factor %q conflicts with reserved field", factor)
 		}
