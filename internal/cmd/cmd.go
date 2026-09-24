@@ -37,8 +37,6 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 		return 0
 	case "experiment":
 		return experimentCommand(ctx, env, args[1:])
-	case "clean":
-		return cleanCommand(env, args[1:])
 	default:
 		_, _ = fmt.Fprintf(env.Stderr, "unknown command: %s\n", args[0])
 		return 1
@@ -55,6 +53,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	setupScript := flags.StringP("setup", "s", "", "shell script to run before any runs")
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
 	replicates := flags.IntP("replicates", "n", 1, "runs per design point")
+	clean := flags.BoolP("clean", "c", false, "remove previous results before running")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
 		experimentUsage(env.Stdout)
 		return 0
@@ -62,8 +61,20 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return env.Fail(err)
 	}
 
-	// Validate the study before recording an experiment or starting any runs.
-	experiment, results, err := prepareExperiment(*file, *setupScript, *runScript, *replicates, flags.Changed("replicates"), flags.Args())
+	// Prepare and validate the experiment before starting any runs.
+	experiment, err := prepareExperiment(*file, *setupScript, *runScript, *replicates, flags.Changed("replicates"), flags.Args())
+	if err != nil {
+		return env.Fail(err)
+	}
+
+	// Clear previous results only after the experiment has been validated.
+	dir := resultsDir(*file)
+	if *clean {
+		if err := os.RemoveAll(dir); err != nil {
+			return env.Fail(fmt.Errorf("remove results directory: %w", err))
+		}
+	}
+	results, err := results.New(dir)
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -84,22 +95,22 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	return 0
 }
 
-func prepareExperiment(path, setupScript, runScript string, replicates int, overrideReplicates bool, args []string) (*model.Experiment, *results.Results, error) {
+func prepareExperiment(path, setupScript, runScript string, replicates int, overrideReplicates bool, args []string) (*model.Experiment, error) {
 	// Start from the file so CLI options can override study settings.
 	study := model.NewStudy()
 	if path != "" {
 		if err := study.Load(path); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	experiment := model.NewExperiment(study)
 	for _, arg := range args {
 		factor, settingsYAML, ok := strings.Cut(arg, "=")
 		if !ok {
-			return nil, nil, fmt.Errorf("factor %q must be key=value", arg)
+			return nil, fmt.Errorf("factor %q must be key=value", arg)
 		}
 		if err := experiment.Factors.Set(model.Factor(factor), []byte(settingsYAML)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	if setupScript != "" {
@@ -116,32 +127,9 @@ func prepareExperiment(path, setupScript, runScript string, replicates int, over
 
 	// Reject incomplete designs before running anything.
 	if err := experiment.Validate(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-
-	// Keep scripts and results relative to the study file.
-	results, err := results.New(resultsDir(path))
-	return &experiment, results, err
-}
-
-func cleanCommand(env *cli.Env, args []string) int {
-	flags := pflag.NewFlagSet("doe clean", pflag.ContinueOnError)
-	flags.SetOutput(env.Stderr)
-	flags.Usage = func() {}
-	file := flags.StringP("file", "f", "", "study YAML file")
-	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
-		cleanUsage(env.Stdout)
-		return 0
-	} else if err != nil {
-		return env.Fail(err)
-	}
-	if len(flags.Args()) != 0 {
-		return env.Fail(fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " ")))
-	}
-	if err := os.RemoveAll(resultsDir(*file)); err != nil {
-		return env.Fail(fmt.Errorf("remove results directory: %w", err))
-	}
-	return 0
+	return &experiment, nil
 }
 
 func resultsDir(path string) string {
@@ -242,33 +230,22 @@ Usage: doe <command> [command options] [arguments]
 
 Commands:
   experiment  Run an experiment and save run logs.
-  clean       Remove the results directory.
 
 Run "doe <command> -h" for command-specific help.
-`)
-}
-
-func cleanUsage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `Remove the results directory for a study or the current directory.
-
-Usage: doe clean [-f study.yaml]
-
-Options:
-  -f, --file  Select the project directory containing the study file.
-  -h, --help  Print help text.
 `)
 }
 
 func experimentUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe experiment [-f study.yaml] [key=value ...] [-s script] [-r script] [-n count]
+Usage: doe experiment [-f study.yaml] [key=value ...] [-s script] [-r script] [-n count] [-c]
 
 Options:
   -f, --file        Load factors, scripts, and replicates from a YAML study.
   -s, --setup       Override the setup script, run once before any runs.
   -r, --run         Override the run script with a shell command.
   -n, --replicates  Override runs per design point (default: 1).
+  -c, --clean       Remove previous results before running.
   -h, --help        Print help text.
 
 Factor settings are YAML values or sequences of values. CLI options override

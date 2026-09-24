@@ -564,13 +564,76 @@ func TestExpandRunScript(t *testing.T) {
 	}
 }
 
+func TestExperimentClean(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file bool
+	}{
+		{"current directory", false},
+		{"study directory", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			args := []string{"experiment", "foo=1", "-r", `echo '{"ok":true}'`}
+			dir := "results"
+			if tc.file {
+				project := t.TempDir()
+				path := filepath.Join(project, "study.yaml")
+				if err := os.WriteFile(path, []byte("factors: {foo: [1]}\nrun: echo '{\"ok\":true}'\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				args = []string{"experiment", "-f", path}
+				dir = filepath.Join(project, "results")
+			}
+			run := func(args []string) (int, string) {
+				t.Helper()
+				var stdout, stderr bytes.Buffer
+				code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args)
+				if code == 0 && stderr.Len() != 0 {
+					t.Errorf("unexpected stderr: %q", &stderr)
+				}
+				return code, stderr.String()
+			}
+			if code, stderr := run(args); code != 0 {
+				t.Fatalf("initial experiment = %d, %q", code, stderr)
+			}
+			marker := filepath.Join(dir, "old-file")
+			if err := os.WriteFile(marker, []byte("old"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cleanFlag := "--clean"
+			if tc.file {
+				cleanFlag = "-c"
+			}
+			if code, stderr := run(append(append([]string{}, args...), cleanFlag)); code != 0 {
+				t.Fatalf("clean experiment = %d, %q", code, stderr)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Errorf("old results still exist: %v", err)
+			}
+			for _, name := range []string{"experiments.jsonl", "runs.jsonl"} {
+				data, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil || len(bytes.Split(bytes.TrimSpace(data), []byte("\n"))) != 1 {
+					t.Errorf("%s = %q, %v; want one new record", name, data, err)
+				}
+			}
+			if code, stderr := run(append(append([]string{}, args...), "--clean", "--run", " ")); code != 1 || !strings.Contains(stderr, "run script is required") {
+				t.Errorf("invalid experiment = %d, %q", code, stderr)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "experiments.jsonl")); err != nil {
+				t.Errorf("invalid experiment removed results: %v", err)
+			}
+		})
+	}
+}
+
 func TestExperimentHelp(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
 		{nil, "experiment  Run an experiment"},
-		{[]string{"experiment", "--help"}, "Usage: doe experiment"},
+		{[]string{"experiment", "--help"}, "-c, --clean       Remove previous results"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, tc.args)
@@ -592,6 +655,7 @@ func TestExperimentErrors(t *testing.T) {
 		{[]string{"execute"}, "unknown command"},
 		{[]string{"run"}, "unknown command"},
 		{[]string{"results"}, "unknown command"},
+		{[]string{"clean"}, "unknown command"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := Main(context.Background(), &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}, tc.args)
