@@ -20,6 +20,7 @@ import (
 	"github.com/felixge/doe2/internal/model"
 	"github.com/felixge/doe2/internal/results"
 	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
 	"uuid"
 )
 
@@ -59,6 +60,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
 	replicates := flags.IntP("replicates", "n", 0, "runs per design point")
 	clean := flags.BoolP("clean", "c", false, "remove previous results before running")
+	design := flags.Bool("design", false, "print the resolved design as YAML without running")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
 		experimentUsage(env.Stdout)
 		return 0
@@ -70,6 +72,16 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	experiment, err := prepareExperiment(*file, *preset, *setupScript, *runScript, *replicates, flags.Args())
 	if err != nil {
 		return env.Fail(err)
+	}
+	if *design {
+		data, err := yaml.Marshal(experiment.Design)
+		if err != nil {
+			return env.Fail(err)
+		}
+		if _, err := env.Stdout.Write(data); err != nil {
+			return env.Fail(err)
+		}
+		return 0
 	}
 
 	// Validate before touching previous results, and lock before cleaning them.
@@ -326,7 +338,7 @@ Options:
 func experimentUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe experiment [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [-n count] [-c]
+Usage: doe experiment [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [-n count] [-c] [--design]
 
 Options:
   -f, --file        Load factors, scripts, and replicates from a YAML study.
@@ -335,6 +347,7 @@ Options:
   -r, --run         Override the run script with a shell command.
   -n, --replicates  Override runs per design point (default: 1).
   -c, --clean       Remove previous results before running.
+      --design      Print the resolved design as YAML without running.
   -h, --help        Print help text.
 
 Factor settings are YAML values or sequences of values. Study defaults are

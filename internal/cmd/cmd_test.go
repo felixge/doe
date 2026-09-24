@@ -14,6 +14,7 @@ import (
 	"github.com/felixge/doe2/internal/cli"
 	"github.com/felixge/doe2/internal/model"
 	"github.com/felixge/doe2/internal/results"
+	"gopkg.in/yaml.v3"
 	"uuid"
 )
 
@@ -432,6 +433,71 @@ presets:
 				t.Errorf("run count = %d, want %d", got, tc.replicates)
 			}
 		})
+	}
+}
+
+func TestExperimentDesign(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "study.yaml")
+	study := `factors:
+  foo: [1, 2]
+  bar: true
+setup: "  touch setup-ran  "
+run: "  touch run-ran  "
+replicates: 3
+presets:
+  full:
+    factors:
+      foo: [3, 4]
+    replicates: 5
+`
+	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	args := []string{"experiment", "-f", path, "-p", "full", "foo=[7, 8]", "-n", "2", "--design", "-c"}
+	if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit code %d, stderr %q", code, &stderr)
+	}
+	var got model.Design
+	if err := yaml.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("invalid YAML %q: %v", &stdout, err)
+	}
+	want := model.Design{
+		Factors: model.Factors{"foo": {7, 8}, "bar": {true}},
+		Setup:   "touch setup-ran", Run: "touch run-ran", Replicates: 2,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("design = %+v, want %+v", got, want)
+	}
+	if strings.Contains(stdout.String(), "presets:") || strings.Contains(stdout.String(), "id:") {
+		t.Errorf("design output contains study or experiment metadata: %s", &stdout)
+	}
+	for _, name := range []string{"results", "setup-ran", "run-ran"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("--design created %s: %v", name, err)
+		}
+	}
+}
+
+func TestExperimentDesignDefaultAndValidation(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	env := &cli.Env{Stdout: &stdout, Stderr: &stderr}
+	if code := Main(context.Background(), env, []string{"experiment", "foo=1", "-r", "echo '{}'", "--design"}); code != 0 {
+		t.Fatalf("exit code %d: %s", code, &stderr)
+	}
+	var design model.Design
+	if err := yaml.Unmarshal(stdout.Bytes(), &design); err != nil || design.Replicates != 1 {
+		t.Errorf("default design = %+v, error %v", design, err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main(context.Background(), env, []string{"experiment", "foo=[]", "-r", "echo '{}'", "--design"}); code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `factor "foo" has no settings`) {
+		t.Errorf("invalid design: exit code %d, stdout %q, stderr %q", code, &stdout, &stderr)
+	}
+	if _, err := os.Stat("results"); !os.IsNotExist(err) {
+		t.Errorf("--design created results: %v", err)
 	}
 }
 
