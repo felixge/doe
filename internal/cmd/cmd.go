@@ -37,6 +37,8 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 		return 0
 	case "experiment":
 		return experimentCommand(ctx, env, args[1:])
+	case "clean":
+		return cleanCommand(env, args[1:])
 	default:
 		_, _ = fmt.Fprintf(env.Stderr, "unknown command: %s\n", args[0])
 		return 1
@@ -114,12 +116,36 @@ func prepareExperiment(path, runScript string, args []string) (*model.Experiment
 	}
 
 	// Keep scripts and results relative to the study file.
+	results, err := results.New(resultsDir(path))
+	return &experiment, results, err
+}
+
+func cleanCommand(env *cli.Env, args []string) int {
+	flags := pflag.NewFlagSet("doe clean", pflag.ContinueOnError)
+	flags.SetOutput(env.Stderr)
+	flags.Usage = func() {}
+	file := flags.StringP("file", "f", "", "study YAML file")
+	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
+		cleanUsage(env.Stdout)
+		return 0
+	} else if err != nil {
+		return env.Fail(err)
+	}
+	if len(flags.Args()) != 0 {
+		return env.Fail(fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " ")))
+	}
+	if err := os.RemoveAll(resultsDir(*file)); err != nil {
+		return env.Fail(fmt.Errorf("remove results directory: %w", err))
+	}
+	return 0
+}
+
+func resultsDir(path string) string {
 	dir := "."
 	if path != "" {
 		dir = filepath.Dir(path)
 	}
-	results, err := results.New(filepath.Join(dir, "results"))
-	return &experiment, results, err
+	return filepath.Join(dir, "results")
 }
 
 // runExperiment runs each point until a run fails.
@@ -170,8 +196,20 @@ Usage: doe <command> [command options] [arguments]
 
 Commands:
   experiment  Run an experiment and save run logs.
+  clean       Remove the results directory.
 
 Run "doe <command> -h" for command-specific help.
+`)
+}
+
+func cleanUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, `Remove the results directory for a study or the current directory.
+
+Usage: doe clean [-f study.yaml]
+
+Options:
+  -f, --file  Select the project directory containing the study file.
+  -h, --help  Print help text.
 `)
 }
 
