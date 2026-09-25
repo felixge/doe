@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,11 +59,11 @@ func TestStatusProgress(t *testing.T) {
 	if err := r.AppendExperiment(&experiment); err != nil {
 		t.Fatal(err)
 	}
-	check("Running", "Runs: 0/2 complete (0%)\n")
+	check("Running", "Runs: 0/2 complete (0%)\nCurrent run: replicate 1, design point foo=1\n")
 	if err := r.AppendRun(model.NewRun(experiment.ID, experiment.Points[0], 1)); err != nil {
 		t.Fatal(err)
 	}
-	check("Running", "Runs: 1/2 complete (50%)\n")
+	check("Running", "Runs: 1/2 complete (50%)\nCurrent run: replicate 1, design point foo=2\n")
 	failed := model.NewRun(experiment.ID, experiment.Points[1], 1)
 	failed.Error = "exit status 7"
 	if err := r.AppendRun(failed); err != nil {
@@ -73,6 +74,40 @@ func TestStatusProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("Error", "Runs: 1/2 complete (50%)\nError: exit status 7\n")
+}
+
+func TestStatusCurrentRunFollowsSchedule(t *testing.T) {
+	t.Chdir(t.TempDir())
+	r, err := results.New("results")
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment := model.NewExperiment(model.Design{
+		Factors: model.Factors{"foo": {1, 2, 3}, "bar": {"x"}}, Replicates: 2,
+	})
+	experiment.Start = time.Time{}
+	release, err := r.LockExperiment(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if err := r.AppendExperiment(&experiment); err != nil {
+		t.Fatal(err)
+	}
+	for index, point := range []int{0, 1, 2, 1, 2, 0} {
+		code, stdout, stderr := runStatusCommand(t, "status")
+		want := fmt.Sprintf("Current run: replicate %d, design point bar=x foo=%d\n", index/3+1, point+1)
+		if code != 0 || stderr != "" || !strings.HasSuffix(stdout, want) {
+			t.Errorf("status at run %d = %d, %q, %q; want suffix %q", index, code, stdout, stderr, want)
+		}
+		if err := r.AppendRun(model.NewRun(experiment.ID, experiment.Points[point], index/3+1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, stdout, stderr := runStatusCommand(t, "status")
+	if code != 0 || stderr != "" || strings.Contains(stdout, "Current run:") {
+		t.Errorf("completed status = %d, %q, %q; want no current run", code, stdout, stderr)
+	}
 }
 
 func TestStatusShowsJustStartedTime(t *testing.T) {
@@ -91,7 +126,7 @@ func TestStatusShowsJustStartedTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := runStatusCommand(t, "status")
-	want := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 0/1 complete (0%)\nExperiment elapsed: "
+	want := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 0/1 complete (0%)\nCurrent run: replicate 1, design point foo=1\nExperiment elapsed: "
 	if code != 0 || !strings.HasPrefix(stdout, want) || stderr != "" {
 		t.Errorf("status = %d, %q, %q; want %q followed by duration", code, stdout, stderr, want)
 	}
@@ -120,7 +155,7 @@ func TestStatusShowsEstimatedRemaining(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := runStatusCommand(t, "status")
-	prefix := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 1/2 complete (50%)\n"
+	prefix := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 1/2 complete (50%)\nCurrent run: replicate 1, design point foo=2\n"
 	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, prefix) {
 		t.Fatalf("status = %d, %q, %q; want %q followed by elapsed and remaining times", code, stdout, stderr, prefix)
 	}

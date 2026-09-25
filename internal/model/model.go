@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 	"uuid"
 
@@ -180,6 +181,36 @@ type Factor string
 
 // Point maps each factor to its setting for a single run.
 type Point map[Factor]Setting
+
+// String formats a point as CLI-style factor=YAML pairs on one line.
+func (p Point) String() string {
+	pairs := make([]string, 0, len(p))
+	for _, factor := range slices.Sorted(maps.Keys(p)) {
+		var node yaml.Node
+		if err := node.Encode(p[factor]); err != nil {
+			continue
+		}
+		flowYAML(&node)
+		value, err := yaml.Marshal(&node)
+		if err != nil {
+			continue
+		}
+		pairs = append(pairs, string(factor)+"="+strings.TrimSuffix(string(value), "\n"))
+	}
+	return strings.Join(pairs, " ")
+}
+
+func flowYAML(node *yaml.Node) {
+	if node.Kind == yaml.MappingNode || node.Kind == yaml.SequenceNode {
+		node.Style = yaml.FlowStyle
+	}
+	if node.Kind == yaml.ScalarNode && strings.ContainsAny(node.Value, "\r\n") {
+		node.Style = yaml.DoubleQuotedStyle
+	}
+	for _, child := range node.Content {
+		flowYAML(child)
+	}
+}
 
 // Run is an execution of a design point, identified by a UUID.
 // JSON tags are unnecessary because MarshalJSON handles serialization.

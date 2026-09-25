@@ -41,6 +41,8 @@ func TestReadStatusTransitions(t *testing.T) {
 		want := &Status{ExperimentID: experiment.ID, State: state, Completed: completed, Total: total, Error: errorText}
 		if state == StateRunning {
 			want.ExperimentElapsed = 2 * time.Minute
+			want.RunReplicate = 1
+			want.RunPoint = model.Point{"foo": float64(completed + 1)}
 		}
 		if !reflect.DeepEqual(status, want) {
 			t.Errorf("status = %+v, want %+v", status, want)

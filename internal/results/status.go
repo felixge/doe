@@ -30,8 +30,10 @@ const (
 type Status struct {
 	ExperimentID      uuid.UUID
 	State             State
-	Completed         int // Runs recorded without an error.
-	Total             int // Planned runs; zero until the experiment record is written.
+	Completed         int         // Runs recorded without an error.
+	Total             int         // Planned runs; zero until the experiment record is written.
+	RunReplicate      int         // One-based replicate of the active run; zero when no run is active.
+	RunPoint          model.Point // Design point of the active run; nil when no run is active.
 	RunElapsed        time.Duration
 	ExperimentElapsed time.Duration
 	Remaining         time.Duration
@@ -136,6 +138,9 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		}
 	}
 	if status.State == StateRunning && status.Completed < status.Total {
+		status.RunReplicate = status.Completed/len(latest.Points) + 1
+		point := schedule[status.RunReplicate-1][status.Completed%len(latest.Points)]
+		status.RunPoint = latest.Points[point]
 		var elapsed time.Duration
 		if !lastEnd.IsZero() {
 			// The previous run's end approximates the active run's start.

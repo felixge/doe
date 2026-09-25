@@ -136,6 +136,9 @@ func statusCommand(env *cli.Env, args []string) int {
 	if status.State == results.StateError {
 		_, _ = fmt.Fprintf(env.Stdout, "Error: %s\n", status.Error)
 	}
+	if status.RunReplicate > 0 {
+		_, _ = fmt.Fprintf(env.Stdout, "Current run: replicate %d, design point %s\n", status.RunReplicate, status.RunPoint)
+	}
 	if status.RunElapsed > 0 {
 		_, _ = fmt.Fprintf(env.Stdout, "Run elapsed: %s\n", formatDuration(status.RunElapsed))
 	}

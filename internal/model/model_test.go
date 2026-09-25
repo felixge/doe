@@ -11,6 +11,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestPointString(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		point Point
+		want  string
+	}{
+		{"scalars", Point{"z": true, "b": "true", "a": "hello world", "n": 3.5}, `a=hello world b="true" n=3.5 z=true`},
+		{"collections", Point{"list": []any{1, "two"}, "map": map[string]any{"nested": []any{true, nil}}}, `list=[1, two] map={nested: [true, null]}`},
+		{"multiline", Point{"text": "one\ntwo"}, `text="one\ntwo"`},
+		{"empty", Point{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.point.String(); got != tc.want {
+				t.Errorf("Point.String() = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNewStudy(t *testing.T) {
 	study := NewStudy()
 	if study.Replicates != 0 || study.Factors != nil || study.Run != "" || study.Presets != nil {
