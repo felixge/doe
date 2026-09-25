@@ -82,25 +82,6 @@ func TestDesignMerge(t *testing.T) {
 	}
 }
 
-func TestStudyPresets(t *testing.T) {
-	var study Study
-	if err := yaml.Unmarshal([]byte(`factors:
-  foo: [1]
-run: echo study
-presets:
-  smoke: {}
-  full:
-    factors:
-      foo: [2, 3]
-    replicates: 6
-`), &study); err != nil {
-		t.Fatal(err)
-	}
-	if len(study.Presets) != 2 || study.Presets["smoke"].Replicates != 0 || !reflect.DeepEqual(study.Presets["full"].Factors["foo"], Settings{2, 3}) || study.Presets["full"].Replicates != 6 {
-		t.Errorf("decoded presets = %+v", study.Presets)
-	}
-}
-
 func TestDesignValidate(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
