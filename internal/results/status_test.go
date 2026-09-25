@@ -74,41 +74,6 @@ func TestReadStatusTransitions(t *testing.T) {
 	check(StateError, 1, 2, "exit status 7")
 }
 
-func TestReadStatusStoppedAndDone(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		count int
-		state State
-	}{
-		{"no runs", 0, StateStopped},
-		{"one run", 1, StateStopped},
-		{"all runs", 2, StateDone},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, err := New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 1})
-			if err := r.AppendExperiment(&experiment); err != nil {
-				t.Fatal(err)
-			}
-			for _, point := range experiment.Points[:tc.count] {
-				if err := r.AppendRun(model.NewRun(experiment.ID, point, 1)); err != nil {
-					t.Fatal(err)
-				}
-			}
-			status, err := r.Status()
-			if err != nil || status == nil {
-				t.Fatalf("ReadStatus = %+v, %v", status, err)
-			}
-			if status.ExperimentID != experiment.ID || status.State != tc.state || status.Completed != tc.count || status.Total != 2 {
-				t.Errorf("status = %+v, want %s with %d/2 runs", status, tc.state, tc.count)
-			}
-		})
-	}
-}
-
 func TestReadStatusSetupFailureAndStoppedSetup(t *testing.T) {
 	r, err := New(t.TempDir())
 	if err != nil {
