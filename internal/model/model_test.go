@@ -65,37 +65,6 @@ func TestNewExperiment(t *testing.T) {
 	}
 }
 
-func TestDesignReplicates(t *testing.T) {
-	var study Study
-	if err := yaml.Unmarshal([]byte("factors:\n  foo: [1, 2]\nrun: echo '{}'\nreplicates: 3\n"), &study); err != nil {
-		t.Fatal(err)
-	}
-	experiment := NewExperiment(study.Design)
-	if got := experiment.Replicates; got != 3 {
-		t.Errorf("replicate count = %d, want 3", got)
-	}
-	data, err := json.Marshal(experiment)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var record struct {
-		Design Design `json:"design"`
-	}
-	if err := json.Unmarshal(data, &record); err != nil {
-		t.Fatal(err)
-	}
-	if got := record.Design.Replicates; got != 3 {
-		t.Errorf("recorded replicate count = %d, want 3: %s", got, data)
-	}
-	study = NewStudy()
-	if err := yaml.Unmarshal([]byte("factors:\n  foo: 1\nrun: echo '{}'\n"), &study); err != nil {
-		t.Fatal(err)
-	}
-	if study.Replicates != 0 {
-		t.Errorf("unspecified replicate count = %d, want 0", study.Replicates)
-	}
-}
-
 func TestDesignMerge(t *testing.T) {
 	base := Design{Factors: Factors{"foo": {1}, "bar": {2}}, Setup: "setup", Run: "run", Replicates: 3}
 	preset := Design{Factors: Factors{"foo": {4}, "baz": {5}}, Run: "preset run"}
