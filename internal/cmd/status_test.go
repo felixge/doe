@@ -50,7 +50,11 @@ func TestStatusProgress(t *testing.T) {
 	check := func(state, runs string) {
 		t.Helper()
 		code, stdout, stderr := runStatusCommand(t, "status")
-		want := "Experiment: " + experiment.ID.String() + "\nState: " + state + "\n" + runs
+		want := "Experiment: " + experiment.ID.String() + "\nState: " + state + "\n"
+		if state == "Setup" {
+			want += "Setup log: " + filepath.Join("results", "logs", experiment.ID.String()+".setup.log") + "\n"
+		}
+		want += runs
 		if code != 0 || stdout != want || stderr != "" {
 			t.Errorf("status = %d, %q, %q; want %q", code, stdout, stderr, want)
 		}
@@ -74,6 +78,33 @@ func TestStatusProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("Error", "Runs: 1/2 complete (50%)\nError: exit status 7\n")
+}
+
+func TestStatusSetupLogWithStudyFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	study := filepath.Join("project", "study.yaml")
+	r, err := results.New(filepath.Join("project", "results"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Run: "echo '{}'"})
+	release, err := r.LockExperiment(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	log, err := r.CreateSetupLog(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runStatusCommand(t, "status", "-f", study)
+	want := "Experiment: " + experiment.ID.String() + "\nState: Setup\nSetup log: " + filepath.Join("project", "results", "logs", experiment.ID.String()+".setup.log") + "\n"
+	if code != 0 || stdout != want || stderr != "" {
+		t.Errorf("status = %d, %q, %q; want %q", code, stdout, stderr, want)
+	}
 }
 
 func TestStatusCurrentRunFollowsSchedule(t *testing.T) {

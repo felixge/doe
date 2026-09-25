@@ -122,7 +122,8 @@ func statusCommand(env *cli.Env, args []string) int {
 	if len(flags.Args()) != 0 {
 		return env.Fail(fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " ")))
 	}
-	status, err := results.Open(resultsDir(*file)).Status()
+	resultFiles := results.Open(resultsDir(*file))
+	status, err := resultFiles.Status()
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -130,6 +131,9 @@ func statusCommand(env *cli.Env, args []string) int {
 		return env.Fail(fmt.Errorf("no experiment found in %s", resultsDir(*file)))
 	}
 	_, _ = fmt.Fprintf(env.Stdout, "Experiment: %s\nState: %s\n", status.ExperimentID, status.State)
+	if status.State == results.StateSetup {
+		_, _ = fmt.Fprintf(env.Stdout, "Setup log: %s\n", resultFiles.SetupLogPath(status.ExperimentID))
+	}
 	if status.Total > 0 {
 		_, _ = fmt.Fprintf(env.Stdout, "Runs: %d/%d complete (%d%%)\n", status.Completed, status.Total, status.Completed*100/status.Total)
 	}

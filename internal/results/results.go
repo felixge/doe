@@ -66,22 +66,26 @@ func (r *Results) Clean() error {
 	return nil
 }
 
+// SetupLogPath returns the path to an experiment's setup log.
+func (r *Results) SetupLogPath(experimentID uuid.UUID) string {
+	return r.logPath(experimentID, "setup")
+}
+
 // CreateSetupLog creates a log for an experiment's setup script.
 func (r *Results) CreateSetupLog(experimentID uuid.UUID) (*os.File, error) {
-	return r.createLog(experimentID, "setup")
+	return r.createLog(r.SetupLogPath(experimentID), "setup")
 }
 
 // CreateRunLog creates a log for a run and returns it for streaming output.
 func (r *Results) CreateRunLog(runID uuid.UUID) (*os.File, error) {
-	return r.createLog(runID, "run")
+	return r.createLog(r.runLogPath(runID), "run")
 }
 
-func (r *Results) createLog(id uuid.UUID, kind string) (*os.File, error) {
-	dir := filepath.Join(r.dir, "logs")
+func (r *Results) createLog(path, kind string) (*os.File, error) {
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create logs directory %s: %w", dir, err)
 	}
-	path := r.logPath(id, kind)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open %s log %s: %w", kind, path, err)
@@ -91,7 +95,7 @@ func (r *Results) createLog(id uuid.UUID, kind string) (*os.File, error) {
 
 // SetupEnv reads an optional JSON object on the setup log's last line.
 func (r *Results) SetupEnv(experimentID uuid.UUID) (model.Env, error) {
-	path := r.logPath(experimentID, "setup")
+	path := r.SetupLogPath(experimentID)
 	last, err := lastLogLine(path, "setup")
 	if err != nil {
 		return nil, err
