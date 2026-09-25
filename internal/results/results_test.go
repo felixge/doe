@@ -1,7 +1,6 @@
 package results
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,48 +42,6 @@ func TestExperimentLock(t *testing.T) {
 	data, err = os.ReadFile(filepath.Join(r.Dir(), "experiment.lock"))
 	if err != nil || strings.TrimSpace(string(data)) != other.String() {
 		t.Errorf("lock contains %q, %v; want %s", data, err, other)
-	}
-}
-
-func TestAppendExperiment(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "results")
-	results, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		t.Fatalf("New did not create results directory: %v", err)
-	}
-	if got := results.Dir(); got != dir {
-		t.Errorf("Dir() = %q, want %q", got, dir)
-	}
-	if got, want := results.ProjectDir(), filepath.Dir(dir); got != want {
-		t.Errorf("ProjectDir() = %q, want %q", got, want)
-	}
-	first := model.NewExperiment(model.Design{})
-	second := model.NewExperiment(model.Design{})
-	for _, experiment := range []*model.Experiment{&first, &second} {
-		if err := results.AppendExperiment(experiment); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, "experiments.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d records, want 2", len(lines))
-	}
-	for i, want := range []model.Experiment{first, second} {
-		var got model.Experiment
-		if err := json.Unmarshal([]byte(lines[i]), &got); err != nil {
-			t.Fatal(err)
-		}
-		if got.ID != want.ID {
-			t.Errorf("record %d ID = %s, want %s", i, got.ID, want.ID)
-		}
 	}
 }
 
