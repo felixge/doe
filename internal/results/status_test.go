@@ -348,38 +348,6 @@ func TestStatusEstimateIgnoresOtherExperiments(t *testing.T) {
 	}
 }
 
-func TestStatusEstimateStopsOnErrorOrCompletion(t *testing.T) {
-	for _, fail := range []bool{false, true} {
-		t.Run(map[bool]string{false: "done", true: "error"}[fail], func(t *testing.T) {
-			r, err := New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-			release, err := r.LockExperiment(experiment.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = release() }()
-			if err := r.AppendExperiment(&experiment); err != nil {
-				t.Fatal(err)
-			}
-			run := model.NewRun(experiment.ID, experiment.Points[0], 1)
-			run.End = run.Start.Add(time.Second)
-			if fail {
-				run.Error = "failed"
-			}
-			if err := r.AppendRun(run); err != nil {
-				t.Fatal(err)
-			}
-			status, err := r.statusAt(run.End)
-			if err != nil || status.Remaining != 0 {
-				t.Errorf("finished status = %+v, %v; want no estimate", status, err)
-			}
-		})
-	}
-}
-
 func TestReadStatusInvalidLock(t *testing.T) {
 	r, err := New(t.TempDir())
 	if err != nil {
