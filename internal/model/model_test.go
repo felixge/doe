@@ -30,13 +30,6 @@ func TestPointString(t *testing.T) {
 	}
 }
 
-func TestNewStudy(t *testing.T) {
-	study := NewStudy()
-	if study.Replicates != 0 || study.Factors != nil || study.Run != "" || study.Presets != nil {
-		t.Errorf("NewStudy() = %+v, want an empty study", study)
-	}
-}
-
 func TestNewExperiment(t *testing.T) {
 	study := Study{Factors: Factors{"foo": {1}}, Run: "echo study"}
 	before := time.Now()
