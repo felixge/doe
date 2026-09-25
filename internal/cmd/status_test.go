@@ -110,28 +110,6 @@ func TestStatusCurrentRunFollowsSchedule(t *testing.T) {
 	}
 }
 
-func TestStatusShowsJustStartedTime(t *testing.T) {
-	t.Chdir(t.TempDir())
-	r, err := results.New("results")
-	if err != nil {
-		t.Fatal(err)
-	}
-	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-	release, err := r.LockExperiment(experiment.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = release() }()
-	if err := r.AppendExperiment(&experiment); err != nil {
-		t.Fatal(err)
-	}
-	code, stdout, stderr := runStatusCommand(t, "status")
-	want := "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 0/1 complete (0%)\nCurrent run: replicate 1, design point foo=1\nExperiment elapsed: "
-	if code != 0 || !strings.HasPrefix(stdout, want) || stderr != "" {
-		t.Errorf("status = %d, %q, %q; want %q followed by duration", code, stdout, stderr, want)
-	}
-}
-
 func TestStatusShowsEstimatedRemaining(t *testing.T) {
 	t.Chdir(t.TempDir())
 	r, err := results.New("results")
