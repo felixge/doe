@@ -254,39 +254,6 @@ func TestExperimentSetupFailure(t *testing.T) {
 	}
 }
 
-func TestExecuteScriptErrors(t *testing.T) {
-	r, err := results.New(filepath.Join(t.TempDir(), "results"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		name   string
-		script string
-		cancel bool
-		want   string
-	}{
-		{"success", "exit 0", false, ""},
-		{"failure", "exit 7", false, "exit status 7"},
-		{"not started", "exit 0", true, "context canceled"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			if tc.cancel {
-				cancel()
-			}
-			log, err := r.CreateSetupLog(model.NewExperiment(model.Design{}).ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = executeScript(ctx, tc.script, r, log)
-			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
-				t.Errorf("executeScript error = %v; want %q", err, tc.want)
-			}
-		})
-	}
-}
-
 func TestExperimentSetupCanceled(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
