@@ -227,6 +227,7 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, results *r
 			experiment.SetupError = setupErr.Error()
 		}
 	}
+	experiment.SetupEnd = time.Now()
 	if err := results.AppendExperiment(experiment); err != nil || setupErr != nil {
 		return errors.Join(setupErr, err)
 	}

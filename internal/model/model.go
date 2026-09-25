@@ -138,6 +138,7 @@ type Results struct {
 type Experiment struct {
 	ID         uuid.UUID `json:"id"`
 	Start      time.Time `json:"start,omitzero"`
+	SetupEnd   time.Time `json:"setup_end,omitzero"`
 	Env        Env       `json:"env"`
 	Preset     string    `json:"preset,omitempty"`
 	Points     []Point   `json:"points"`

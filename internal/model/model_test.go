@@ -228,6 +228,20 @@ func TestDesignSerialization(t *testing.T) {
 	if record["start"] != experiment.Start.Format(time.RFC3339Nano) {
 		t.Errorf("experiment start = %v, want %s", record["start"], experiment.Start.Format(time.RFC3339Nano))
 	}
+	if _, ok := record["setup_end"]; ok {
+		t.Errorf("experiment without completed setup has setup_end: %s", data)
+	}
+	experiment.SetupEnd = experiment.Start.Add(time.Second)
+	data, err = json.Marshal(experiment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["setup_end"] != experiment.SetupEnd.Format(time.RFC3339Nano) {
+		t.Errorf("experiment setup_end = %v, want %s", record["setup_end"], experiment.SetupEnd.Format(time.RFC3339Nano))
+	}
 	if _, ok := record["factors"]; ok {
 		t.Errorf("experiment has top-level factors: %s", data)
 	}

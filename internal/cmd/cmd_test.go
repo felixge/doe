@@ -71,7 +71,7 @@ run: |
 			if err := json.Unmarshal([]byte(records[len(records)-1]), &experiment); err != nil {
 				t.Fatal(err)
 			}
-			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" || experiment.Env == nil || len(experiment.Env) != 0 || experiment.SetupError != "" {
+			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" || experiment.Env == nil || len(experiment.Env) != 0 || experiment.SetupError != "" || experiment.SetupEnd.Before(experiment.Start) {
 				t.Errorf("invalid experiment record: %+v", experiment)
 			}
 			if want := experiment.ID.String() + "\n"; stdout.String() != want {
@@ -196,6 +196,9 @@ func TestExperimentSetup(t *testing.T) {
 			if !strings.Contains(string(experiment.Setup), tc.want) || !reflect.DeepEqual(experiment.Env, tc.env) || experiment.SetupError != "" {
 				t.Errorf("recorded setup = %q, env = %v, error = %q; want %q, %v, no error", experiment.Setup, experiment.Env, experiment.SetupError, tc.want, tc.env)
 			}
+			if experiment.SetupEnd.Before(experiment.Start) {
+				t.Errorf("setup ended at %s before experiment started at %s", experiment.SetupEnd, experiment.Start)
+			}
 			data, err = os.ReadFile(filepath.Join(dir, "marker"))
 			if err != nil || string(data) != tc.want+"\n" {
 				t.Errorf("marker = %q, %v; want %q", data, err, tc.want)
@@ -234,6 +237,9 @@ func TestExperimentSetupFailure(t *testing.T) {
 	}
 	if !strings.Contains(experiment.SetupError, "exit status 7") || experiment.Env == nil || len(experiment.Env) != 0 {
 		t.Errorf("failed setup record = %+v; want exit status 7 and empty environment", experiment)
+	}
+	if experiment.SetupEnd.Before(experiment.Start) {
+		t.Errorf("failed setup ended at %s before experiment started at %s", experiment.SetupEnd, experiment.Start)
 	}
 	id, err := os.ReadFile(filepath.Join("results", "experiment.lock"))
 	if err != nil || strings.TrimSpace(string(id)) != experiment.ID.String() {
@@ -299,8 +305,8 @@ func TestExperimentSetupCanceled(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
 		t.Fatal(err)
 	}
-	if experiment.SetupError != "" || experiment.Env == nil || len(experiment.Env) != 0 {
-		t.Errorf("canceled setup record = %s; want no error and empty environment", data)
+	if experiment.SetupError != "" || experiment.Env == nil || len(experiment.Env) != 0 || experiment.SetupEnd.Before(experiment.Start) {
+		t.Errorf("canceled setup record = %s; want no error, empty environment, and setup end after start", data)
 	}
 	status, err := results.Open("results").Status()
 	if err != nil || status == nil || status.State != results.StateStopped {
