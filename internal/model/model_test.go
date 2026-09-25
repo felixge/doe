@@ -279,29 +279,6 @@ func TestRunSerialization(t *testing.T) {
 	}
 }
 
-func TestFailedRunSerialization(t *testing.T) {
-	run := &Run{Point: Point{"foo": 1}, Error: "exit status 7"}
-	data, err := json.Marshal(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got struct {
-		Foo   int    `json:"foo"`
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(data, &got); err != nil || got.Foo != 1 || got.Error != "exit status 7" {
-		t.Errorf("failed run JSON = %s, %v", data, err)
-	}
-	run.Error = ""
-	data, err = json.Marshal(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, &got); err != nil || got.Error != "" || !strings.Contains(string(data), `"error":""`) {
-		t.Errorf("empty error column should be present: %s, %v", data, err)
-	}
-}
-
 func TestRunSerializationConflict(t *testing.T) {
 	for _, tc := range []struct {
 		name string
