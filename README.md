@@ -64,10 +64,25 @@ $ doe experiment -f compression.study.yaml -p full
 <experiment ID on stdout>
 ```
 
-doe saves one JSON object per run to `results/runs.jsonl`. You can analyze this data any way you like, e.g. using DuckDB's `read_json` function:
+doe stores each experiment and run as an individual JSON document. Run inputs are nested under `point`, measurements are nested under `outcome`, and only runs with `state = 'done'` completed successfully:
+
+```text
+results/
+├── results.lock
+├── experiments/
+│   └── <experiment-id>/
+│       ├── experiment.json
+│       ├── setup.log
+│       └── runs.ids
+└── runs/
+    ├── <run-id>.json
+    └── <run-id>.log
+```
+
+You can analyze the run documents with DuckDB's `read_json` function:
 
 ```bash
-$ duckdb -c "SELECT algorithm, file, level, effort, round(avg(input_size_bytes/output_size_bytes), 2) as ratio, round(avg(input_size_bytes/cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/runs.jsonl') GROUP BY ALL ORDER BY ALL;"
+$ duckdb -c "SELECT point.algorithm AS algorithm, point.file AS file, outcome.level AS level, point.effort AS effort, round(avg(outcome.input_size_bytes/outcome.output_size_bytes), 2) AS ratio, round(avg(outcome.input_size_bytes/outcome.cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/runs/*.json') WHERE state = 'done' GROUP BY ALL ORDER BY ALL;"
 ┌───────────┬────────────┬───────┬─────────┬────────┬────────────┬──────────┐
 │ algorithm │    file    │ level │ effort  │ ratio  │ throughput │ count(1) │
 │  varchar  │  varchar   │ int64 │ varchar │ double │   double   │  int64   │

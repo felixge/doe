@@ -41,8 +41,8 @@ func TestNewExperiment(t *testing.T) {
 	if version := experiment.ID[6] >> 4; version != 7 {
 		t.Errorf("ID version = %d, want 7", version)
 	}
-	if experiment.Env == nil || len(experiment.Env) != 0 {
-		t.Errorf("Env = %v, want empty map", experiment.Env)
+	if experiment.Env == nil || len(experiment.Env) != 0 || experiment.State != StateSetup {
+		t.Errorf("new experiment env/state = %v/%q, want empty/setup", experiment.Env, experiment.State)
 	}
 	if experiment.Run != study.Run || !reflect.DeepEqual(experiment.Factors, study.Factors) {
 		t.Errorf("experiment = %+v, want factors and run from study %+v", experiment, study)
@@ -92,9 +92,6 @@ func TestDesignValidate(t *testing.T) {
 		{"empty run", Design{Factors: Factors{"foo": {1}}, Replicates: 1}, "run script is required"},
 		{"zero replicates", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'"}, "replicates must be a positive integer"},
 		{"negative replicates", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'", Replicates: -2}, "replicates must be a positive integer"},
-		{"reserved error factor", Design{Factors: Factors{"error": {1}}, Run: "echo '{}'", Replicates: 1}, `run factor "error" conflicts with reserved field`},
-		{"reserved start factor", Design{Factors: Factors{"start": {1}}, Run: "echo '{}'", Replicates: 1}, `run factor "start" conflicts with reserved field`},
-		{"reserved end factor", Design{Factors: Factors{"end": {1}}, Run: "echo '{}'", Replicates: 1}, `run factor "end" conflicts with reserved field`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.design.Validate()
@@ -197,8 +194,11 @@ func TestDesignSerialization(t *testing.T) {
 	if _, ok := record["preset"]; ok {
 		t.Errorf("experiment without preset records one: %s", data)
 	}
-	if setupError, ok := record["setup_error"]; !ok || setupError != "" {
-		t.Errorf("experiment without setup error omits its column: %s", data)
+	if _, ok := record["error"]; ok {
+		t.Errorf("experiment without an error records one: %s", data)
+	}
+	if record["state"] != string(StateSetup) {
+		t.Errorf("experiment state = %v, want setup", record["state"])
 	}
 	if !reflect.DeepEqual(record["points"], []any{map[string]any{"foo": float64(1)}}) {
 		t.Errorf("experiment has wrong points: %s", data)
@@ -228,8 +228,8 @@ func TestNewRun(t *testing.T) {
 	before := time.Now()
 	run := NewRun(experimentID, point, 2)
 	after := time.Now()
-	if run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.Outcome != nil {
-		t.Errorf("NewRun = %+v, want UUIDv7 and point %v", run, point)
+	if run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.State != StateRunning || run.Outcome != nil {
+		t.Errorf("NewRun = %+v, want running UUIDv7 and point %v", run, point)
 	}
 	if run.Start.Before(before) || run.Start.After(after) || !run.End.IsZero() {
 		t.Errorf("NewRun timing = %s to %s; want start within [%s, %s] and no end", run.Start, run.End, before, after)
@@ -242,72 +242,66 @@ func TestNewRun(t *testing.T) {
 func TestRunSerialization(t *testing.T) {
 	id := uuid.NewV7()
 	experimentID := uuid.NewV7()
-	point := Point{"foo": 42, "bar": true}
-	outcome := Outcome{"sum": 43, "ok": true}
+	point := Point{"foo": 42, "error": "input"}
+	outcome := Outcome{"foo": 43, "error": "measurement"}
 	start := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	end := start.Add(1500 * time.Millisecond)
-	for _, tc := range []struct {
-		name    string
-		point   Point
-		outcome Outcome
-		want    map[string]any
-	}{
-		{"with settings and measurements", point, outcome, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "start": start.Format(time.RFC3339Nano), "end": end.Format(time.RFC3339Nano), "error": "", "foo": float64(42), "bar": true, "sum": float64(43), "ok": true}},
-		{"without settings or measurements", nil, nil, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "start": start.Format(time.RFC3339Nano), "end": end.Format(time.RFC3339Nano), "error": ""}},
-		{"formerly reserved fields", Point{"failed": true}, Outcome{"exit_code": 7}, map[string]any{"id": id.String(), "experiment_id": experimentID.String(), "replicate": float64(2), "start": start.Format(time.RFC3339Nano), "end": end.Format(time.RFC3339Nano), "error": "", "failed": true, "exit_code": float64(7)}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			run := &Run{ID: id, ExperimentID: experimentID, Point: tc.point, Replicate: 2, Start: start, End: end, Outcome: tc.outcome}
-			if err := run.Valid(); err != nil {
-				t.Fatal(err)
-			}
-			data, err := json.Marshal(run)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var got map[string]any
-			if err := json.Unmarshal(data, &got); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("run JSON = %s, want %v", data, tc.want)
-			}
-		})
+	run := &Run{
+		ID: id, ExperimentID: experimentID, Point: point, Replicate: 2,
+		State: StateDone, Start: start, End: end, Outcome: outcome,
 	}
-	if point["foo"] != 42 || outcome["sum"] != 43 {
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"id": id.String(), "experiment_id": experimentID.String(),
+		"point":     map[string]any{"foo": float64(42), "error": "input"},
+		"replicate": float64(2), "state": "done",
+		"start": start.Format(time.RFC3339Nano), "end": end.Format(time.RFC3339Nano),
+		"outcome": map[string]any{"foo": float64(43), "error": "measurement"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("run JSON = %s, want %v", data, want)
+	}
+	if point["foo"] != 42 || outcome["foo"] != 43 {
 		t.Errorf("marshaling changed point or outcome: %v, %v", point, outcome)
 	}
-}
 
-func TestRunSerializationConflict(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  *Run
-		want string
-	}{
-		{"reserved factor", &Run{Point: Point{"id": 1}}, `run factor "id" conflicts with reserved field`},
-		{"replicate factor", &Run{Point: Point{"replicate": 1}}, `run factor "replicate" conflicts with reserved field`},
-		{"experiment ID factor", &Run{Point: Point{"experiment_id": 1}}, `run factor "experiment_id" conflicts with reserved field`},
-		{"error factor", &Run{Point: Point{"error": 1}}, `run factor "error" conflicts with reserved field`},
-		{"start factor", &Run{Point: Point{"start": 1}}, `run factor "start" conflicts with reserved field`},
-		{"end factor", &Run{Point: Point{"end": 1}}, `run factor "end" conflicts with reserved field`},
-		{"reserved response", &Run{Outcome: Outcome{"id": 1}}, `run response "id" conflicts with reserved field`},
-		{"error response", &Run{Outcome: Outcome{"error": 1}}, `run response "error" conflicts with reserved field`},
-		{"start response", &Run{Outcome: Outcome{"start": 1}}, `run response "start" conflicts with reserved field`},
-		{"end response", &Run{Outcome: Outcome{"end": 1}}, `run response "end" conflicts with reserved field`},
-		{"replicate response", &Run{Outcome: Outcome{"replicate": 1}}, `run response "replicate" conflicts with reserved field`},
-		{"experiment ID response", &Run{Outcome: Outcome{"experiment_id": 1}}, `run response "experiment_id" conflicts with reserved field`},
-		{"factor and response", &Run{Point: Point{"foo": 1}, Outcome: Outcome{"foo": 2}}, `run outcome conflicts with factor "foo"`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := tc.run.Valid(); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("Valid() = %v, want %q", err, tc.want)
-			}
-			_, err := json.Marshal(tc.run)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("conflicting run JSON error = %v, want %q", err, tc.want)
-			}
-		})
+	running, err := json.Marshal(NewRun(experimentID, Point{"foo": 1}, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(running, &record); err != nil {
+		t.Fatal(err)
+	}
+	for _, omitted := range []string{"end", "error", "outcome"} {
+		if _, ok := record[omitted]; ok {
+			t.Errorf("running record has unavailable %s: %s", omitted, running)
+		}
+	}
+
+	emptyOutcome, err := json.Marshal(&Run{State: StateDone, Outcome: Outcome{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(emptyOutcome, &record); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := record["outcome"].(map[string]any); !ok || len(got) != 0 {
+		t.Errorf("available empty outcome is missing from run: %s", emptyOutcome)
+	}
+	var decoded Run
+	if err := json.Unmarshal(emptyOutcome, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Outcome == nil || len(decoded.Outcome) != 0 {
+		t.Errorf("empty outcome round trip = %#v, want non-nil empty map", decoded.Outcome)
 	}
 }
 

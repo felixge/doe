@@ -3,7 +3,6 @@ package model
 
 import (
 	"cmp"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -79,9 +78,6 @@ func (d Design) Validate() error {
 		if len(settings) == 0 {
 			return fmt.Errorf("factor %q has no settings", factor)
 		}
-		if reservedRunField(string(factor)) {
-			return fmt.Errorf("run factor %q conflicts with reserved field", factor)
-		}
 	}
 	placeholders := make(map[Factor]bool)
 	for _, placeholder := range factorPlaceholder.FindAllString(string(d.Run), -1) {
@@ -129,21 +125,29 @@ func (d Design) Points() []Point {
 	return points
 }
 
-// Results holds the experiments recorded by doe.
-type Results struct {
-	Experiments []Experiment `json:"experiments"`
-}
+// State describes the recorded lifecycle of an experiment or run.
+type State string
+
+const (
+	StateSetup   State = "setup"
+	StateRunning State = "running"
+	StateDone    State = "done"
+	StateStopped State = "stopped"
+	StateError   State = "error"
+)
 
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
-	ID         uuid.UUID `json:"id"`
-	Start      time.Time `json:"start,omitzero"`
-	SetupEnd   time.Time `json:"setup_end,omitzero"`
-	Env        Env       `json:"env"`
-	Preset     string    `json:"preset,omitempty"`
-	Points     []Point   `json:"points"`
-	SetupError string    `json:"setup_error"`
-	Design     `json:"design"`
+	ID       uuid.UUID `json:"id"`
+	Design   `json:"design"`
+	Points   []Point   `json:"points"`
+	Preset   string    `json:"preset,omitempty"`
+	Env      Env       `json:"env"`
+	State    State     `json:"state"`
+	Start    time.Time `json:"start,omitzero"`
+	SetupEnd time.Time `json:"setup_end,omitzero"`
+	End      time.Time `json:"end,omitzero"`
+	Error    string    `json:"error,omitempty"`
 }
 
 // NewExperiment creates an experiment from a design with a UUIDv7 ID.
@@ -153,6 +157,7 @@ func NewExperiment(design Design) Experiment {
 		ID:     uuid.NewV7(),
 		Start:  time.Now(),
 		Env:    Env{},
+		State:  StateSetup,
 		Points: design.Points(),
 		Design: design,
 	}
@@ -214,62 +219,24 @@ func flowYAML(node *yaml.Node) {
 }
 
 // Run is an execution of a design point, identified by a UUID.
-// JSON tags are unnecessary because MarshalJSON handles serialization.
 type Run struct {
-	ID           uuid.UUID
-	ExperimentID uuid.UUID
-	Point        Point
-	Replicate    int
-	Start        time.Time
-	End          time.Time
-	Error        string
-	Outcome      Outcome
+	ID           uuid.UUID `json:"id"`
+	ExperimentID uuid.UUID `json:"experiment_id"`
+	Point        Point     `json:"point"`
+	Replicate    int       `json:"replicate"`
+	State        State     `json:"state"`
+	Start        time.Time `json:"start,omitzero"`
+	End          time.Time `json:"end,omitzero"`
+	Error        string    `json:"error,omitempty"`
+	Outcome      Outcome   `json:"outcome,omitzero"`
 }
 
 // NewRun creates a run for an experiment, design point, and one-based replicate with a UUIDv7 ID.
 func NewRun(experimentID uuid.UUID, point Point, replicate int) *Run {
-	return &Run{ID: uuid.NewV7(), ExperimentID: experimentID, Point: point, Replicate: replicate, Start: time.Now()}
-}
-
-// Valid checks that point and outcome fields can coexist with run metadata.
-func (r *Run) Valid() error {
-	for factor := range r.Point {
-		if reservedRunField(string(factor)) {
-			return fmt.Errorf("run factor %q conflicts with reserved field", factor)
-		}
+	return &Run{
+		ID: uuid.NewV7(), ExperimentID: experimentID, Point: point,
+		Replicate: replicate, State: StateRunning, Start: time.Now(),
 	}
-	for response := range r.Outcome {
-		if _, factor := r.Point[Factor(response)]; factor {
-			return fmt.Errorf("run outcome conflicts with factor %q", response)
-		}
-		if reservedRunField(string(response)) {
-			return fmt.Errorf("run response %q conflicts with reserved field", response)
-		}
-	}
-	return nil
-}
-
-// MarshalJSON writes run metadata, point settings, and outcome as a flat object.
-func (r *Run) MarshalJSON() ([]byte, error) {
-	if err := r.Valid(); err != nil {
-		return nil, err
-	}
-	fields := map[string]any{"id": r.ID, "experiment_id": r.ExperimentID, "replicate": r.Replicate, "start": r.Start, "end": r.End, "error": r.Error}
-	for factor, setting := range r.Point {
-		fields[string(factor)] = setting
-	}
-	for response, measurement := range r.Outcome {
-		fields[string(response)] = measurement
-	}
-	return json.Marshal(fields)
-}
-
-func reservedRunField(name string) bool {
-	switch name {
-	case "id", "experiment_id", "replicate", "start", "end", "error":
-		return true
-	}
-	return false
 }
 
 // Outcome maps each response to its measurement for a run.

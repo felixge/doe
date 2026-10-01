@@ -2,8 +2,10 @@
 package cmd
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,7 +22,6 @@ import (
 	"github.com/felixge/doe/internal/results"
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
-	"uuid"
 )
 
 // Main executes the doe command.
@@ -88,7 +89,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Hold the lock while running so other processes can check for liveness.
-	release, err := results.LockExperiment(experiment.ID)
+	release, err := results.Lock(experiment.ID)
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -98,10 +99,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 			return env.Fail(err)
 		}
 	}
-	if err := runExperiment(ctx, experiment, results); err != nil {
-		if ctx.Err() != nil {
-			return 130
-		}
+	if err := runExperiment(ctx, experiment, results, filepath.Dir(resultsDir(*file))); err != nil {
 		return env.Fail(err)
 	}
 	_, _ = fmt.Fprintln(env.Stdout, experiment.ID)
@@ -222,88 +220,133 @@ func resultsDir(path string) string {
 	return filepath.Join(dir, "results")
 }
 
-// runExperiment records the setup environment before starting any runs.
-func runExperiment(ctx context.Context, experiment *model.Experiment, results *results.Results) error {
-	var setupErr error
+// runExperiment creates and updates records throughout the experiment lifecycle.
+func runExperiment(ctx context.Context, experiment *model.Experiment, resultFiles *results.Results, projectDir string) error {
+	setupLog, err := resultFiles.CreateExperiment(experiment)
+	if err != nil {
+		return err
+	}
+
+	var setupExecErr, setupJSONErr error
 	if experiment.Setup != "" {
-		experiment.Env, setupErr = runSetup(ctx, results, experiment.ID, experiment.Setup)
-		if setupErr != nil && ctx.Err() == nil {
-			experiment.SetupError = setupErr.Error()
-		}
+		setupExecErr = executeScript(ctx, string(experiment.Setup), projectDir, setupLog)
+		experiment.Env, setupJSONErr = lastJSON[model.Env](setupLog, false)
 	}
+	setupCloseErr := setupLog.Close()
 	experiment.SetupEnd = time.Now()
-	if err := results.AppendExperiment(experiment); err != nil || setupErr != nil {
-		return errors.Join(setupErr, err)
+
+	setupErr := errors.Join(ctx.Err(), setupExecErr, setupJSONErr, setupCloseErr)
+	if setupErr != nil {
+		setupErr = fmt.Errorf("setup: %w", setupErr)
+		experiment.State, experiment.Error = stopReason(setupErr)
+		experiment.End = time.Now()
+		return errors.Join(setupErr, resultFiles.UpdateExperiment(experiment))
 	}
+	experiment.State = model.StateRunning
+	if err := resultFiles.UpdateExperiment(experiment); err != nil {
+		return err
+	}
+
 	for replicate, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
 		for _, index := range row {
-			if err := runDesignPoint(ctx, experiment, results, experiment.Points[index], replicate+1); err != nil {
-				return err
+			if err := runDesignPoint(ctx, experiment, resultFiles, projectDir, experiment.Points[index], replicate+1); err != nil {
+				experiment.State, experiment.Error = stopReason(err)
+				experiment.End = time.Now()
+				return errors.Join(err, resultFiles.UpdateExperiment(experiment))
 			}
 		}
 	}
-	return nil
+	experiment.State = model.StateDone
+	experiment.End = time.Now()
+	return resultFiles.UpdateExperiment(experiment)
 }
 
-func runSetup(ctx context.Context, results *results.Results, experimentID uuid.UUID, script model.Script) (model.Env, error) {
-	if err := ctx.Err(); err != nil {
-		return model.Env{}, err
-	}
-	log, err := results.CreateSetupLog(experimentID)
-	if err != nil {
-		return model.Env{}, err
-	}
-	if err := executeScript(ctx, string(script), results, log); err != nil {
-		return model.Env{}, fmt.Errorf("setup: %w", err)
-	}
-	environment, err := results.SetupEnv(experimentID)
-	if err != nil {
-		return model.Env{}, fmt.Errorf("setup: %w", err)
-	}
-	return environment, nil
-}
-
-func runDesignPoint(ctx context.Context, experiment *model.Experiment, results *results.Results, point model.Point, replicate int) error {
-	// Avoid starting a shell when the experiment is already canceled.
+func runDesignPoint(ctx context.Context, experiment *model.Experiment, resultFiles *results.Results, projectDir string, point model.Point, replicate int) error {
+	// Avoid publishing another run if cancellation happened between runs.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	run := model.NewRun(experiment.ID, point, replicate)
-	log, err := results.CreateRunLog(run.ID)
+	log, err := resultFiles.CreateRun(run)
 	if err != nil {
-		return err
+		return fmt.Errorf("run %v: %w", point, err)
 	}
-	err = executeScript(ctx, expandRunScript(experiment.Run, point), results, log)
-	// An interrupted run has no outcome. Keep its log, but do not record it
-	// as a failed run: status should report the experiment as stopped.
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := resultFiles.AppendRun(experiment.ID, run.ID); err != nil {
+		return fmt.Errorf("run %v: %w", point, errors.Join(err, log.Close()))
 	}
-	run.End = time.Now()
-	outcome, outcomeErr := results.RunOutcome(run.ID)
+
+	executionErr := executeScript(ctx, expandRunScript(experiment.Run, point), projectDir, log)
+	outcome, outcomeErr := lastJSON[model.Outcome](log, true)
+	closeErr := log.Close()
+	err = errors.Join(ctx.Err(), executionErr, outcomeErr, closeErr)
+	run.State, run.Error = stopReason(err)
 	run.Outcome = outcome
-	validationErr := run.Valid()
-	if validationErr != nil {
-		run.Outcome = nil
-	}
-	err = errors.Join(err, outcomeErr, validationErr)
-	if err != nil {
-		run.Error = err.Error()
-	}
-	err = errors.Join(err, results.AppendRun(run))
+	run.End = time.Now()
+	err = errors.Join(err, resultFiles.UpdateRun(run))
 	if err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
 	return nil
 }
 
-// executeScript streams both output streams to the log and closes it even on failure.
-func executeScript(ctx context.Context, script string, results *results.Results, log *os.File) error {
+// executeScript streams both output streams to log. The caller closes the log.
+func executeScript(ctx context.Context, script, projectDir string, log *os.File) error {
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", script)
-	command.Dir = results.ProjectDir()
+	command.Dir = projectDir
 	command.Stdout = log
 	command.Stderr = log
-	return cmp.Or(command.Run(), log.Close())
+	return command.Run()
+}
+
+// lastJSON reads the final JSON object, returning an empty object when optional JSON is absent.
+func lastJSON[T ~map[K]V, K comparable, V any](log *os.File, required bool) (T, error) {
+	last, err := lastLogLine(log)
+	if err != nil {
+		return nil, err
+	}
+	var object T
+	if err := json.Unmarshal(last, &object); err == nil && object != nil {
+		return object, nil
+	} else if !required {
+		return T{}, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("run log %s has no JSON object on its last line: %w", log.Name(), err)
+	}
+	return nil, fmt.Errorf("run log %s has no JSON object on its last line", log.Name())
+}
+
+func lastLogLine(log *os.File) ([]byte, error) {
+	info, err := log.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat log %s: %w", log.Name(), err)
+	}
+	// Expand the tail window until it contains the last line's start.
+	for size := min(info.Size(), 4096); ; size = min(size*2, info.Size()) {
+		tail := make([]byte, size)
+		if _, err := log.ReadAt(tail, info.Size()-size); err != nil {
+			return nil, fmt.Errorf("read log %s: %w", log.Name(), err)
+		}
+		tail = bytes.TrimSuffix(tail, []byte{'\n'})
+		if index := bytes.LastIndexByte(tail, '\n'); index >= 0 {
+			return tail[index+1:], nil
+		}
+		if size == info.Size() {
+			return tail, nil
+		}
+	}
+}
+
+// stopReason maps an error to a terminal state. Only cancellation means stopped;
+// a deadline is recorded as an error.
+func stopReason(err error) (model.State, string) {
+	switch {
+	case err == nil:
+		return model.StateDone, ""
+	case errors.Is(err, context.Canceled):
+		return model.StateStopped, ""
+	default:
+		return model.StateError, err.Error()
+	}
 }
 
 func expandRunScript(script model.Script, point model.Point) string {

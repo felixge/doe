@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"reflect"
 	"syscall"
 	"time"
 	"uuid"
 
-	"github.com/felixge/doe/internal/jsonl"
 	"github.com/felixge/doe/internal/model"
 )
 
@@ -25,15 +24,15 @@ const (
 	StateError   State = "Error"
 )
 
-// Status is a snapshot of the latest attempted experiment in a results directory.
+// Status is a snapshot of the selected experiment in a results directory.
 // A zero duration can mean unavailable; nonzero durations may display as 0s.
 type Status struct {
 	ExperimentID      uuid.UUID
 	State             State
-	Completed         int         // Runs recorded without an error.
-	Total             int         // Planned runs; zero until the experiment record is written.
-	RunReplicate      int         // One-based replicate of the active run; zero when no run is active.
-	RunPoint          model.Point // Design point of the active run; nil when no run is active.
+	Completed         int
+	Total             int
+	RunReplicate      int
+	RunPoint          model.Point
 	RunElapsed        time.Duration
 	ExperimentElapsed time.Duration
 	Remaining         time.Duration
@@ -51,109 +50,120 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 	if err != nil {
 		return nil, err
 	}
-	var id uuid.UUID
-	if lock != nil {
-		defer func() { _ = lock.file.Close() }()
-		id = lock.experimentID
+	if lock == nil {
+		return nil, nil
 	}
+	defer func() { _ = lock.file.Close() }()
 
-	var latest *model.Experiment
-	if err := jsonl.ScanFile(filepath.Join(r.dir, "experiments.jsonl"), func(experiment *model.Experiment) error {
-		if lock == nil || experiment.ID == id {
-			latest = experiment
+	status := &Status{ExperimentID: lock.experimentID}
+	experiment, err := r.ReadExperiment(lock.experimentID)
+	if errors.Is(err, os.ErrNotExist) {
+		if lock.running {
+			status.State = StateSetup
+		} else {
+			status.State = StateStopped
 		}
-		return nil
-	}); err != nil {
+		return status, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	if lock == nil {
-		if latest == nil {
-			return nil, nil
-		}
-		id = latest.ID
+
+	status.Total = len(experiment.Points) * experiment.Replicates
+	status.Error = experiment.Error
+	runs, err := r.Runs(experiment.ID)
+	if err != nil {
+		return nil, err
 	}
-	status := &Status{ExperimentID: id}
-	var schedule [][]int
-	var samples map[int][]time.Duration
-	var lastEnd time.Time
-	if latest != nil {
-		status.Total = len(latest.Points) * latest.Replicates
-		status.Error = latest.SetupError
-		schedule = model.Schedule(len(latest.Points), latest.Replicates)
-		samples = make(map[int][]time.Duration)
-		type runRecord struct {
-			ExperimentID uuid.UUID `json:"experiment_id"`
-			Error        string    `json:"error"`
-			Start        time.Time `json:"start"`
-			End          time.Time `json:"end"`
-		}
-		if err := jsonl.ScanFile(filepath.Join(r.dir, "runs.jsonl"), func(run runRecord) error {
-			if run.ExperimentID != id {
-				return nil
-			}
-			if run.Error != "" {
-				if status.Error == "" {
-					status.Error = run.Error
-				}
-				return nil
-			}
-			// Successful runs are appended in schedule order. Legacy runs
-			// without timestamps still occupy their position in the schedule.
-			lastEnd = time.Time{}
-			if !run.Start.IsZero() && !run.End.IsZero() && !run.End.Before(run.Start) {
-				lastEnd = run.End
-				if status.Completed < status.Total {
-					point := schedule[status.Completed/len(latest.Points)][status.Completed%len(latest.Points)]
-					samples[point] = append(samples[point], run.End.Sub(run.Start))
-				}
-			}
+
+	var active *model.Run
+	samples := make(map[int][]time.Duration)
+	for _, run := range runs {
+		switch run.State {
+		case model.StateDone:
 			status.Completed++
-			return nil
-		}); err != nil {
-			return nil, err
+			if point := pointIndex(experiment.Points, run.Point); point >= 0 &&
+				!run.Start.IsZero() && !run.End.IsZero() && !run.End.Before(run.Start) {
+				samples[point] = append(samples[point], run.End.Sub(run.Start))
+			}
+		case model.StateRunning:
+			active = run
+		case model.StateError:
+			if status.Error == "" {
+				status.Error = run.Error
+			}
 		}
 	}
-	switch {
-	case status.Error != "":
+
+	status.State = observedState(experiment.State, lock.running)
+	if status.Error != "" && status.State == StateRunning {
 		status.State = StateError
-	case latest == nil && lock != nil && lock.running:
-		status.State = StateSetup
-	case lock != nil && lock.running:
-		status.State = StateRunning
-	case latest != nil && status.Completed == status.Total:
-		status.State = StateDone
-	default:
-		status.State = StateStopped
 	}
-	if latest != nil && !latest.Start.IsZero() {
-		switch status.State {
-		case StateRunning:
-			if !now.Before(latest.Start) {
-				status.ExperimentElapsed = now.Sub(latest.Start)
-			}
-		case StateDone:
-			if !lastEnd.IsZero() && !lastEnd.Before(latest.Start) {
-				status.ExperimentElapsed = lastEnd.Sub(latest.Start)
-			}
+	if status.State == StateRunning && active != nil {
+		status.RunReplicate = active.Replicate
+		status.RunPoint = active.Point
+		if !active.Start.IsZero() && !now.Before(active.Start) {
+			status.RunElapsed = now.Sub(active.Start)
 		}
+		status.Remaining = estimateRemaining(experiment, runs, samples, status.RunElapsed)
 	}
-	if status.State == StateRunning && status.Completed < status.Total {
-		status.RunReplicate = status.Completed/len(latest.Points) + 1
-		point := schedule[status.RunReplicate-1][status.Completed%len(latest.Points)]
-		status.RunPoint = latest.Points[point]
-		var elapsed time.Duration
-		if !lastEnd.IsZero() {
-			// The previous run's end approximates the active run's start.
-			elapsed = max(now.Sub(lastEnd), 0)
-			status.RunElapsed = elapsed
+
+	if !experiment.Start.IsZero() {
+		end := experiment.End
+		if end.IsZero() && lock.running {
+			end = now
 		}
-		pointIndexes := make([]int, 0, status.Total)
-		for _, row := range schedule {
-			pointIndexes = append(pointIndexes, row...)
+		if !end.IsZero() && !end.Before(experiment.Start) {
+			status.ExperimentElapsed = end.Sub(experiment.Start)
 		}
-		status.Remaining, _ = model.EstimateTotalDuration(pointIndexes[status.Completed:], samples, elapsed)
 	}
 	return status, nil
+}
+
+func observedState(recorded model.State, running bool) State {
+	if !running && (recorded == model.StateSetup || recorded == model.StateRunning) {
+		return StateStopped
+	}
+	switch recorded {
+	case model.StateSetup:
+		return StateSetup
+	case model.StateRunning:
+		return StateRunning
+	case model.StateDone:
+		return StateDone
+	case model.StateError:
+		return StateError
+	case model.StateStopped:
+		return StateStopped
+	default:
+		return StateStopped
+	}
+}
+
+func pointIndex(points []model.Point, point model.Point) int {
+	for index, candidate := range points {
+		if reflect.DeepEqual(candidate, point) {
+			return index
+		}
+	}
+	return -1
+}
+
+func estimateRemaining(experiment *model.Experiment, runs []*model.Run, samples map[int][]time.Duration, elapsed time.Duration) time.Duration {
+	schedule := model.Schedule(len(experiment.Points), experiment.Replicates)
+	sequence := make([]int, 0, len(experiment.Points)*experiment.Replicates)
+	for _, row := range schedule {
+		sequence = append(sequence, row...)
+	}
+	current := len(runs) - 1
+	if current < 0 || current >= len(sequence) {
+		return 0
+	}
+	remaining, ok := model.EstimateTotalDuration(sequence[current:], samples, elapsed)
+	if !ok {
+		return 0
+	}
+	return remaining
 }
 
 type statusLock struct {
@@ -185,7 +195,6 @@ func (r *Results) readStatusLock() (_ *statusLock, err error) {
 		}
 		running = true
 	}
-	// A writer may hold the lock while briefly replacing its ID.
 	for attempt := 0; ; attempt++ {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return nil, fmt.Errorf("seek %s: %w", path, err)

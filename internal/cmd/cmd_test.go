@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,821 +19,384 @@ import (
 	"uuid"
 )
 
+func runCommand(ctx context.Context, args ...string) (int, string, string) {
+	var stdout, stderr bytes.Buffer
+	code := Main(ctx, &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}, args)
+	return code, stdout.String(), stderr.String()
+}
+
+func readCompletedExperiment(t *testing.T, dir, stdout string) (*model.Experiment, []*model.Run) {
+	t.Helper()
+	id, err := uuid.Parse(strings.TrimSpace(stdout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := results.Open(dir)
+	experiment, err := r.ReadExperiment(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := r.Runs(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return experiment, runs
+}
+
+func readSelectedExperiment(t *testing.T, dir string) (*model.Experiment, []*model.Run) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "results.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := uuid.Parse(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := results.Open(dir)
+	experiment, err := r.ReadExperiment(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := r.Runs(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return experiment, runs
+}
+
 func TestExperimentIntegration(t *testing.T) {
-	t.Chdir(t.TempDir())
-	path := filepath.Join(t.TempDir(), "study.yaml")
+	dir := t.TempDir()
+	studyPath := filepath.Join(dir, "study.yaml")
 	study := `factors:
   foo: [1, 2, 3]
   bar: [4, 5]
 run: |
   printf '{"result":%s}\n' "$(({foo} + {bar}))"
 `
-	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+	if err := os.WriteFile(studyPath, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	recorded := make(map[string]model.Results)
-	seenLogs := make(map[string]map[string]bool)
-	for _, tc := range []struct {
-		name string
-		args []string
-		want [][2]int
-	}{
-		{"file", []string{"experiment", "-f", path}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
-		{"override", []string{"experiment", "-f", path, "foo=9"}, [][2]int{{9, 4}, {9, 5}}},
-		{"empty run flag", []string{"experiment", "-f", path, "-r", ""}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
-		{"flags and factors interspersed", []string{"experiment", "foo=[1, 2, 3]", "bar=[4, 5]", "-r", `printf '{"result":%s}\n' "$(({foo} + {bar}))"`}, [][2]int{{1, 4}, {2, 4}, {3, 4}, {1, 5}, {2, 5}, {3, 5}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			env := &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}
-			if code := Main(context.Background(), env, tc.args); code != 0 {
-				t.Fatalf("exit code %d: %s", code, &stderr)
-			}
-			if stderr.Len() != 0 {
-				t.Fatalf("stderr = %q", &stderr)
-			}
-			resultsDir := "."
-			if tc.name != "flags and factors interspersed" {
-				resultsDir = filepath.Dir(path)
-				if _, err := os.Stat("results"); !os.IsNotExist(err) {
-					t.Errorf("study experiment wrote results in current directory: %v", err)
-				}
-			}
-			data, err := os.ReadFile(filepath.Join(resultsDir, "results", "experiments.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			records := strings.Split(strings.TrimSpace(string(data)), "\n")
-			previous := recorded[resultsDir]
-			if len(records) != len(previous.Experiments)+1 {
-				t.Fatalf("got %d experiment records, want %d", len(records), len(previous.Experiments)+1)
-			}
-			var experiment model.Experiment
-			if err := json.Unmarshal([]byte(records[len(records)-1]), &experiment); err != nil {
-				t.Fatal(err)
-			}
-			if experiment.ID == (model.Experiment{}).ID || len(experiment.Factors) != 2 || experiment.Run == "" || experiment.Env == nil || len(experiment.Env) != 0 || experiment.SetupError != "" || experiment.SetupEnd.Before(experiment.Start) {
-				t.Errorf("invalid experiment record: %+v", experiment)
-			}
-			if want := experiment.ID.String() + "\n"; stdout.String() != want {
-				t.Errorf("stdout = %q, want %q", &stdout, want)
-			}
-			for _, prior := range previous.Experiments {
-				if experiment.ID == prior.ID {
-					t.Errorf("reused experiment ID: %s", experiment.ID)
-				}
-			}
-			if len(experiment.Factors["foo"]) != len(tc.want)/len(experiment.Factors["bar"]) {
-				t.Errorf("recorded factors = %v, want design for %v", experiment.Factors, tc.want)
-			}
-			wantPoints := make([]model.Point, len(tc.want))
-			for i, pair := range tc.want {
-				wantPoints[i] = model.Point{"foo": float64(pair[0]), "bar": float64(pair[1])}
-			}
-			if !reflect.DeepEqual(experiment.Points, wantPoints) {
-				t.Errorf("recorded points = %v, want %v", experiment.Points, wantPoints)
-			}
-			runData, err := os.ReadFile(filepath.Join(resultsDir, "results", "runs.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			runLines := strings.Split(strings.TrimSpace(string(runData)), "\n")
-			if len(runLines) != len(seenLogs[resultsDir])+len(tc.want) {
-				t.Fatalf("got %d run records, want %d", len(runLines), len(seenLogs[resultsDir])+len(tc.want))
-			}
-			for _, line := range runLines[len(runLines)-len(tc.want):] {
-				var got struct {
-					ID           uuid.UUID `json:"id"`
-					ExperimentID uuid.UUID `json:"experiment_id"`
-					Foo          int       `json:"foo"`
-					Bar          int       `json:"bar"`
-					Result       int       `json:"result"`
-					Error        string    `json:"error"`
-				}
-				if err := json.Unmarshal([]byte(line), &got); err != nil {
-					t.Fatal(err)
-				}
-				if got.ID == (uuid.UUID{}) || got.ExperimentID != experiment.ID || got.Result != got.Foo+got.Bar || got.Error != "" {
-					t.Errorf("invalid run record: %+v", got)
-				}
-			}
-			logs, err := filepath.Glob(filepath.Join(resultsDir, "results", "logs", "*.run.log"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(logs) != len(seenLogs[resultsDir])+len(tc.want) {
-				t.Fatalf("got %d run logs, want %d", len(logs), len(seenLogs[resultsDir])+len(tc.want))
-			}
-			if seenLogs[resultsDir] == nil {
-				seenLogs[resultsDir] = make(map[string]bool)
-			}
-			counts := make(map[int]int)
-			for _, path := range logs {
-				if seenLogs[resultsDir][path] {
-					continue
-				}
-				seenLogs[resultsDir][path] = true
-				if _, err := uuid.Parse(strings.TrimSuffix(filepath.Base(path), ".run.log")); err != nil {
-					t.Errorf("invalid run log name %q: %v", path, err)
-				}
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var got struct {
-					Result int `json:"result"`
-				}
-				if err := json.Unmarshal(data, &got); err != nil {
-					t.Fatal(err)
-				}
-				counts[got.Result]++
-			}
-			for _, want := range tc.want {
-				if counts[want[0]+want[1]] == 0 {
-					t.Errorf("missing result for point %v", want)
-				}
-				counts[want[0]+want[1]]--
-			}
-			lock, err := os.ReadFile(filepath.Join(resultsDir, "results", "experiment.lock"))
-			if err != nil || strings.TrimSpace(string(lock)) != experiment.ID.String() {
-				t.Errorf("lock contains %q, %v; want %s", lock, err, experiment.ID)
-			}
-			previous.Experiments = append(previous.Experiments, experiment)
-			recorded[resultsDir] = previous
-		})
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "-f", studyPath)
+	if code != 0 || stderr != "" {
+		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
+	}
+	experiment, runs := readCompletedExperiment(t, filepath.Join(dir, "results"), stdout)
+	if experiment.State != model.StateDone || len(experiment.Points) != 6 || experiment.SetupEnd.Before(experiment.Start) || experiment.End.Before(experiment.SetupEnd) {
+		t.Errorf("experiment = %+v", experiment)
+	}
+	if len(runs) != 6 {
+		t.Fatalf("runs = %d, want 6", len(runs))
+	}
+	for _, run := range runs {
+		foo := int(run.Point["foo"].(float64))
+		bar := int(run.Point["bar"].(float64))
+		result := int(run.Outcome["result"].(float64))
+		if run.ExperimentID != experiment.ID || run.State != model.StateDone || result != foo+bar || run.End.Before(run.Start) {
+			t.Errorf("run = %+v", run)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "results", "runs", run.ID.String()+".log")); err != nil {
+			t.Errorf("missing run log: %v", err)
+		}
+	}
+	membership, err := os.ReadFile(filepath.Join(dir, "results", "experiments", experiment.ID.String(), "runs.ids"))
+	if err != nil || bytes.Count(membership, []byte("\n")) != 6 {
+		t.Errorf("membership = %q, %v", membership, err)
 	}
 }
 
 func TestExperimentSetup(t *testing.T) {
+	dir := t.TempDir()
+	studyPath := filepath.Join(dir, "study.yaml")
+	study := "factors: {foo: [1]}\nsetup: echo marker > marker; echo warning; echo '{\"os\":\"test\"}'\nrun: test -f marker; echo '{}'; true '{foo}'\n"
+	if err := os.WriteFile(studyPath, []byte(study), 0600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "-f", studyPath)
+	if code != 0 || stderr != "" {
+		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
+	}
+	experiment, _ := readCompletedExperiment(t, filepath.Join(dir, "results"), stdout)
+	if !reflect.DeepEqual(experiment.Env, model.Env{"os": "test"}) || experiment.State != model.StateDone {
+		t.Errorf("experiment = %+v", experiment)
+	}
+	log, err := os.ReadFile(filepath.Join(dir, "results", "experiments", experiment.ID.String(), "setup.log"))
+	if err != nil || string(log) != "warning\n{\"os\":\"test\"}\n" {
+		t.Errorf("setup log = %q, %v", log, err)
+	}
+}
+
+func TestExperimentWithoutSetupCreatesEmptyLog(t *testing.T) {
+	t.Chdir(t.TempDir())
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "foo=1", "-r", "echo '{}'; true '{foo}'")
+	if code != 0 || stderr != "" {
+		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
+	}
+	experiment, _ := readCompletedExperiment(t, "results", stdout)
+	log, err := os.ReadFile(filepath.Join("results", "experiments", experiment.ID.String(), "setup.log"))
+	if err != nil || len(log) != 0 {
+		t.Errorf("setup log = %q, %v; want empty", log, err)
+	}
+}
+
+func TestExperimentSetupFailureAndCancellation(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		args []string
-		want string
-		env  model.Env
+		name      string
+		ctx       func() context.Context
+		script    string
+		wantCode  int
+		wantState model.State
+		wantError string
 	}{
-		{"study", nil, "study", model.Env{"os": "test"}},
-		{"CLI override", []string{"--setup", `echo CLI >> marker; echo '{foo}'`}, "CLI", model.Env{}},
+		{"failure", func() context.Context { return context.Background() }, "echo failed; exit 7", 1, model.StateError, "setup: exit status 7"},
+		{"canceled", func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }, "echo '{}'", 130, model.StateStopped, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "study.yaml")
-			study := "factors:\n  foo: [1, 2]\nsetup: echo study >> marker; echo '{foo}'; echo '{\"os\":\"test\"}'\nrun: test -f marker && echo '{}' ; true '{foo}'\n"
-			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
-				t.Fatal(err)
+			t.Chdir(t.TempDir())
+			code, stdout, stderr := runCommand(tc.ctx(), "experiment", "foo=1", "-s", tc.script, "-r", "echo '{}'; true '{foo}'")
+			if code != tc.wantCode || stdout != "" || (tc.wantError != "" && !strings.Contains(stderr, "exit status 7")) {
+				t.Errorf("experiment = %d, %q, %q", code, stdout, stderr)
 			}
-			args := append([]string{"experiment", "-f", path}, tc.args...)
-			var stdout, stderr bytes.Buffer
-			if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 {
-				t.Fatalf("exit code %d: %s", code, &stderr)
-			}
-			var experiment model.Experiment
-			data, err := os.ReadFile(filepath.Join(dir, "results", "experiments.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(experiment.Setup), tc.want) || !reflect.DeepEqual(experiment.Env, tc.env) || experiment.SetupError != "" {
-				t.Errorf("recorded setup = %q, env = %v, error = %q; want %q, %v, no error", experiment.Setup, experiment.Env, experiment.SetupError, tc.want, tc.env)
-			}
-			if experiment.SetupEnd.Before(experiment.Start) {
-				t.Errorf("setup ended at %s before experiment started at %s", experiment.SetupEnd, experiment.Start)
-			}
-			data, err = os.ReadFile(filepath.Join(dir, "marker"))
-			if err != nil || string(data) != tc.want+"\n" {
-				t.Errorf("marker = %q, %v; want %q", data, err, tc.want)
-			}
-			data, err = os.ReadFile(filepath.Join(dir, "results", "logs", experiment.ID.String()+".setup.log"))
-			wantLog := "{foo}\n"
-			if tc.name == "study" {
-				wantLog += "{\"os\":\"test\"}\n"
-			}
-			if err != nil || string(data) != wantLog {
-				t.Errorf("setup log = %q, %v; want %q", data, err, wantLog)
-			}
-			runLogs, err := filepath.Glob(filepath.Join(dir, "results", "logs", "*.run.log"))
-			if err != nil || len(runLogs) != 2 {
-				t.Errorf("run logs = %v, %v; want two", runLogs, err)
+			experiment, runs := readSelectedExperiment(t, "results")
+			if experiment.State != tc.wantState || experiment.Error != tc.wantError || experiment.End.IsZero() || len(runs) != 0 {
+				t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 			}
 		})
 	}
 }
 
-func TestExperimentSetupFailure(t *testing.T) {
-	t.Chdir(t.TempDir())
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-s", "echo failed >&2; exit 7", "-r", "echo '{}' ; true '{foo}'"})
-	if code != 1 || !strings.Contains(stderr.String(), "setup: exit status 7") || stdout.Len() != 0 {
-		t.Fatalf("exit code %d, stdout %q, stderr %q; want setup error", code, &stdout, &stderr)
-	}
-	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var experiment model.Experiment
-	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(experiment.SetupError, "exit status 7") || experiment.Env == nil || len(experiment.Env) != 0 {
-		t.Errorf("failed setup record = %+v; want exit status 7 and empty environment", experiment)
-	}
-	if experiment.SetupEnd.Before(experiment.Start) {
-		t.Errorf("failed setup ended at %s before experiment started at %s", experiment.SetupEnd, experiment.Start)
-	}
-	id, err := os.ReadFile(filepath.Join("results", "experiment.lock"))
-	if err != nil || strings.TrimSpace(string(id)) != experiment.ID.String() {
-		t.Errorf("lock ID = %q, %v; want %s", id, err, experiment.ID)
-	}
-	data, err = os.ReadFile(filepath.Join("results", "logs", experiment.ID.String()+".setup.log"))
-	if err != nil || string(data) != "failed\n" {
-		t.Errorf("failed setup log = %q, %v", data, err)
-	}
-	if _, err := os.Stat(filepath.Join("results", "runs.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("setup failure recorded runs: %v", err)
-	}
-}
-
-func TestExperimentSetupCanceled(t *testing.T) {
-	t.Chdir(t.TempDir())
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	var stdout, stderr bytes.Buffer
-	code := Main(ctx, &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-s", "echo '{}'", "-r", "echo '{}' ; true '{foo}'"})
-	if code != 130 || stdout.Len() != 0 {
-		t.Errorf("canceled setup = %d, stdout %q, stderr %q; want 130 and no output", code, &stdout, &stderr)
-	}
-	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var experiment model.Experiment
-	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
-		t.Fatal(err)
-	}
-	if experiment.SetupError != "" || experiment.Env == nil || len(experiment.Env) != 0 || experiment.SetupEnd.Before(experiment.Start) {
-		t.Errorf("canceled setup record = %s; want no error, empty environment, and setup end after start", data)
-	}
-	status, err := results.Open("results").Status()
-	if err != nil || status == nil || status.State != results.StateStopped {
-		t.Errorf("canceled setup status = %+v, %v; want stopped", status, err)
-	}
-	if _, err := os.Stat(filepath.Join("results", "runs.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("canceled setup recorded runs: %v", err)
-	}
-}
-
-func TestExperimentRunCanceled(t *testing.T) {
+func TestExperimentSetupCanceledWhileRunning(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var stdout, stderr bytes.Buffer
-	done := make(chan int, 1)
+	done := make(chan struct {
+		code           int
+		stdout, stderr string
+	}, 1)
 	go func() {
-		done <- Main(ctx, &cli.Env{Stdout: &stdout, Stderr: &stderr}, []string{
-			"experiment", "foo=[1, 2]", "-r",
-			`if [ {foo} = 1 ]; then echo '{}'; else printf 'partial'; touch started; while :; do sleep 0.01; done; fi`,
-		})
+		code, stdout, stderr := runCommand(ctx, "experiment", "foo=1", "-s", "touch setup-started; exec sleep 30", "-r", "echo '{}'; true '{foo}'")
+		done <- struct {
+			code           int
+			stdout, stderr string
+		}{code, stdout, stderr}
+	}()
+	deadline := time.After(5 * time.Second)
+	for {
+		if _, err := os.Stat("setup-started"); err == nil {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("setup did not start")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	result := <-done
+	if result.code != 130 || result.stdout != "" || result.stderr != "" {
+		t.Errorf("canceled setup = %+v", result)
+	}
+	experiment, runs := readSelectedExperiment(t, "results")
+	if experiment.State != model.StateStopped || experiment.Error != "" || experiment.End.IsZero() || len(runs) != 0 {
+		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
+	}
+}
+
+func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct {
+		code           int
+		stdout, stderr string
+	}, 1)
+	go func() {
+		code, stdout, stderr := runCommand(ctx, "experiment", "foo=[1,2]", "-r",
+			`if [ {foo} = 1 ]; then echo '{}'; else printf partial; touch started; while :; do sleep 0.01; done; fi`)
+		done <- struct {
+			code           int
+			stdout, stderr string
+		}{code, stdout, stderr}
 	}()
 	deadline := time.After(5 * time.Second)
 	for {
 		if _, err := os.Stat("started"); err == nil {
 			break
-		} else if !os.IsNotExist(err) {
-			t.Fatal(err)
 		}
 		select {
-		case code := <-done:
-			t.Fatalf("experiment exited early with code %d: %s", code, &stderr)
 		case <-deadline:
 			t.Fatal("second run did not start")
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
 	cancel()
-	select {
-	case code := <-done:
-		if code != 130 || stdout.Len() != 0 || stderr.Len() != 0 {
-			t.Errorf("canceled run = %d, stdout %q, stderr %q; want 130 and no output", code, &stdout, &stderr)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("experiment did not stop after cancellation")
+	result := <-done
+	if result.code != 130 || result.stdout != "" || result.stderr != "" {
+		t.Errorf("canceled experiment = %+v", result)
 	}
-	status, err := results.Open("results").Status()
-	if err != nil || status == nil || status.State != results.StateStopped || status.Completed != 1 || status.Total != 2 || status.Error != "" {
-		t.Errorf("canceled run status = %+v, %v; want stopped with 1/2 complete", status, err)
+	experiment, runs := readSelectedExperiment(t, "results")
+	if experiment.State != model.StateStopped || len(runs) != 2 || runs[0].State != model.StateDone || runs[1].State != model.StateStopped || !runs[1].End.After(runs[1].Start) {
+		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 	}
-	runs, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
-	if err != nil || len(bytes.Split(bytes.TrimSpace(runs), []byte("\n"))) != 1 {
-		t.Errorf("run records = %q, %v; want only the completed run", runs, err)
-	}
-	logs, err := filepath.Glob(filepath.Join("results", "logs", "*.run.log"))
-	if err != nil || len(logs) != 2 {
-		t.Fatalf("run logs = %v, %v; want both logs", logs, err)
-	}
-	var partial bool
-	for _, path := range logs {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		partial = partial || string(data) == "partial"
-	}
-	if !partial {
-		t.Error("interrupted run log did not retain partial output")
+	log, err := os.ReadFile(filepath.Join("results", "runs", runs[1].ID.String()+".log"))
+	if err != nil || string(log) != "partial" {
+		t.Errorf("interrupted log = %q, %v", log, err)
 	}
 }
 
-func TestExperimentPresets(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		flags      []string
-		factor     int
-		replicates int
-		preset     string
-	}{
-		{"no preset", nil, 1, 3, ""},
-		{"short flag", []string{"-p", "smoke"}, 1, 3, "smoke"},
-		{"long flag", []string{"--preset", "full"}, 2, 6, "full"},
-		{"CLI overrides", []string{"-p", "full", "foo=9", "-n", "2"}, 9, 2, "full"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "study.yaml")
-			study := `factors:
-  foo: [1]
-run: echo '{"ok":true}' ; true '{foo}'
-replicates: 3
+func TestExperimentPresetsAndSchedule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "study.yaml")
+	study := `factors: {foo: [0, 1, 2]}
+run: echo '{}'; true '{foo}'
+replicates: 1
 presets:
-  smoke: {}
   full:
-    factors:
-      foo: [2]
-    replicates: 6
+    replicates: 2
 `
-			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
-				t.Fatal(err)
-			}
-			args := append([]string{"experiment", "-f", path}, tc.flags...)
-			var stdout, stderr bytes.Buffer
-			if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 {
-				t.Fatalf("exit code %d: %s", code, &stderr)
-			}
-			data, err := os.ReadFile(filepath.Join(dir, "results", "experiments.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var record map[string]any
-			if err := json.Unmarshal(bytes.TrimSpace(data), &record); err != nil {
-				t.Fatal(err)
-			}
-			if got, ok := record["preset"]; (tc.preset == "" && ok) || (tc.preset != "" && got != tc.preset) {
-				t.Errorf("recorded preset = %v, want %q: %s", got, tc.preset, data)
-			}
-			var experiment model.Experiment
-			if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
-				t.Fatal(err)
-			}
-			if experiment.Replicates != tc.replicates || !reflect.DeepEqual(experiment.Factors["foo"], model.Settings{float64(tc.factor)}) {
-				t.Errorf("recorded design = %+v, want foo=%d and replicates=%d", experiment.Design, tc.factor, tc.replicates)
-			}
-			runs, err := os.ReadFile(filepath.Join(dir, "results", "runs.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := len(bytes.Split(bytes.TrimSpace(runs), []byte("\n"))); got != tc.replicates {
-				t.Errorf("run count = %d, want %d", got, tc.replicates)
-			}
-		})
+	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "-f", path, "-p", "full")
+	if code != 0 || stderr != "" {
+		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
+	}
+	experiment, runs := readCompletedExperiment(t, filepath.Join(dir, "results"), stdout)
+	if experiment.Preset != "full" || experiment.Replicates != 2 || len(runs) != 6 {
+		t.Fatalf("experiment = %+v, runs = %d", experiment, len(runs))
+	}
+	want := [][2]int{{0, 1}, {1, 1}, {2, 1}, {1, 2}, {2, 2}, {0, 2}}
+	for index, run := range runs {
+		got := [2]int{int(run.Point["foo"].(float64)), run.Replicate}
+		if got != want[index] {
+			t.Errorf("run %d = %v, want %v", index, got, want[index])
+		}
 	}
 }
 
 func TestExperimentDesign(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "study.yaml")
-	study := `factors:
-  foo: [1, 2]
-  bar: true
+	study := `factors: {foo: [1, 2], bar: true}
 setup: "  touch setup-ran  "
 run: "  touch run-ran; true '{foo}' '{bar}'  "
 replicates: 3
 presets:
   full:
-    factors:
-      foo: [3, 4]
+    factors: {foo: [3, 4]}
     replicates: 5
 `
 	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	args := []string{"experiment", "-f", path, "-p", "full", "foo=[7, 8]", "-n", "2", "--design", "-c"}
-	if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 || stderr.Len() != 0 {
-		t.Fatalf("exit code %d, stderr %q", code, &stderr)
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "-f", path, "-p", "full", "foo=[7,8]", "-n", "2", "--design")
+	if code != 0 || stderr != "" {
+		t.Fatalf("design = %d, %q, %q", code, stdout, stderr)
 	}
 	var got model.Design
-	if err := yaml.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatalf("invalid YAML %q: %v", &stdout, err)
+	if err := yaml.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
 	}
-	want := model.Design{
-		Factors: model.Factors{"foo": {7, 8}, "bar": {true}},
-		Setup:   "touch setup-ran", Run: "touch run-ran; true '{foo}' '{bar}'", Replicates: 2,
-	}
+	want := model.Design{Factors: model.Factors{"foo": {7, 8}, "bar": {true}}, Setup: "touch setup-ran", Run: "touch run-ran; true '{foo}' '{bar}'", Replicates: 2}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("design = %+v, want %+v", got, want)
 	}
-	if strings.Contains(stdout.String(), "presets:") || strings.Contains(stdout.String(), "id:") {
-		t.Errorf("design output contains study or experiment metadata: %s", &stdout)
-	}
-	for _, name := range []string{"results", "setup-ran", "run-ran"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
-			t.Errorf("--design created %s: %v", name, err)
-		}
-	}
-}
-
-func TestExperimentDesignDefaultAndValidation(t *testing.T) {
-	t.Chdir(t.TempDir())
-	var stdout, stderr bytes.Buffer
-	env := &cli.Env{Stdout: &stdout, Stderr: &stderr}
-	if code := Main(context.Background(), env, []string{"experiment", "foo=1", "-r", "echo '{}' ; true '{foo}'", "--design"}); code != 0 {
-		t.Fatalf("exit code %d: %s", code, &stderr)
-	}
-	var design model.Design
-	if err := yaml.Unmarshal(stdout.Bytes(), &design); err != nil || design.Replicates != 1 {
-		t.Errorf("default design = %+v, error %v", design, err)
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := Main(context.Background(), env, []string{"experiment", "foo=[]", "-r", "echo '{}' ; true '{foo}'", "--design"}); code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `factor "foo" has no settings`) {
-		t.Errorf("invalid design: exit code %d, stdout %q, stderr %q", code, &stdout, &stderr)
-	}
-	if _, err := os.Stat("results"); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "results")); !os.IsNotExist(err) {
 		t.Errorf("--design created results: %v", err)
 	}
 }
 
-func TestExperimentMissingFactorPlaceholder(t *testing.T) {
-	t.Chdir(t.TempDir())
-	study := `factors:
-  foo: 1
-run: echo {foo}
-presets:
-  full:
-    factors:
-      bar: 2
-`
-	if err := os.WriteFile("study.yaml", []byte(study), 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"-f", "study.yaml", "-p", "full"},
-		{"-f", "study.yaml", "bar=2", "--design"},
-		{"foo=1", "bar=2", "-r", "echo {foo}"},
-	} {
-		var stdout, stderr bytes.Buffer
-		command := append([]string{"experiment"}, args...)
-		if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, command); code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "missing placeholder {bar}") {
-			t.Errorf("Main(%q) = %d, stdout %q, stderr %q", command, code, &stdout, &stderr)
-		}
-	}
-	if _, err := os.Stat("results"); !os.IsNotExist(err) {
-		t.Errorf("invalid design created results: %v", err)
-	}
-}
-
-func TestPrepareExperimentPresetPrecedence(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "study.yaml")
-	study := `factors:
-  foo: [1]
-  bar: [2]
-setup: echo study
-run: echo study; true '{foo}'
-replicates: 4
-presets:
-  full:
-    factors:
-      foo: [3]
-      baz: [4]
-    setup: echo preset
-    run: echo preset; true '{foo}'
-    replicates: 0
-`
-	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
-		t.Fatal(err)
-	}
-	experiment, err := prepareExperiment(path, "full", "", "echo CLI; true '{foo}'; true '{bar}'; true '{baz}'", 0, []string{"bar=[5, 6]"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if experiment.Preset != "full" || experiment.Setup != "echo preset" || experiment.Run != "echo CLI; true '{foo}'; true '{bar}'; true '{baz}'" || experiment.Replicates != 4 ||
-		!reflect.DeepEqual(experiment.Factors, model.Factors{"foo": {3}, "bar": {5, 6}, "baz": {4}}) {
-		t.Errorf("resolved experiment = %+v", experiment)
-	}
-}
-
-func TestCompressionPresets(t *testing.T) {
-	path := filepath.Join("..", "..", "example", "compression", "compression.study.yaml")
+func TestRunOutputErrors(t *testing.T) {
 	for _, tc := range []struct {
-		preset     string
-		points     int
-		replicates int
+		name, script string
 	}{
-		{"", 2, 1},
-		{"smoke", 2, 1},
-		{"full", 18, 6},
-	} {
-		t.Run(tc.preset, func(t *testing.T) {
-			experiment, err := prepareExperiment(path, tc.preset, "", "", 0, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(experiment.Points) != tc.points || experiment.Replicates != tc.replicates || experiment.Setup != "./setup.bash" || experiment.Run != "./run.bash {algorithm} {effort} {file}" {
-				t.Errorf("compression design = %+v, points = %d", experiment.Design, len(experiment.Points))
-			}
-			if _, ok := experiment.Factors["effort"]; !ok {
-				t.Errorf("compression design missing effort factor: %+v", experiment.Factors)
-			}
-			if _, ok := experiment.Factors["preset"]; ok {
-				t.Errorf("compression design still has preset factor: %+v", experiment.Factors)
-			}
-		})
-	}
-}
-
-func TestExperimentUnknownPreset(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "study.yaml")
-	if err := os.WriteFile(path, []byte("factors: {foo: 1}\nrun: echo '{}' ; true '{foo}'\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, []string{"experiment", "-f", path, "-p", "missing"})
-	if code != 1 || !strings.Contains(stderr.String(), `unknown preset "missing"`) || stdout.Len() != 0 {
-		t.Errorf("exit code %d, stdout %q, stderr %q", code, &stdout, &stderr)
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "results")); !os.IsNotExist(err) {
-		t.Errorf("unknown preset created results: %v", err)
-	}
-}
-
-func TestExperimentReplicates(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "study.yaml")
-	study := `factors:
-  foo: [1, 2]
-replicates: 3
-run: echo '{"ok":true}' ; true '{foo}'
-`
-	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
-		t.Fatal(err)
-	}
-	var stdout, stderr bytes.Buffer
-	if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, []string{"experiment", "-f", path}); code != 0 {
-		t.Fatalf("exit code %d: %s", code, &stderr)
-	}
-	dir := filepath.Join(filepath.Dir(path), "results")
-	experiments, err := os.ReadFile(filepath.Join(dir, "experiments.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var experiment model.Experiment
-	if err := json.Unmarshal(bytes.TrimSpace(experiments), &experiment); err != nil {
-		t.Fatal(err)
-	}
-	if got := experiment.Replicates; got != 3 {
-		t.Errorf("recorded replicates = %d, want 3", got)
-	}
-	runs, err := os.ReadFile(filepath.Join(dir, "runs.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := bytes.Split(bytes.TrimSpace(runs), []byte("\n"))
-	if len(lines) != 6 {
-		t.Fatalf("run count = %d, want 6", len(lines))
-	}
-	counts := make(map[int]int)
-	ids := make(map[uuid.UUID]bool)
-	seen := make(map[int]map[int]bool)
-	for _, line := range lines {
-		var run struct {
-			ID        uuid.UUID `json:"id"`
-			Foo       int       `json:"foo"`
-			Replicate int       `json:"replicate"`
-			Start     time.Time `json:"start"`
-			End       time.Time `json:"end"`
-			OK        bool      `json:"ok"`
-		}
-		if err := json.Unmarshal(line, &run); err != nil {
-			t.Fatal(err)
-		}
-		if run.ID == (uuid.UUID{}) || ids[run.ID] || !run.OK || run.Start.IsZero() || run.End.Before(run.Start) {
-			t.Errorf("invalid replicated run: %+v", run)
-		}
-		ids[run.ID] = true
-		counts[run.Foo]++
-		if seen[run.Foo] == nil {
-			seen[run.Foo] = make(map[int]bool)
-		}
-		if run.Replicate < 1 || run.Replicate > 3 || seen[run.Foo][run.Replicate] {
-			t.Errorf("invalid replicate for point %d: %d", run.Foo, run.Replicate)
-		}
-		seen[run.Foo][run.Replicate] = true
-		if _, err := os.Stat(filepath.Join(dir, "logs", run.ID.String()+".run.log")); err != nil {
-			t.Errorf("missing log for run %s: %v", run.ID, err)
-		}
-	}
-	if counts[1] != 3 || counts[2] != 3 {
-		t.Errorf("runs by point = %v, want 3 each", counts)
-	}
-}
-
-func TestExperimentScheduleOrder(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		settings   string
-		replicates string
-		want       [][2]int
-	}{
-		{"even first replicate", "[0, 1, 2, 3]", "1", [][2]int{{0, 1}, {1, 1}, {3, 1}, {2, 1}}},
-		{"odd cycle repeats", "[0, 1, 2]", "7", [][2]int{
-			{0, 1}, {1, 1}, {2, 1},
-			{1, 2}, {2, 2}, {0, 2},
-			{2, 3}, {0, 3}, {1, 3},
-			{2, 4}, {1, 4}, {0, 4},
-			{0, 5}, {2, 5}, {1, 5},
-			{1, 6}, {0, 6}, {2, 6},
-			{0, 7}, {1, 7}, {2, 7},
-		}},
+		{"empty", `:`}, {"non-JSON", `echo nope`}, {"blank final line", `printf '{}\n\n'`},
+		{"malformed", `echo '{broken}'`}, {"null", `echo null`}, {"array", `echo '[1]'`}, {"number", `echo 42`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			var stdout, stderr bytes.Buffer
-			args := []string{"experiment", "foo=" + tc.settings, "-n", tc.replicates, "-r", "echo '{}' ; true '{foo}'"}
-			if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 {
-				t.Fatalf("exit code %d: %s", code, &stderr)
+			code, stdout, _ := runCommand(context.Background(), "experiment", "foo=1", "-r", "true '{foo}'; "+tc.script)
+			if code != 1 || stdout != "" {
+				t.Fatalf("experiment = %d, %q", code, stdout)
 			}
-			data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
-			if len(lines) != len(tc.want) {
-				t.Fatalf("run count = %d, want %d", len(lines), len(tc.want))
-			}
-			for i, line := range lines {
-				var run struct {
-					Foo       int `json:"foo"`
-					Replicate int `json:"replicate"`
-				}
-				if err := json.Unmarshal(line, &run); err != nil {
-					t.Fatal(err)
-				}
-				if got := [2]int{run.Foo, run.Replicate}; got != tc.want[i] {
-					t.Errorf("run %d = %v, want %v", i, got, tc.want[i])
-				}
+			experiment, runs := readSelectedExperiment(t, "results")
+			if experiment.State != model.StateError || len(runs) != 1 || runs[0].State != model.StateError || runs[0].Error == "" {
+				t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 			}
 		})
 	}
 }
 
-func TestExperimentReplicatesFlag(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		study string
-		args  []string
-		want  int
-	}{
-		{"override study", "factors:\n  foo: 1\nreplicates: 3\nrun: echo '{}' ; true '{foo}'\n", []string{"-n", "2"}, 2},
-		{"override invalid study count", "factors:\n  foo: 1\nreplicates: 0\nrun: echo '{}' ; true '{foo}'\n", []string{"--replicates=2"}, 2},
-		{"override fractional YAML count", "factors:\n  foo: 1\nreplicates: 1.5\nrun: echo '{}' ; true '{foo}'\n", []string{"--replicates=2"}, 2},
-		{"study default", "factors:\n  foo: 1\nrun: echo '{}' ; true '{foo}'\n", nil, 1},
-		{"zero means absent", "factors:\n  foo: 1\nreplicates: 0\nrun: echo '{}' ; true '{foo}'\n", nil, 1},
-		{"zero CLI means absent", "factors:\n  foo: 1\nreplicates: 3\nrun: echo '{}' ; true '{foo}'\n", []string{"-n", "0"}, 3},
-		{"no study", "", []string{"foo=1", "-r", "echo '{}' ; true '{foo}'", "--replicates=2"}, 2},
-		{"default", "", []string{"foo=1", "-r", "echo '{}' ; true '{foo}'"}, 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
-			args := []string{"experiment"}
-			if tc.study != "" {
-				if err := os.WriteFile("study.yaml", []byte(tc.study), 0600); err != nil {
-					t.Fatal(err)
-				}
-				args = append(args, "-f", "study.yaml")
-			}
-			args = append(args, tc.args...)
-			var stdout, stderr bytes.Buffer
-			if code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args); code != 0 {
-				t.Fatalf("exit code %d: %s", code, &stderr)
-			}
-			data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var experiment model.Experiment
-			if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
-				t.Fatal(err)
-			}
-			if experiment.Replicates != tc.want {
-				t.Errorf("recorded replicates = %d, want %d", experiment.Replicates, tc.want)
-			}
-			data, err = os.ReadFile(filepath.Join("results", "runs.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
-			if len(lines) != tc.want {
-				t.Fatalf("run count = %d, want %d", len(lines), tc.want)
-			}
-			for i, line := range lines {
-				var run struct {
-					Replicate int `json:"replicate"`
-				}
-				if err := json.Unmarshal(line, &run); err != nil {
-					t.Fatal(err)
-				}
-				if run.Replicate != i+1 {
-					t.Errorf("replicate = %d, want %d", run.Replicate, i+1)
-				}
-			}
-		})
-	}
-}
-
-func TestExperimentInvalidReplicates(t *testing.T) {
-	for _, value := range []string{"-1", "many"} {
-		t.Run(value, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "study.yaml")
-			study := "factors:\n  foo: 1\nrun: echo '{}' ; true '{foo}'\nreplicates: " + value + "\n"
-			if err := os.WriteFile(path, []byte(study), 0600); err != nil {
-				t.Fatal(err)
-			}
-			var stdout, stderr bytes.Buffer
-			code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, []string{"experiment", "-f", path})
-			if code != 1 || stdout.Len() != 0 || stderr.Len() == 0 {
-				t.Errorf("invalid replicates %s: exit code %d, stdout %q, stderr %q", value, code, &stdout, &stderr)
-			}
-			if _, err := os.Stat(filepath.Join(filepath.Dir(path), "results")); !os.IsNotExist(err) {
-				t.Errorf("invalid replicates created results: %v", err)
-			}
-		})
-	}
-	for _, value := range []string{"-1", "1.5", "many"} {
-		t.Run("flag "+value, func(t *testing.T) {
-			t.Chdir(t.TempDir())
-			var stdout, stderr bytes.Buffer
-			code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-				[]string{"experiment", "foo=1", "-r", "echo '{}' ; true '{foo}'", "--replicates=" + value})
-			if code != 1 || stdout.Len() != 0 || stderr.Len() == 0 {
-				t.Errorf("invalid flag %s: exit code %d, stdout %q, stderr %q", value, code, &stdout, &stderr)
-			}
-			if _, err := os.Stat("results"); !os.IsNotExist(err) {
-				t.Errorf("invalid flag created results: %v", err)
-			}
-		})
-	}
-}
-
-func TestExperimentRecordedWhileRunning(t *testing.T) {
+func TestNestedOutcomeAllowsFieldCollisions(t *testing.T) {
 	t.Chdir(t.TempDir())
-	var stdout, stderr bytes.Buffer
-	env := &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}
-	done := make(chan int, 1)
-	var experiment model.Experiment
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "error=input", "-r", `echo '{"error":"measurement"}'; true '{error}'`)
+	if code != 0 || stderr != "" {
+		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
+	}
+	_, runs := readCompletedExperiment(t, "results", stdout)
+	if runs[0].Point["error"] != "input" || runs[0].Outcome["error"] != "measurement" {
+		t.Errorf("run = %+v", runs[0])
+	}
+}
+
+func TestFailedRunKeepsOutcomeAndStopsSchedule(t *testing.T) {
+	t.Chdir(t.TempDir())
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "foo=[1,2]", "-r", `echo '{"value":42}'; true '{foo}'; exit 7`)
+	if code != 1 || stdout != "" || !strings.Contains(stderr, "exit status 7") {
+		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
+	}
+	experiment, runs := readSelectedExperiment(t, "results")
+	if experiment.State != model.StateError || len(runs) != 1 || runs[0].State != model.StateError || runs[0].Outcome["value"] != float64(42) || !strings.Contains(runs[0].Error, "exit status 7") {
+		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
+	}
+}
+
+func TestRunOutcomeWithoutFinalNewline(t *testing.T) {
+	t.Chdir(t.TempDir())
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "foo=1", "-r", `echo warning; true '{foo}'; printf '{"ok":true}'`)
+	if code != 0 || stderr != "" {
+		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
+	}
+	_, runs := readCompletedExperiment(t, "results", stdout)
+	if runs[0].Outcome["ok"] != true {
+		t.Errorf("run = %+v", runs[0])
+	}
+}
+
+func TestExperimentVisibleWhileRunning(t *testing.T) {
+	t.Chdir(t.TempDir())
+	done := make(chan struct {
+		code           int
+		stdout, stderr string
+	}, 1)
 	go func() {
-		done <- Main(context.Background(), env, []string{"experiment", "foo=1", "-r", `while [ ! -f gate ]; do sleep 0.01; done; echo '{}' ; true '{foo}'`})
+		code, stdout, stderr := runCommand(context.Background(), "experiment", "foo=1", "-r", `touch started; while [ ! -f gate ]; do sleep 0.01; done; echo '{}'; true '{foo}'`)
+		done <- struct {
+			code           int
+			stdout, stderr string
+		}{code, stdout, stderr}
 	}()
-	defer func() {
-		if err := os.WriteFile("gate", nil, 0600); err != nil {
-			t.Error(err)
-		}
-		if code := <-done; code != 0 {
-			t.Errorf("exit code %d: %s", code, &stderr)
-		}
-		if want := experiment.ID.String() + "\n"; stdout.String() != want {
-			t.Errorf("stdout = %q, want %q", &stdout, want)
-		}
-	}()
-
-	path := filepath.Join("results", "experiments.jsonl")
-	var data []byte
 	deadline := time.After(5 * time.Second)
-	for len(data) == 0 {
+	for {
+		if _, err := os.Stat("started"); err == nil {
+			break
+		}
 		select {
 		case <-deadline:
-			t.Fatal("experiment was not recorded while running")
+			t.Fatal("run did not start")
 		case <-time.After(10 * time.Millisecond):
-			data, _ = os.ReadFile(path)
 		}
 	}
-	if err := json.Unmarshal(bytes.TrimSpace(data), &experiment); err != nil {
+	status, err := results.Open("results").Status()
+	if err != nil || status == nil || status.State != results.StateRunning || status.RunPoint.String() != "foo=1" {
+		t.Errorf("status = %+v, %v", status, err)
+	}
+	if err := os.WriteFile("gate", nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	var otherStderr bytes.Buffer
-	otherEnv := &cli.Env{Stdin: strings.NewReader(""), Stdout: &bytes.Buffer{}, Stderr: &otherStderr}
-	if code := Main(context.Background(), otherEnv, []string{"experiment", "foo=2", "-r", `echo '{}' ; true '{foo}'`}); code != 1 || !strings.Contains(otherStderr.String(), "another experiment is running: "+experiment.ID.String()) {
-		t.Errorf("concurrent experiment = code %d, stderr %q; want running experiment ID", code, &otherStderr)
+	result := <-done
+	if result.code != 0 || result.stderr != "" {
+		t.Errorf("experiment = %+v", result)
 	}
 }
 
@@ -840,131 +404,126 @@ func TestRunDoesNotReadCLIStdin(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), &cli.Env{Stdin: strings.NewReader("injected\n"), Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", `if read value; then printf 'read %s\n' "$value"; else printf 'no input\n'; fi; echo '{}' ; true '{foo}'`})
-	if code != 0 {
-		t.Fatalf("exit code %d: %s", code, &stderr)
+		[]string{"experiment", "foo=1", "-r", `if read value; then echo read; else echo no-input; fi; echo '{}'; true '{foo}'`})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("experiment = %d, %q", code, &stderr)
 	}
-	logs, err := filepath.Glob(filepath.Join("results", "logs", "*.run.log"))
-	if err != nil || len(logs) != 1 {
-		t.Fatalf("run logs = %v, %v; want one", logs, err)
-	}
-	data, err := os.ReadFile(logs[0])
-	if err != nil || string(data) != "no input\n{}\n" {
-		t.Errorf("run log = %q, %v; want no input", data, err)
+	_, runs := readCompletedExperiment(t, "results", stdout.String())
+	log, err := os.ReadFile(filepath.Join("results", "runs", runs[0].ID.String()+".log"))
+	if err != nil || string(log) != "no-input\n{}\n" {
+		t.Errorf("log = %q, %v", log, err)
 	}
 }
 
-func TestRunOutcomeErrors(t *testing.T) {
+func TestExperimentCleanPreservesLock(t *testing.T) {
+	t.Chdir(t.TempDir())
+	args := []string{"experiment", "foo=1", "-r", "echo '{}'; true '{foo}'"}
+	code, _, stderr := runCommand(context.Background(), args...)
+	if code != 0 || stderr != "" {
+		t.Fatal(stderr)
+	}
+	lockPath := filepath.Join("results", "results.lock")
+	before, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("results", "old"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCommand(context.Background(), append(args, "--clean")...)
+	if code != 0 || stderr != "" {
+		t.Fatalf("clean = %d, %q, %q", code, stdout, stderr)
+	}
+	after, err := os.Stat(lockPath)
+	if err != nil || !os.SameFile(before, after) {
+		t.Errorf("clean replaced lock: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("results", "old")); !os.IsNotExist(err) {
+		t.Errorf("clean kept old file: %v", err)
+	}
+	experiment, runs := readCompletedExperiment(t, "results", stdout)
+	if experiment.State != model.StateDone || len(runs) != 1 {
+		t.Errorf("clean experiment = %+v, runs = %+v", experiment, runs)
+	}
+}
+
+func TestPrepareExperimentAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "study.yaml")
+	study := `factors: {foo: [1], bar: [2]}
+setup: echo study
+run: echo study; true '{foo}' '{bar}'
+replicates: 4
+presets:
+  full:
+    factors: {foo: [3], baz: [4]}
+    setup: echo preset
+`
+	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
+		t.Fatal(err)
+	}
+	experiment, err := prepareExperiment(path, "full", "", "echo CLI; true '{foo}' '{bar}' '{baz}'", 2, []string{"bar=[5,6]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if experiment.Preset != "full" || experiment.Setup != "echo preset" || experiment.Replicates != 2 ||
+		!reflect.DeepEqual(experiment.Factors, model.Factors{"foo": {3}, "bar": {5, 6}, "baz": {4}}) {
+		t.Errorf("experiment = %+v", experiment)
+	}
+	if _, err := prepareExperiment(path, "missing", "", "", 0, nil); err == nil || !strings.Contains(err.Error(), "unknown preset") {
+		t.Errorf("unknown preset error = %v", err)
+	}
+}
+
+func TestLastLogLine(t *testing.T) {
+	longWarning := strings.Repeat("x", 2*4096)
 	for _, tc := range []struct {
-		name   string
-		script string
+		name, content, want string
 	}{
-		{"empty log", `:`},
-		{"non-JSON", `echo 'not JSON'`},
-		{"blank last line", `printf '{}\n\n'`},
-		{"malformed JSON", `echo '{broken}'`},
-		{"null", `echo null`},
-		{"array", `echo '[1]'`},
-		{"number", `echo 42`},
-		{"conflicting response", `echo '{"foo":2}'`},
-		{"reserved error response", `echo '{"error":"user"}'`},
+		{"empty", "", ""},
+		{"final newline", "warning\n{}\n", "{}"},
+		{"no final newline", "warning\n{}", "{}"},
+		{"blank last line", "{}\n\n", ""},
+		{"large preceding output", longWarning + "\n{\"ok\":true}\n", "{\"ok\":true}"},
+		{"long final line", "warning\n" + longWarning + "\n", longWarning},
+		{"long single line", longWarning, longWarning},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
-			var stdout, stderr bytes.Buffer
-			code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-				[]string{"experiment", "foo=1", "-r", "true '{foo}'; " + tc.script})
-			if code != 1 || stdout.Len() != 0 {
-				t.Errorf("exit code %d, stdout %q, stderr %q; want error", code, &stdout, &stderr)
-			}
-			data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
+			path := filepath.Join(t.TempDir(), "run.log")
+			log, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var run struct {
-				Error string    `json:"error"`
-				Foo   int       `json:"foo"`
-				ID    uuid.UUID `json:"id"`
-			}
-			if err := json.Unmarshal(bytes.TrimSpace(data), &run); err != nil {
+			defer func() { _ = log.Close() }()
+			if _, err := log.WriteString(tc.content); err != nil {
 				t.Fatal(err)
 			}
-			if run.Error == "" || run.Foo != 1 || run.ID == (uuid.UUID{}) {
-				t.Errorf("invalid run record = %s; want error for failed attempt", data)
+			got, err := lastLogLine(log)
+			if err != nil || string(got) != tc.want {
+				t.Errorf("lastLogLine() = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}
 }
 
-func TestFailedRunKeepsOutcome(t *testing.T) {
-	t.Chdir(t.TempDir())
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", `echo '{"value":42}' ; true '{foo}'; exit 7`})
-	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "exit status 7") {
-		t.Errorf("failed experiment = %d, stdout %q, stderr %q", code, &stdout, &stderr)
-	}
-	data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var run struct {
-		Foo   int       `json:"foo"`
-		Value int       `json:"value"`
-		Error string    `json:"error"`
-		Start time.Time `json:"start"`
-		End   time.Time `json:"end"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(data), &run); err != nil {
-		t.Fatal(err)
-	}
-	if run.Foo != 1 || run.Value != 42 || !strings.Contains(run.Error, "exit status 7") || run.Start.IsZero() || run.End.Before(run.Start) {
-		t.Errorf("failed run record = %s; want measurement, error, and timestamps", data)
-	}
-}
-
-func TestFailedRunStopsSchedule(t *testing.T) {
-	t.Chdir(t.TempDir())
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=[1,2]", "-r", `if [ {foo} -eq 1 ]; then exit 7; fi; echo '{}'`})
-	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "exit status 7") {
-		t.Errorf("failed experiment = %d, stdout %q, stderr %q", code, &stdout, &stderr)
-	}
-	data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var run struct {
-		Foo   int    `json:"foo"`
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(data), &run); err != nil {
-		t.Fatal(err)
-	}
-	if run.Foo != 1 || !strings.Contains(run.Error, "exit status 7") || bytes.Count(data, []byte("\n")) != 1 {
-		t.Errorf("recorded attempts = %s; want only failed foo=1", data)
-	}
-}
-
-func TestRunOutcomeWithoutFinalNewline(t *testing.T) {
-	t.Chdir(t.TempDir())
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", `echo warning >&2; true '{foo}'; printf '{"ok":true}'`})
-	if code != 0 {
-		t.Fatalf("exit code %d: %s", code, &stderr)
-	}
-	data, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got struct {
-		Foo int  `json:"foo"`
-		OK  bool `json:"ok"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(data), &got); err != nil || got.Foo != 1 || !got.OK {
-		t.Errorf("run record %q: %v", data, err)
+func TestStopReason(t *testing.T) {
+	failure := fmt.Errorf("failed")
+	for _, tc := range []struct {
+		name    string
+		err     error
+		state   model.State
+		message string
+	}{
+		{"success", nil, model.StateDone, ""},
+		{"canceled", fmt.Errorf("setup: %w", context.Canceled), model.StateStopped, ""},
+		{"deadline", context.DeadlineExceeded, model.StateError, context.DeadlineExceeded.Error()},
+		{"error", failure, model.StateError, failure.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state, message := stopReason(tc.err)
+			if state != tc.state || message != tc.message {
+				t.Errorf("stopReason(%v) = %q, %q; want %q, %q", tc.err, state, message, tc.state, tc.message)
+			}
+		})
 	}
 }
 
@@ -977,222 +536,54 @@ func TestExpandRunScript(t *testing.T) {
 	}
 }
 
-func TestExperimentClean(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		file bool
-	}{
-		{"current directory", false},
-		{"study directory", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
-			args := []string{"experiment", "foo=1", "-r", `echo '{"ok":true}' ; true '{foo}'`}
-			dir := "results"
-			if tc.file {
-				project := t.TempDir()
-				path := filepath.Join(project, "study.yaml")
-				if err := os.WriteFile(path, []byte("factors: {foo: [1]}\nrun: echo '{\"ok\":true}' ; true '{foo}'\n"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				args = []string{"experiment", "-f", path}
-				dir = filepath.Join(project, "results")
-			}
-			run := func(args []string) (int, string) {
-				t.Helper()
-				var stdout, stderr bytes.Buffer
-				code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, args)
-				if code == 0 && stderr.Len() != 0 {
-					t.Errorf("unexpected stderr: %q", &stderr)
-				}
-				return code, stderr.String()
-			}
-			if code, stderr := run(args); code != 0 {
-				t.Fatalf("initial experiment = %d, %q", code, stderr)
-			}
-			marker := filepath.Join(dir, "old-file")
-			if err := os.WriteFile(marker, []byte("old"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			lockPath := filepath.Join(dir, "experiment.lock")
-			originalLock, err := os.Stat(lockPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			cleanFlag := "--clean"
-			if tc.file {
-				cleanFlag = "-c"
-			}
-			if code, stderr := run(append(append([]string{}, args...), cleanFlag)); code != 0 {
-				t.Fatalf("clean experiment = %d, %q", code, stderr)
-			}
-			if _, err := os.Stat(marker); !os.IsNotExist(err) {
-				t.Errorf("old results still exist: %v", err)
-			}
-			cleanedLock, err := os.Stat(lockPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !os.SameFile(originalLock, cleanedLock) {
-				t.Error("clean replaced experiment lock")
-			}
-			for _, name := range []string{"experiments.jsonl", "runs.jsonl"} {
-				data, err := os.ReadFile(filepath.Join(dir, name))
-				if err != nil || len(bytes.Split(bytes.TrimSpace(data), []byte("\n"))) != 1 {
-					t.Errorf("%s = %q, %v; want one new record", name, data, err)
-				}
-			}
-			if code, stderr := run(append(append([]string{}, args...), "--clean", "--run", " ")); code != 1 || !strings.Contains(stderr, "run script is required") {
-				t.Errorf("invalid experiment = %d, %q", code, stderr)
-			}
-			if _, err := os.Stat(filepath.Join(dir, "experiments.jsonl")); err != nil {
-				t.Errorf("invalid experiment removed results: %v", err)
-			}
-		})
-	}
-}
-
-func TestExperimentCleanWhileRunning(t *testing.T) {
-	t.Chdir(t.TempDir())
-	r, err := results.New("results")
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := model.NewExperiment(model.Design{}).ID
-	release, err := r.LockExperiment(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = release() }()
-	marker := filepath.Join(r.Dir(), "old-file")
-	if err := os.WriteFile(marker, []byte("keep me"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	lockPath := filepath.Join(r.Dir(), "experiment.lock")
-	originalLock, err := os.Stat(lockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", "echo '{}' ; true '{foo}'", "-c"})
-	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "another experiment is running: "+id.String()) {
-		t.Errorf("clean experiment = %d, stdout %q, stderr %q; want lock error", code, &stdout, &stderr)
-	}
-	data, err := os.ReadFile(marker)
-	if err != nil || string(data) != "keep me" {
-		t.Errorf("active results changed: %q, %v", data, err)
-	}
-	lock, err := os.ReadFile(lockPath)
-	if err != nil || strings.TrimSpace(string(lock)) != id.String() {
-		t.Errorf("active lock changed: %q, %v", lock, err)
-	}
-	currentLock, err := os.Stat(lockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !os.SameFile(originalLock, currentLock) {
-		t.Error("active lock replaced")
-	}
-}
-
-func TestExperimentHelp(t *testing.T) {
+func TestExperimentHelpAndErrors(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
 		{nil, "experiment  Run an experiment"},
-		{[]string{"experiment", "--help"}, "-c, --clean       Remove previous results"},
+		{[]string{"experiment", "--help"}, "-c, --clean"},
 	} {
-		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr}, tc.args)
-		if code != 0 || !strings.Contains(stdout.String(), tc.want) || stderr.Len() != 0 {
-			t.Errorf("Main(%q) = %d, stdout %q, stderr %q; want %q", tc.args, code, &stdout, &stderr, tc.want)
+		code, stdout, stderr := runCommand(context.Background(), tc.args...)
+		if code != 0 || !strings.Contains(stdout, tc.want) || stderr != "" {
+			t.Errorf("Main(%q) = %d, %q, %q", tc.args, code, stdout, stderr)
 		}
 	}
-}
-
-func TestExperimentErrors(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
 		{[]string{"experiment", "foo=1"}, "run script is required"},
-		{[]string{"experiment", "foo=1", "--run", "  "}, "run script is required"},
-		{[]string{"experiment", "foo=1", "--run", "true '{foo}'; printf 'partial\\n'; printf 'warning\\n' >&2; exit 7"}, "exit status 7"},
-		{[]string{"execute"}, "unknown command"},
-		{[]string{"run"}, "unknown command"},
-		{[]string{"results"}, "unknown command"},
-		{[]string{"clean"}, "unknown command"},
+		{[]string{"experiment", "foo=1", "-r", "echo '{}'"}, "missing placeholder {foo}"},
+		{[]string{"unknown"}, "unknown command"},
 	} {
-		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}, tc.args)
-		if code != 1 || !strings.Contains(stderr.String(), tc.want) || stdout.Len() != 0 {
-			t.Errorf("Main(%q) = %d, stdout %q, stderr %q; want error %q and empty stdout", tc.args, code, &stdout, &stderr, tc.want)
+		code, stdout, stderr := runCommand(context.Background(), tc.args...)
+		if code != 1 || stdout != "" || !strings.Contains(stderr, tc.want) {
+			t.Errorf("Main(%q) = %d, %q, %q; want %q", tc.args, code, stdout, stderr, tc.want)
 		}
 	}
-	data, err := os.ReadFile(filepath.Join("results", "experiments.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("got %d records, want one failed experiment", len(lines))
-	}
-	r, err := results.New("results")
-	if err != nil {
-		t.Fatal(err)
-	}
-	logs, err := filepath.Glob(filepath.Join("results", "logs", "*.run.log"))
-	if err != nil || len(logs) != 1 {
-		t.Fatalf("run logs = %v, %v; want one failed run log", logs, err)
-	}
-	if output, err := os.ReadFile(logs[0]); err != nil || string(output) != "partial\nwarning\n" {
-		t.Errorf("failed run log = %q, %v; want partial stdout and stderr", output, err)
-	}
-	runData, err := os.ReadFile(filepath.Join("results", "runs.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var failedRun struct {
-		ID    uuid.UUID `json:"id"`
-		Foo   int       `json:"foo"`
-		Error string    `json:"error"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(runData), &failedRun); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(failedRun.Error, "exit status 7") || failedRun.Foo != 1 ||
-		filepath.Base(logs[0]) != failedRun.ID.String()+".run.log" {
-		t.Errorf("failed run record = %s; want failed foo=1 with exit status 7 and matching log", runData)
-	}
-	for _, line := range lines {
-		var experiment model.Experiment
-		if err := json.Unmarshal([]byte(line), &experiment); err != nil {
-			t.Fatal(err)
-		}
-		release, err := r.LockExperiment(experiment.ID)
-		if err != nil {
-			t.Errorf("failed experiment left lock held: %v", err)
-			continue
-		}
-		if err := release(); err != nil {
-			t.Error(err)
-		}
+	if _, err := os.Stat("results"); !os.IsNotExist(err) {
+		t.Errorf("validation created results: %v", err)
 	}
 }
 
-func TestExperimentRecordError(t *testing.T) {
+func TestRecordJSONIsNested(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile("results", []byte("not a directory"), 0600); err != nil {
+	code, stdout, stderr := runCommand(context.Background(), "experiment", "foo=1", "-r", `echo '{"value":2}'; true '{foo}'`)
+	if code != 0 || stderr != "" {
+		t.Fatal(stderr)
+	}
+	_, runs := readCompletedExperiment(t, "results", stdout)
+	data, err := os.ReadFile(filepath.Join("results", "runs", runs[0].ID.String()+".json"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), &cli.Env{Stdout: &stdout, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "--run", `echo '{"result":1}' ; true '{foo}'`})
-	if code != 1 || !strings.Contains(stderr.String(), "create results directory") {
-		t.Errorf("Main = %d, stderr %q; want results directory error", code, &stderr)
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["point"] == nil || record["outcome"] == nil || record["foo"] != nil || record["value"] != nil || !bytes.HasSuffix(data, []byte("\n")) {
+		t.Errorf("run JSON = %s", data)
 	}
 }

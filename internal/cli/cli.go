@@ -2,6 +2,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +17,11 @@ type Env struct {
 }
 
 // Fail writes an error to stderr and returns a failure exit code.
+// Context cancellation returns 130 without writing an error.
 func (e *Env) Fail(err error) int {
+	if errors.Is(err, context.Canceled) {
+		return 130
+	}
 	_, _ = fmt.Fprintf(e.Stderr, "error: %v\n", err)
 	return 1
 }
