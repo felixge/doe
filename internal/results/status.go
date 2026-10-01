@@ -3,7 +3,6 @@ package results
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"syscall"
 	"time"
@@ -105,7 +104,7 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		if !active.Start.IsZero() && !now.Before(active.Start) {
 			status.RunElapsed = now.Sub(active.Start)
 		}
-		status.Remaining = estimateRemaining(sequence, len(runs)-1, samples, status.RunElapsed)
+		status.Remaining, _ = model.EstimateTotalDuration(sequence[len(runs)-1:], samples, status.RunElapsed)
 	}
 
 	if !experiment.Start.IsZero() {
@@ -149,18 +148,6 @@ func scheduleSequence(experiment *model.Experiment) []int {
 	return sequence
 }
 
-// estimateRemaining estimates the duration of the current run and all later ones.
-func estimateRemaining(sequence []int, current int, samples map[int][]time.Duration, elapsed time.Duration) time.Duration {
-	if current < 0 || current >= len(sequence) {
-		return 0
-	}
-	remaining, ok := model.EstimateTotalDuration(sequence[current:], samples, elapsed)
-	if !ok {
-		return 0
-	}
-	return remaining
-}
-
 type statusLock struct {
 	file         *os.File
 	experimentID uuid.UUID
@@ -191,9 +178,6 @@ func (r *Results) readStatusLock() (_ *statusLock, err error) {
 		running = true
 	}
 	for attempt := 0; ; attempt++ {
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("seek %s: %w", path, err)
-		}
 		id, err := readExperimentID(file)
 		if err == nil {
 			return &statusLock{file: file, experimentID: id, running: running}, nil
