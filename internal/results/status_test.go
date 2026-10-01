@@ -179,6 +179,34 @@ func TestStatusRemainingEstimate(t *testing.T) {
 	}
 }
 
+func TestStatusRemainingIgnoresUnscheduledRuns(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2, 3}}, Replicates: 1})
+	experiment.State = model.StateRunning
+	release, err := r.Lock(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	createStatusExperiment(t, r, &experiment)
+	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	// The first scheduled slot is Points[0], so a run of Points[2] there does
+	// not match its slot and must not contribute a sample.
+	mismatched := model.NewRun(experiment.ID, experiment.Points[2], 1)
+	mismatched.Start, mismatched.End, mismatched.State = started, started.Add(2*time.Second), model.StateDone
+	createStatusRun(t, r, mismatched)
+	active := model.NewRun(experiment.ID, experiment.Points[1], 1)
+	active.Start = started.Add(2 * time.Second)
+	createStatusRun(t, r, active)
+	status, err := r.statusAt(started.Add(3 * time.Second))
+	if err != nil || status.Completed != 1 || status.Remaining != 0 {
+		t.Errorf("status = %+v, %v; want 1 completed and no estimate", status, err)
+	}
+}
+
 func TestStatusInvalidLock(t *testing.T) {
 	r, err := New(t.TempDir())
 	if err != nil {

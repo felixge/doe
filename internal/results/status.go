@@ -76,13 +76,16 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		return nil, err
 	}
 
+	// Runs are appended in schedule order, so the i-th run executes the
+	// point at sequence[i].
+	sequence := scheduleSequence(experiment)
 	var active *model.Run
 	samples := make(map[int][]time.Duration)
-	for _, run := range runs {
+	for i, run := range runs {
 		switch run.State {
 		case model.StateDone:
 			status.Completed++
-			if point := pointIndex(experiment.Points, run.Point); point >= 0 &&
+			if point := scheduledPoint(experiment, sequence, i, run); point >= 0 &&
 				!run.Start.IsZero() && !run.End.IsZero() && !run.End.Before(run.Start) {
 				samples[point] = append(samples[point], run.End.Sub(run.Start))
 			}
@@ -105,7 +108,7 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		if !active.Start.IsZero() && !now.Before(active.Start) {
 			status.RunElapsed = now.Sub(active.Start)
 		}
-		status.Remaining = estimateRemaining(experiment, runs, samples, status.RunElapsed)
+		status.Remaining = estimateRemaining(sequence, len(runs)-1, samples, status.RunElapsed)
 	}
 
 	if !experiment.Start.IsZero() {
@@ -140,22 +143,30 @@ func observedState(recorded model.State, running bool) State {
 	}
 }
 
-func pointIndex(points []model.Point, point model.Point) int {
-	for index, candidate := range points {
-		if reflect.DeepEqual(candidate, point) {
-			return index
-		}
-	}
-	return -1
-}
-
-func estimateRemaining(experiment *model.Experiment, runs []*model.Run, samples map[int][]time.Duration, elapsed time.Duration) time.Duration {
-	schedule := model.Schedule(len(experiment.Points), experiment.Replicates)
+// scheduleSequence flattens the experiment's schedule into point indexes in run order.
+func scheduleSequence(experiment *model.Experiment) []int {
 	sequence := make([]int, 0, len(experiment.Points)*experiment.Replicates)
-	for _, row := range schedule {
+	for _, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
 		sequence = append(sequence, row...)
 	}
-	current := len(runs) - 1
+	return sequence
+}
+
+// scheduledPoint returns the point index of the i-th run, or -1 when the run
+// is outside the schedule or does not match its scheduled point.
+func scheduledPoint(experiment *model.Experiment, sequence []int, i int, run *model.Run) int {
+	if i >= len(sequence) {
+		return -1
+	}
+	point := sequence[i]
+	if !reflect.DeepEqual(experiment.Points[point], run.Point) {
+		return -1
+	}
+	return point
+}
+
+// estimateRemaining estimates the duration of the current run and all later ones.
+func estimateRemaining(sequence []int, current int, samples map[int][]time.Duration, elapsed time.Duration) time.Duration {
 	if current < 0 || current >= len(sequence) {
 		return 0
 	}
