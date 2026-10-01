@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"syscall"
 	"time"
 	"uuid"
@@ -85,10 +84,8 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		switch run.State {
 		case model.StateDone:
 			status.Completed++
-			if point := scheduledPoint(experiment, sequence, i, run); point >= 0 &&
-				!run.Start.IsZero() && !run.End.IsZero() && !run.End.Before(run.Start) {
-				samples[point] = append(samples[point], run.End.Sub(run.Start))
-			}
+			point := sequence[i]
+			samples[point] = append(samples[point], run.End.Sub(run.Start))
 		case model.StateRunning:
 			active = run
 		case model.StateError:
@@ -150,19 +147,6 @@ func scheduleSequence(experiment *model.Experiment) []int {
 		sequence = append(sequence, row...)
 	}
 	return sequence
-}
-
-// scheduledPoint returns the point index of the i-th run, or -1 when the run
-// is outside the schedule or does not match its scheduled point.
-func scheduledPoint(experiment *model.Experiment, sequence []int, i int, run *model.Run) int {
-	if i >= len(sequence) {
-		return -1
-	}
-	point := sequence[i]
-	if !reflect.DeepEqual(experiment.Points[point], run.Point) {
-		return -1
-	}
-	return point
 }
 
 // estimateRemaining estimates the duration of the current run and all later ones.
