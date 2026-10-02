@@ -76,7 +76,7 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 
 	// Runs are appended in schedule order, so the i-th run executes the
 	// point at sequence[i].
-	sequence := scheduleSequence(experiment)
+	sequence := flatSchedule(experiment)
 	var active *model.Run
 	samples := make(map[int][]time.Duration)
 	for i, run := range runs {
@@ -139,8 +139,8 @@ func observedState(recorded model.State, running bool) State {
 	}
 }
 
-// scheduleSequence flattens the experiment's schedule into point indexes in run order.
-func scheduleSequence(experiment *model.Experiment) []int {
+// flatSchedule flattens the experiment's schedule into point indexes in run order.
+func flatSchedule(experiment *model.Experiment) []int {
 	sequence := make([]int, 0, len(experiment.Points)*experiment.Replicates)
 	for _, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
 		sequence = append(sequence, row...)
