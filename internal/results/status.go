@@ -78,13 +78,13 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 	// point at sequence[i].
 	sequence := flatSchedule(experiment)
 	var active *model.Run
-	samples := make(map[int][]time.Duration)
+	pointDurations := make(map[int][]time.Duration)
 	for i, run := range runs {
 		switch run.State {
 		case model.StateDone:
 			status.Completed++
 			point := sequence[i]
-			samples[point] = append(samples[point], run.End.Sub(run.Start))
+			pointDurations[point] = append(pointDurations[point], run.End.Sub(run.Start))
 		case model.StateRunning:
 			active = run
 		case model.StateError:
@@ -104,7 +104,7 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		if !active.Start.IsZero() && !now.Before(active.Start) {
 			status.RunElapsed = now.Sub(active.Start)
 		}
-		status.Remaining, _ = model.EstimateTotalDuration(sequence[len(runs)-1:], samples, status.RunElapsed)
+		status.Remaining, _ = model.EstimateTotalDuration(sequence[len(runs)-1:], pointDurations, status.RunElapsed)
 	}
 
 	if !experiment.Start.IsZero() {
