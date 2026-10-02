@@ -21,13 +21,13 @@ func (s durationStats) average() (time.Duration, bool) {
 
 // EstimateTotalDuration estimates the duration of the remaining sequential runs.
 // Each value in remaining is an index into the experiment's Points slice, in
-// execution order. The keys in samples are the same point indexes; their values
+// execution order. The keys in pointDurations are the same point indexes; their values
 // are completed run durations. Unseen points use the global average. Elapsed
 // time is subtracted from the first remaining run.
-func EstimateTotalDuration(remaining []int, samples map[int][]time.Duration, elapsed time.Duration) (time.Duration, bool) {
-	points := make(map[int]durationStats, len(samples))
+func EstimateTotalDuration(remaining []int, pointDurations map[int][]time.Duration, elapsed time.Duration) (time.Duration, bool) {
+	points := make(map[int]durationStats, len(pointDurations))
 	var all durationStats
-	for point, durations := range samples {
+	for point, durations := range pointDurations {
 		var stats durationStats
 		for _, duration := range durations {
 			stats.add(duration)
