@@ -75,15 +75,15 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 	}
 
 	// Runs are appended in schedule order, so the i-th run executes the
-	// point at sequence[i].
-	sequence := flatSchedule(experiment)
+	// point at schedule[i].
+	schedule := flatSchedule(experiment)
 	var active *model.Run
 	pointDurations := make(map[int][]time.Duration)
 	for i, run := range runs {
 		switch run.State {
 		case model.StateDone:
 			status.Completed++
-			point := sequence[i]
+			point := schedule[i]
 			pointDurations[point] = append(pointDurations[point], run.End.Sub(run.Start))
 		case model.StateRunning:
 			active = run
@@ -104,7 +104,7 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		if !active.Start.IsZero() && !now.Before(active.Start) {
 			status.RunElapsed = now.Sub(active.Start)
 		}
-		status.Remaining, _ = model.EstimateTotalDuration(sequence[len(runs)-1:], pointDurations, status.RunElapsed)
+		status.Remaining, _ = model.EstimateTotalDuration(schedule[len(runs)-1:], pointDurations, status.RunElapsed)
 	}
 
 	if !experiment.Start.IsZero() {
