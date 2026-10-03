@@ -43,28 +43,6 @@ func readCompletedExperiment(t *testing.T, dir, stdout string) (*model.Experimen
 	return experiment, runs
 }
 
-func readSelectedExperiment(t *testing.T, dir string) (*model.Experiment, []*model.Run) {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, "results.lock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err := uuid.Parse(strings.TrimSpace(string(data)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := results.Open(dir)
-	experiment, err := r.ReadExperiment(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runs, err := r.Runs(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return experiment, runs
-}
-
 func TestExperimentIntegration(t *testing.T) {
 	dir := t.TempDir()
 	studyPath := filepath.Join(dir, "study.yaml")
@@ -154,10 +132,10 @@ func TestExperimentSetupFailureAndCancellation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 			code, stdout, stderr := runCommand(tc.ctx(), "experiment", "foo=1", "-s", tc.script, "-r", "echo '{}'; true '{foo}'")
-			if code != tc.wantCode || stdout != "" || (tc.wantError != "" && !strings.Contains(stderr, "exit status 7")) {
+			if code != tc.wantCode || (tc.wantError != "" && !strings.Contains(stderr, "exit status 7")) {
 				t.Errorf("experiment = %d, %q, %q", code, stdout, stderr)
 			}
-			experiment, runs := readSelectedExperiment(t, "results")
+			experiment, runs := readCompletedExperiment(t, "results", stdout)
 			if experiment.State != tc.wantState || experiment.Error != tc.wantError || experiment.End.IsZero() || len(runs) != 0 {
 				t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 			}
@@ -193,10 +171,10 @@ func TestExperimentSetupCanceledWhileRunning(t *testing.T) {
 	}
 	cancel()
 	result := <-done
-	if result.code != 130 || result.stdout != "" || result.stderr != "" {
+	if result.code != 130 || result.stderr != "" {
 		t.Errorf("canceled setup = %+v", result)
 	}
-	experiment, runs := readSelectedExperiment(t, "results")
+	experiment, runs := readCompletedExperiment(t, "results", result.stdout)
 	if experiment.State != model.StateStopped || experiment.Error != "" || experiment.End.IsZero() || len(runs) != 0 {
 		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 	}
@@ -231,10 +209,10 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 	}
 	cancel()
 	result := <-done
-	if result.code != 130 || result.stdout != "" || result.stderr != "" {
+	if result.code != 130 || result.stderr != "" {
 		t.Errorf("canceled experiment = %+v", result)
 	}
-	experiment, runs := readSelectedExperiment(t, "results")
+	experiment, runs := readCompletedExperiment(t, "results", result.stdout)
 	if experiment.State != model.StateStopped || len(runs) != 2 || runs[0].State != model.StateDone || runs[1].State != model.StateStopped || !runs[1].End.After(runs[1].Start) {
 		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 	}
@@ -316,10 +294,10 @@ func TestRunOutputErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 			code, stdout, _ := runCommand(context.Background(), "experiment", "foo=1", "-r", "true '{foo}'; "+tc.script)
-			if code != 1 || stdout != "" {
+			if code != 1 {
 				t.Fatalf("experiment = %d, %q", code, stdout)
 			}
-			experiment, runs := readSelectedExperiment(t, "results")
+			experiment, runs := readCompletedExperiment(t, "results", stdout)
 			if experiment.State != model.StateError || len(runs) != 1 || runs[0].State != model.StateError || runs[0].Error == "" {
 				t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 			}
@@ -342,10 +320,10 @@ func TestNestedOutcomeAllowsFieldCollisions(t *testing.T) {
 func TestFailedRunKeepsOutcomeAndStopsSchedule(t *testing.T) {
 	t.Chdir(t.TempDir())
 	code, stdout, stderr := runCommand(context.Background(), "experiment", "foo=[1,2]", "-r", `echo '{"value":42}'; true '{foo}'; exit 7`)
-	if code != 1 || stdout != "" || !strings.Contains(stderr, "exit status 7") {
+	if code != 1 || !strings.Contains(stderr, "exit status 7") {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
-	experiment, runs := readSelectedExperiment(t, "results")
+	experiment, runs := readCompletedExperiment(t, "results", stdout)
 	if experiment.State != model.StateError || len(runs) != 1 || runs[0].State != model.StateError || runs[0].Outcome["value"] != float64(42) || !strings.Contains(runs[0].Error, "exit status 7") {
 		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 	}

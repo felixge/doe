@@ -99,10 +99,26 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 			return env.Fail(err)
 		}
 	}
-	if err := runExperiment(ctx, experiment, results, filepath.Dir(resultsDir(*file))); err != nil {
+	setupLog, err := results.CreateExperiment(experiment)
+	if err != nil {
 		return env.Fail(err)
 	}
-	_, _ = fmt.Fprintln(env.Stdout, experiment.ID)
+	defer func() { _ = setupLog.Close() }()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- runExperiment(ctx, experiment, results, filepath.Dir(resultsDir(*file)), setupLog)
+	}()
+	if isTerminal(env.Stdout) {
+		err = watchExperiment(env.Stdout, results, done, cancel)
+	} else {
+		_, _ = fmt.Fprintln(env.Stdout, experiment.ID)
+		err = <-done
+	}
+	if err != nil {
+		return env.Fail(err)
+	}
 	return 0
 }
 
@@ -128,29 +144,35 @@ func statusCommand(env *cli.Env, args []string) int {
 	if status == nil {
 		return env.Fail(fmt.Errorf("no experiment found in %s", resultsDir(*file)))
 	}
-	_, _ = fmt.Fprintf(env.Stdout, "Experiment: %s\nState: %s\n", status.ExperimentID, status.State)
+	_, _ = io.WriteString(env.Stdout, formatStatus(status, resultFiles))
+	return 0
+}
+
+func formatStatus(status *results.Status, resultFiles *results.Results) string {
+	var output strings.Builder
+	_, _ = fmt.Fprintf(&output, "Experiment: %s\nState: %s\n", status.ExperimentID, status.State)
 	if status.State == results.StateSetup {
-		_, _ = fmt.Fprintf(env.Stdout, "Setup log: %s\n", resultFiles.SetupLogPath(status.ExperimentID))
+		_, _ = fmt.Fprintf(&output, "Setup log: %s\n", resultFiles.SetupLogPath(status.ExperimentID))
 	}
 	if status.Total > 0 {
-		_, _ = fmt.Fprintf(env.Stdout, "Runs: %d/%d complete (%d%%)\n", status.Completed, status.Total, status.Completed*100/status.Total)
+		_, _ = fmt.Fprintf(&output, "Runs: %d/%d complete (%d%%)\n", status.Completed, status.Total, status.Completed*100/status.Total)
 	}
 	if status.State == results.StateError {
-		_, _ = fmt.Fprintf(env.Stdout, "Error: %s\n", status.Error)
+		_, _ = fmt.Fprintf(&output, "Error: %s\n", status.Error)
 	}
 	if status.RunReplicate > 0 {
-		_, _ = fmt.Fprintf(env.Stdout, "Current run: replicate %d, design point %s\n", status.RunReplicate, status.RunPoint)
+		_, _ = fmt.Fprintf(&output, "Current run: replicate %d, design point %s\n", status.RunReplicate, status.RunPoint)
 	}
 	if status.RunElapsed > 0 {
-		_, _ = fmt.Fprintf(env.Stdout, "Run elapsed: %s\n", formatDuration(status.RunElapsed))
+		_, _ = fmt.Fprintf(&output, "Run elapsed: %s\n", formatDuration(status.RunElapsed))
 	}
 	if status.ExperimentElapsed > 0 {
-		_, _ = fmt.Fprintf(env.Stdout, "Experiment elapsed: %s\n", formatDuration(status.ExperimentElapsed))
+		_, _ = fmt.Fprintf(&output, "Experiment elapsed: %s\n", formatDuration(status.ExperimentElapsed))
 	}
 	if status.Remaining > 0 {
-		_, _ = fmt.Fprintf(env.Stdout, "Experiment remaining: %s\n", formatDuration(status.Remaining))
+		_, _ = fmt.Fprintf(&output, "Experiment remaining: %s\n", formatDuration(status.Remaining))
 	}
-	return 0
+	return output.String()
 }
 
 func formatDuration(duration time.Duration) string {
@@ -220,13 +242,8 @@ func resultsDir(path string) string {
 	return filepath.Join(dir, "results")
 }
 
-// runExperiment creates and updates records throughout the experiment lifecycle.
-func runExperiment(ctx context.Context, experiment *model.Experiment, resultFiles *results.Results, projectDir string) error {
-	setupLog, err := resultFiles.CreateExperiment(experiment)
-	if err != nil {
-		return err
-	}
-
+// runExperiment updates records throughout the experiment lifecycle and closes setupLog.
+func runExperiment(ctx context.Context, experiment *model.Experiment, resultFiles *results.Results, projectDir string, setupLog *os.File) error {
 	var setupExecErr, setupJSONErr error
 	if experiment.Setup != "" {
 		setupExecErr = executeScript(ctx, string(experiment.Setup), projectDir, setupLog)
