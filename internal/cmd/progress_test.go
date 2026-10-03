@@ -86,17 +86,17 @@ func TestWatchExperiment(t *testing.T) {
 		{"canceled", model.StateStopped, context.Canceled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resultFiles, err := results.New(t.TempDir())
+			r, err := results.New(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
 			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-			release, err := resultFiles.Lock(experiment.ID)
+			release, err := r.Lock(experiment.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = release() }()
-			log, err := resultFiles.CreateExperiment(&experiment)
+			log, err := r.CreateExperiment(&experiment)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +112,7 @@ func TestWatchExperiment(t *testing.T) {
 			go func() {
 				run := func() error {
 					experiment.State = model.StateRunning
-					if err := resultFiles.UpdateExperiment(&experiment); err != nil {
+					if err := r.UpdateExperiment(&experiment); err != nil {
 						return err
 					}
 					select {
@@ -124,14 +124,14 @@ func TestWatchExperiment(t *testing.T) {
 					if tc.state == model.StateError {
 						experiment.Error = tc.err.Error()
 					}
-					return errors.Join(tc.err, resultFiles.UpdateExperiment(&experiment))
+					return errors.Join(tc.err, r.UpdateExperiment(&experiment))
 				}
 				workerDone := make(chan error, 1)
 				go func() {
 					<-start
 					workerDone <- run()
 				}()
-				done <- watchExperiment(frames, resultFiles, workerDone, cancel)
+				done <- watchExperiment(frames, r, workerDone, cancel)
 			}()
 			initial := nextFrame(t, frames)
 			if !strings.Contains(initial, "State: Setup\n") || strings.Contains(initial, "\x1b") {
@@ -156,11 +156,11 @@ func TestWatchExperiment(t *testing.T) {
 				t.Fatal("watch did not finish")
 			}
 			final := nextFrame(t, frames)
-			status, err := resultFiles.Status()
+			status, err := r.Status()
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := "\x1b[4A\r\x1b[J" + formatStatus(status, resultFiles)
+			want := "\x1b[4A\r\x1b[J" + formatStatus(status, r)
 			if final != want || len(frames) != 0 {
 				t.Errorf("final frame = %q, want %q; extra frames = %d", final, want, len(frames))
 			}

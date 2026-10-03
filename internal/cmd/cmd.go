@@ -83,23 +83,23 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Validate before touching previous results, and lock before cleaning them.
-	results, err := results.New(resultsDir(*file))
+	r, err := results.New(resultsDir(*file))
 	if err != nil {
 		return env.Fail(err)
 	}
 
 	// Hold the lock while running so other processes can check for liveness.
-	release, err := results.Lock(experiment.ID)
+	release, err := r.Lock(experiment.ID)
 	if err != nil {
 		return env.Fail(err)
 	}
 	defer func() { _ = release() }()
 	if *clean {
-		if err := results.Clean(); err != nil {
+		if err := r.Clean(); err != nil {
 			return env.Fail(err)
 		}
 	}
-	setupLog, err := results.CreateExperiment(experiment)
+	setupLog, err := r.CreateExperiment(experiment)
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -108,10 +108,10 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- runExperiment(ctx, experiment, results, filepath.Dir(resultsDir(*file)), setupLog)
+		done <- runExperiment(ctx, experiment, r, filepath.Dir(resultsDir(*file)), setupLog)
 	}()
 	if isTerminal(env.Stdout) {
-		err = watchExperiment(env.Stdout, results, done, cancel)
+		err = watchExperiment(env.Stdout, r, done, cancel)
 	} else {
 		_, _ = fmt.Fprintln(env.Stdout, experiment.ID)
 		err = <-done
@@ -136,23 +136,23 @@ func statusCommand(env *cli.Env, args []string) int {
 	if len(flags.Args()) != 0 {
 		return env.Fail(fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " ")))
 	}
-	resultFiles := results.Open(resultsDir(*file))
-	status, err := resultFiles.Status()
+	r := results.Open(resultsDir(*file))
+	status, err := r.Status()
 	if err != nil {
 		return env.Fail(err)
 	}
 	if status == nil {
 		return env.Fail(fmt.Errorf("no experiment found in %s", resultsDir(*file)))
 	}
-	_, _ = io.WriteString(env.Stdout, formatStatus(status, resultFiles))
+	_, _ = io.WriteString(env.Stdout, formatStatus(status, r))
 	return 0
 }
 
-func formatStatus(status *results.Status, resultFiles *results.Results) string {
+func formatStatus(status *results.Status, r *results.Results) string {
 	var output strings.Builder
 	_, _ = fmt.Fprintf(&output, "Experiment: %s\nState: %s\n", status.ExperimentID, status.State)
 	if status.State == results.StateSetup {
-		_, _ = fmt.Fprintf(&output, "Setup log: %s\n", resultFiles.SetupLogPath(status.ExperimentID))
+		_, _ = fmt.Fprintf(&output, "Setup log: %s\n", r.SetupLogPath(status.ExperimentID))
 	}
 	if status.Total > 0 {
 		_, _ = fmt.Fprintf(&output, "Runs: %d/%d complete (%d%%)\n", status.Completed, status.Total, status.Completed*100/status.Total)
@@ -243,7 +243,7 @@ func resultsDir(path string) string {
 }
 
 // runExperiment updates records throughout the experiment lifecycle and closes setupLog.
-func runExperiment(ctx context.Context, experiment *model.Experiment, resultFiles *results.Results, projectDir string, setupLog *os.File) error {
+func runExperiment(ctx context.Context, experiment *model.Experiment, r *results.Results, projectDir string, setupLog *os.File) error {
 	var setupExecErr, setupJSONErr error
 	if experiment.Setup != "" {
 		setupExecErr = executeScript(ctx, string(experiment.Setup), projectDir, setupLog)
@@ -257,38 +257,38 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, resultFile
 		setupErr = fmt.Errorf("setup: %w", setupErr)
 		experiment.State, experiment.Error = stopReason(setupErr)
 		experiment.End = time.Now()
-		return errors.Join(setupErr, resultFiles.UpdateExperiment(experiment))
+		return errors.Join(setupErr, r.UpdateExperiment(experiment))
 	}
 	experiment.State = model.StateRunning
-	if err := resultFiles.UpdateExperiment(experiment); err != nil {
+	if err := r.UpdateExperiment(experiment); err != nil {
 		return err
 	}
 
 	for replicate, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
 		for _, index := range row {
-			if err := runDesignPoint(ctx, experiment, resultFiles, projectDir, experiment.Points[index], replicate+1); err != nil {
+			if err := runDesignPoint(ctx, experiment, r, projectDir, experiment.Points[index], replicate+1); err != nil {
 				experiment.State, experiment.Error = stopReason(err)
 				experiment.End = time.Now()
-				return errors.Join(err, resultFiles.UpdateExperiment(experiment))
+				return errors.Join(err, r.UpdateExperiment(experiment))
 			}
 		}
 	}
 	experiment.State = model.StateDone
 	experiment.End = time.Now()
-	return resultFiles.UpdateExperiment(experiment)
+	return r.UpdateExperiment(experiment)
 }
 
-func runDesignPoint(ctx context.Context, experiment *model.Experiment, resultFiles *results.Results, projectDir string, point model.Point, replicate int) error {
+func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *results.Results, projectDir string, point model.Point, replicate int) error {
 	// Avoid publishing another run if cancellation happened between runs.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	run := model.NewRun(experiment.ID, point, replicate)
-	log, err := resultFiles.CreateRun(run)
+	log, err := r.CreateRun(run)
 	if err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
-	if err := resultFiles.AppendRun(experiment.ID, run.ID); err != nil {
+	if err := r.AppendRun(experiment.ID, run.ID); err != nil {
 		return fmt.Errorf("run %v: %w", point, errors.Join(err, log.Close()))
 	}
 
@@ -299,7 +299,7 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, resultFil
 	run.State, run.Error = stopReason(err)
 	run.Outcome = outcome
 	run.End = time.Now()
-	err = errors.Join(err, resultFiles.UpdateRun(run))
+	err = errors.Join(err, r.UpdateRun(run))
 	if err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}

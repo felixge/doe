@@ -30,17 +30,17 @@ func statusLines(output string, width int) int {
 }
 
 // watchExperiment owns stdout; the worker only writes experiment records and logs.
-func watchExperiment(w io.Writer, resultFiles *results.Results, done <-chan error, cancel context.CancelFunc) error {
+func watchExperiment(w io.Writer, r *results.Results, done <-chan error, cancel context.CancelFunc) error {
 	var lines int
 	redraw := func() error {
-		status, err := resultFiles.Status()
+		status, err := r.Status()
 		if err != nil {
 			return err
 		}
 		if status == nil {
 			return fmt.Errorf("no experiment found")
 		}
-		output := formatStatus(status, resultFiles)
+		output := formatStatus(status, r)
 		var prefix string
 		if lines > 0 {
 			// Return to the block's start and erase it, including any obsolete lines.
