@@ -2,7 +2,6 @@
 package results
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -134,21 +133,20 @@ func (r *Results) ReadExperiment(id uuid.UUID) (*model.Experiment, error) {
 	return experiment, nil
 }
 
-// CreateRun exclusively creates a shared run record and its log. It does not
-// add the run to an experiment's membership file.
+// CreateRun exclusively creates a run record and its log within its experiment.
 func (r *Results) CreateRun(run *model.Run) (*os.File, error) {
-	dir := filepath.Join(r.dir, "runs")
+	dir := r.runsDir(run.ExperimentID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create runs directory %s: %w", dir, err)
 	}
-	logPath := r.runLogPath(run.ID)
+	logPath := r.runLogPath(run.ExperimentID, run.ID)
 	log, err := openExclusiveLog(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("create run log %s: %w", logPath, err)
 	}
 	// The exclusive log open above guarantees the ID is new, so the record
 	// can be written with a plain replace.
-	recordPath := r.runPath(run.ID)
+	recordPath := r.runPath(run.ExperimentID, run.ID)
 	if err := writeJSON(recordPath, run); err != nil {
 		_ = log.Close()
 		_ = os.Remove(logPath)
@@ -159,16 +157,16 @@ func (r *Results) CreateRun(run *model.Run) (*os.File, error) {
 
 // UpdateRun atomically replaces an existing complete run record.
 func (r *Results) UpdateRun(run *model.Run) error {
-	path := r.runPath(run.ID)
+	path := r.runPath(run.ExperimentID, run.ID)
 	if err := updateJSON(path, run); err != nil {
 		return fmt.Errorf("update run record %s: %w", path, err)
 	}
 	return nil
 }
 
-// ReadRun reads one shared run record.
-func (r *Results) ReadRun(id uuid.UUID) (*model.Run, error) {
-	path := r.runPath(id)
+// ReadRun reads one run record from an experiment's directory.
+func (r *Results) ReadRun(experimentID, runID uuid.UUID) (*model.Run, error) {
+	path := r.runPath(experimentID, runID)
 	run, err := readJSON[model.Run](path)
 	if err != nil {
 		return nil, fmt.Errorf("read run record %s: %w", path, err)
@@ -176,70 +174,33 @@ func (r *Results) ReadRun(id uuid.UUID) (*model.Run, error) {
 	return run, nil
 }
 
-// AppendRun appends a run reference to an experiment in insertion order.
-func (r *Results) AppendRun(experimentID, runID uuid.UUID) error {
-	if _, err := r.ReadExperiment(experimentID); err != nil {
-		return err
-	}
-	if _, err := r.ReadRun(runID); err != nil {
-		return err
-	}
-	path := r.runIDsPath(experimentID)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf("open run membership %s: %w", path, err)
-	}
-	line := runID.String() + "\n"
-	n, writeErr := file.WriteString(line)
-	closeErr := file.Close()
-	if writeErr != nil {
-		return fmt.Errorf("append run membership %s: %w", path, writeErr)
-	}
-	if n != len(line) {
-		return fmt.Errorf("append run membership %s: %w", path, io.ErrShortWrite)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close run membership %s: %w", path, closeErr)
-	}
-	return nil
-}
-
-// Runs reads an experiment's referenced runs in insertion order. An
-// unterminated final membership line is ignored.
+// Runs reads the JSON run records in an experiment's directory, sorted by filename.
+// File order need not match execution order.
 func (r *Results) Runs(experimentID uuid.UUID) ([]*model.Run, error) {
 	if _, err := r.ReadExperiment(experimentID); err != nil {
 		return nil, err
 	}
-	path := r.runIDsPath(experimentID)
-	file, err := os.Open(path)
+	dir := r.runsDir(experimentID)
+	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return []*model.Run{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open run membership %s: %w", path, err)
+		return nil, fmt.Errorf("read runs directory %s: %w", dir, err)
 	}
-	defer func() { _ = file.Close() }()
-
-	var runs []*model.Run
-	reader := bufio.NewReader(file)
-	for {
-		line, readErr := reader.ReadBytes('\n')
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return nil, fmt.Errorf("read run membership %s: %w", path, readErr)
+	runs := make([]*model.Run, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
 		}
-		if errors.Is(readErr, io.EOF) {
-			return runs, nil
-		}
-		id, err := uuid.Parse(strings.TrimSpace(string(line)))
+		path := filepath.Join(dir, entry.Name())
+		run, err := readJSON[model.Run](path)
 		if err != nil {
-			return nil, fmt.Errorf("parse run membership %s: %w", path, err)
-		}
-		run, err := r.ReadRun(id)
-		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read run record %s: %w", path, err)
 		}
 		runs = append(runs, run)
 	}
+	return runs, nil
 }
 
 // SetupLogPath returns the path to an experiment's setup log.
@@ -255,16 +216,16 @@ func (r *Results) experimentPath(id uuid.UUID) string {
 	return filepath.Join(r.experimentDir(id), "experiment.json")
 }
 
-func (r *Results) runIDsPath(id uuid.UUID) string {
-	return filepath.Join(r.experimentDir(id), "runs.ids")
+func (r *Results) runsDir(experimentID uuid.UUID) string {
+	return filepath.Join(r.experimentDir(experimentID), "runs")
 }
 
-func (r *Results) runPath(id uuid.UUID) string {
-	return filepath.Join(r.dir, "runs", id.String()+".json")
+func (r *Results) runPath(experimentID, runID uuid.UUID) string {
+	return filepath.Join(r.runsDir(experimentID), runID.String()+".json")
 }
 
-func (r *Results) runLogPath(id uuid.UUID) string {
-	return filepath.Join(r.dir, "runs", id.String()+".log")
+func (r *Results) runLogPath(experimentID, runID uuid.UUID) string {
+	return filepath.Join(r.runsDir(experimentID), runID.String()+".log")
 }
 
 func (r *Results) lockPath() string {

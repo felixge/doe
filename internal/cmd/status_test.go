@@ -70,9 +70,6 @@ func TestStatusProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = log.Close()
-	if err := r.AppendRun(experiment.ID, run.ID); err != nil {
-		t.Fatal(err)
-	}
 	code, stdout, stderr = runStatusCommand(t, "status")
 	want = "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 0/2 complete (0%)\n" +
 		"Current run: replicate 3, design point foo=2\n"

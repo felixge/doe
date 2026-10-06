@@ -1,6 +1,7 @@
 package results
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -74,17 +75,32 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		return nil, err
 	}
 
-	// Runs are appended in schedule order, so the i-th run executes the
-	// point at schedule[i].
-	schedule := flatSchedule(experiment)
+	// Match records to design points rather than relying on file order.
+	pointIndexes := make(map[string]int, len(experiment.Points))
+	for index, point := range experiment.Points {
+		key, err := json.Marshal(point)
+		if err != nil {
+			return nil, err
+		}
+		pointIndexes[string(key)] = index
+	}
+	type slot struct{ point, replicate int }
+	completed := make(map[slot]int)
 	var active *model.Run
 	pointDurations := make(map[int][]time.Duration)
-	for i, run := range runs {
+	for _, run := range runs {
+		key, err := json.Marshal(run.Point)
+		if err != nil {
+			return nil, err
+		}
+		point, known := pointIndexes[string(key)]
 		switch run.State {
 		case model.StateDone:
 			status.Completed++
-			point := schedule[i]
-			pointDurations[point] = append(pointDurations[point], run.End.Sub(run.Start))
+			if known {
+				completed[slot{point, run.Replicate}]++
+				pointDurations[point] = append(pointDurations[point], run.End.Sub(run.Start))
+			}
 		case model.StateRunning:
 			active = run
 		case model.StateError:
@@ -104,7 +120,18 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 		if !active.Start.IsZero() && !now.Before(active.Start) {
 			status.RunElapsed = now.Sub(active.Start)
 		}
-		status.Remaining, _ = model.EstimateTotalDuration(schedule[len(runs)-1:], pointDurations, status.RunElapsed)
+		var remaining []int
+		for replicate, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
+			for _, point := range row {
+				key := slot{point, replicate + 1}
+				if completed[key] > 0 {
+					completed[key]--
+					continue
+				}
+				remaining = append(remaining, point)
+			}
+		}
+		status.Remaining, _ = model.EstimateTotalDuration(remaining, pointDurations, status.RunElapsed)
 	}
 
 	if !experiment.Start.IsZero() {
@@ -137,15 +164,6 @@ func observedState(recorded model.State, running bool) State {
 	default:
 		return StateStopped
 	}
-}
-
-// flatSchedule flattens the experiment's schedule into point indexes in run order.
-func flatSchedule(experiment *model.Experiment) []int {
-	sequence := make([]int, 0, len(experiment.Points)*experiment.Replicates)
-	for _, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
-		sequence = append(sequence, row...)
-	}
-	return sequence
 }
 
 type statusLock struct {

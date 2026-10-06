@@ -112,11 +112,8 @@ func TestExperimentAndRunRecords(t *testing.T) {
 	if _, err := r.CreateRun(run); !errors.Is(err, fs.ErrExist) {
 		t.Errorf("duplicate run error = %v, want fs.ErrExist", err)
 	}
-	if runs, err := r.Runs(experiment.ID); err != nil || len(runs) != 0 {
-		t.Errorf("runs before membership = %+v, %v", runs, err)
-	}
-	if err := r.AppendRun(experiment.ID, run.ID); err != nil {
-		t.Fatal(err)
+	if runs, err := r.Runs(experiment.ID); err != nil || len(runs) != 1 {
+		t.Errorf("runs after creation = %+v, %v", runs, err)
 	}
 	run.State = model.StateDone
 	run.End = run.Start
@@ -131,7 +128,7 @@ func TestExperimentAndRunRecords(t *testing.T) {
 
 	for _, path := range []string{
 		filepath.Join(dir, "experiments", experiment.ID.String(), "experiment.json"),
-		filepath.Join(dir, "runs", run.ID.String()+".json"),
+		filepath.Join(dir, "experiments", experiment.ID.String(), "runs", run.ID.String()+".json"),
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -170,9 +167,8 @@ func TestCreateFailureRemovesOnlyCreatedFiles(t *testing.T) {
 	}
 }
 
-func TestMembershipPartialMalformedAndMissing(t *testing.T) {
-	dir := t.TempDir()
-	r, err := New(dir)
+func TestRunsDiscoversOnlyJSONRecords(t *testing.T) {
+	r, err := New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,34 +178,29 @@ func TestMembershipPartialMalformedAndMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = log.Close()
+	if runs, err := r.Runs(experiment.ID); err != nil || len(runs) != 0 {
+		t.Fatalf("empty runs = %+v, %v", runs, err)
+	}
 	run := model.NewRun(experiment.ID, nil, 1)
 	log, err = r.CreateRun(run)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = log.Close()
-	membership := filepath.Join(dir, "experiments", experiment.ID.String(), "runs.ids")
-	if err := os.WriteFile(membership, []byte(run.ID.String()), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(r.runsDir(experiment.ID), ".tmp-record"), []byte("partial"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if runs, err := r.Runs(experiment.ID); err != nil || len(runs) != 0 {
-		t.Errorf("unterminated membership = %+v, %v; want empty", runs, err)
+	if runs, err := r.Runs(experiment.ID); err != nil || len(runs) != 1 || runs[0].ID != run.ID {
+		t.Errorf("discovered runs = %+v, %v", runs, err)
 	}
-	if err := os.WriteFile(membership, []byte("not-a-uuid\n"), 0600); err != nil {
+	if _, err := r.ReadRun(experiment.ID, run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Runs(experiment.ID); err == nil || !strings.Contains(err.Error(), "parse run membership") {
-		t.Errorf("malformed membership error = %v", err)
-	}
-	missing := uuid.NewV7()
-	if err := os.WriteFile(membership, []byte(missing.String()+"\n"), 0600); err != nil {
+	if err := os.WriteFile(r.runPath(experiment.ID, run.ID), []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Runs(experiment.ID); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("missing referenced run error = %v, want fs.ErrNotExist", err)
-	}
-	if err := r.AppendRun(experiment.ID, missing); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("append missing run error = %v, want fs.ErrNotExist", err)
+	if _, err := r.Runs(experiment.ID); err == nil {
+		t.Error("malformed run record was ignored")
 	}
 }
 
@@ -219,7 +210,7 @@ func TestMissingRecordsAndOpenDoNotCreate(t *testing.T) {
 	if _, err := r.ReadExperiment(uuid.NewV7()); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("missing experiment error = %v", err)
 	}
-	if _, err := r.ReadRun(uuid.NewV7()); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := r.ReadRun(uuid.NewV7(), uuid.NewV7()); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("missing run error = %v", err)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {

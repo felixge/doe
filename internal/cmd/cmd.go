@@ -288,9 +288,6 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *result
 	if err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
-	if err := r.AppendRun(experiment.ID, run.ID); err != nil {
-		return fmt.Errorf("run %v: %w", point, errors.Join(err, log.Close()))
-	}
 
 	executionErr := executeScript(ctx, expandRunScript(experiment.Run, point), projectDir, log)
 	outcome, outcomeErr := lastJSON[model.Outcome](log, true)

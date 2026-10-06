@@ -73,13 +73,12 @@ run: |
 		if run.ExperimentID != experiment.ID || run.State != model.StateDone || result != foo+bar || run.End.Before(run.Start) {
 			t.Errorf("run = %+v", run)
 		}
-		if _, err := os.Stat(filepath.Join(dir, "results", "runs", run.ID.String()+".log")); err != nil {
+		if _, err := os.Stat(filepath.Join(dir, "results", "experiments", experiment.ID.String(), "runs", run.ID.String()+".log")); err != nil {
 			t.Errorf("missing run log: %v", err)
 		}
 	}
-	membership, err := os.ReadFile(filepath.Join(dir, "results", "experiments", experiment.ID.String(), "runs.ids"))
-	if err != nil || bytes.Count(membership, []byte("\n")) != 6 {
-		t.Errorf("membership = %q, %v", membership, err)
+	if _, err := os.Stat(filepath.Join(dir, "results", "experiments", experiment.ID.String(), "runs.ids")); !os.IsNotExist(err) {
+		t.Errorf("unexpected membership file: %v", err)
 	}
 }
 
@@ -216,7 +215,7 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 	if experiment.State != model.StateStopped || len(runs) != 2 || runs[0].State != model.StateDone || runs[1].State != model.StateStopped || !runs[1].End.After(runs[1].Start) {
 		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 	}
-	log, err := os.ReadFile(filepath.Join("results", "runs", runs[1].ID.String()+".log"))
+	log, err := os.ReadFile(filepath.Join("results", "experiments", experiment.ID.String(), "runs", runs[1].ID.String()+".log"))
 	if err != nil || string(log) != "partial" {
 		t.Errorf("interrupted log = %q, %v", log, err)
 	}
@@ -386,8 +385,8 @@ func TestRunDoesNotReadCLIStdin(t *testing.T) {
 	if code != 0 || stderr.Len() != 0 {
 		t.Fatalf("experiment = %d, %q", code, &stderr)
 	}
-	_, runs := readCompletedExperiment(t, "results", stdout.String())
-	log, err := os.ReadFile(filepath.Join("results", "runs", runs[0].ID.String()+".log"))
+	experiment, runs := readCompletedExperiment(t, "results", stdout.String())
+	log, err := os.ReadFile(filepath.Join("results", "experiments", experiment.ID.String(), "runs", runs[0].ID.String()+".log"))
 	if err != nil || string(log) != "no-input\n{}\n" {
 		t.Errorf("log = %q, %v", log, err)
 	}
@@ -552,8 +551,8 @@ func TestRecordJSONIsNested(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatal(stderr)
 	}
-	_, runs := readCompletedExperiment(t, "results", stdout)
-	data, err := os.ReadFile(filepath.Join("results", "runs", runs[0].ID.String()+".json"))
+	experiment, runs := readCompletedExperiment(t, "results", stdout)
+	data, err := os.ReadFile(filepath.Join("results", "experiments", experiment.ID.String(), "runs", runs[0].ID.String()+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}

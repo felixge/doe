@@ -30,9 +30,6 @@ func createStatusRun(t *testing.T, r *Results, run *model.Run) {
 	if err := log.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.AppendRun(run.ExperimentID, run.ID); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestStatusTransitionsAndActualRun(t *testing.T) {
@@ -168,9 +165,11 @@ func TestStatusRemainingEstimate(t *testing.T) {
 	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	first := model.NewRun(experiment.ID, experiment.Points[0], 1)
 	first.Start, first.End, first.State = started, started.Add(2*time.Second), model.StateDone
-	createStatusRun(t, r, first)
 	active := model.NewRun(experiment.ID, experiment.Points[1], 1)
 	active.Start = started.Add(2 * time.Second)
+	// Reverse file order to prove status matches point/replicate, not filenames.
+	first.ID, active.ID = active.ID, first.ID
+	createStatusRun(t, r, first)
 	createStatusRun(t, r, active)
 	status, err := r.statusAt(started.Add(3 * time.Second))
 	// Six planned runs at 2s each, with one complete and 1s spent on the active run.
