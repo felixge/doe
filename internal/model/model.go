@@ -3,6 +3,7 @@ package model
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -104,6 +105,22 @@ func (d Design) Validate() error {
 		}
 	}
 	return nil
+}
+
+// RunHash identifies reusable inputs for one point and one-based replicate.
+// JSON sorts map keys. Other points, total replicates, and external dependencies
+// are deliberately excluded so an extended design can reuse earlier runs.
+func (d Design) RunHash(point Point, replicate int) (string, error) {
+	data, err := json.Marshal(struct {
+		Run       Script `json:"run"`
+		Setup     Script `json:"setup"`
+		Point     Point  `json:"point"`
+		Replicate int    `json:"replicate"`
+	}{d.Run, d.Setup, point, replicate})
+	if err != nil {
+		return "", fmt.Errorf("hash run inputs: %w", err)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
 
 // Clone returns a design with an independent factors map.

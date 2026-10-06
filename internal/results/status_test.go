@@ -219,6 +219,53 @@ func TestStatusRemainingUsesPointAverages(t *testing.T) {
 	}
 }
 
+func TestStatusExcludesReusedRunsLaterInSchedule(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	design := model.Design{Factors: model.Factors{"foo": {1, 2, 3}}, Replicates: 1}
+	original := model.NewExperiment(design)
+	createStatusExperiment(t, r, &original)
+	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	reused := model.NewRun(original.ID, original.Points[1], 1)
+	reused.Start, reused.End, reused.State = started.Add(-time.Hour), started.Add(-time.Hour+6*time.Second), model.StateDone
+	createStatusRun(t, r, reused)
+	index, err := r.OpenRunIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := index.Add("hash", reused); err != nil {
+		t.Fatal(err)
+	}
+	_ = index.Close()
+	index, err = r.OpenRunIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = index.Close() }()
+	experiment := model.NewExperiment(design)
+	experiment.State, experiment.Start = model.StateRunning, started
+	createStatusExperiment(t, r, &experiment)
+	release, err := r.Lock(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if copied, err := index.Reuse(experiment.ID, "hash"); err != nil || !copied {
+		t.Fatalf("Reuse = %v, %v", copied, err)
+	}
+	active := model.NewRun(experiment.ID, experiment.Points[0], 1)
+	active.Start = started
+	createStatusRun(t, r, active)
+	status, err := r.statusAt(started.Add(time.Second))
+	// Only points 1 and 3 remain: 6s each minus 1s on the active run.
+	if err != nil || status.Completed != 1 || status.Remaining != 11*time.Second ||
+		status.RunPoint.String() != "foo=1" || status.ExperimentElapsed != time.Second {
+		t.Errorf("status with reused run = %+v, %v", status, err)
+	}
+}
+
 func TestStatusInvalidLock(t *testing.T) {
 	r, err := New(t.TempDir())
 	if err != nil {

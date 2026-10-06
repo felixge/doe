@@ -58,6 +58,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
 	replicates := flags.IntP("replicates", "n", 0, "runs per design point")
 	clean := flags.BoolP("clean", "c", false, "remove previous results before running")
+	noReuse := flags.Bool("no-reuse", false, "execute all runs instead of reusing successful runs")
 	design := flags.Bool("design", false, "print the resolved design as YAML without running")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
 		experimentUsage(env.Stdout)
@@ -108,7 +109,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- runExperiment(ctx, experiment, r, filepath.Dir(resultsDir(*file)), setupLog)
+		done <- runExperiment(ctx, experiment, r, filepath.Dir(resultsDir(*file)), setupLog, !*noReuse)
 	}()
 	if isTerminal(env.Stdout) {
 		err = watchExperiment(env.Stdout, r, done, cancel)
@@ -243,7 +244,7 @@ func resultsDir(path string) string {
 }
 
 // runExperiment updates records throughout the experiment lifecycle and closes setupLog.
-func runExperiment(ctx context.Context, experiment *model.Experiment, r *results.Results, projectDir string, setupLog *os.File) error {
+func runExperiment(ctx context.Context, experiment *model.Experiment, r *results.Results, projectDir string, setupLog *os.File, reuse bool) error {
 	var setupExecErr, setupJSONErr error
 	if experiment.Setup != "" {
 		setupExecErr = executeScript(ctx, string(experiment.Setup), projectDir, setupLog)
@@ -252,33 +253,64 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, r *results
 	setupCloseErr := setupLog.Close()
 	experiment.SetupEnd = time.Now()
 
-	setupErr := errors.Join(ctx.Err(), setupExecErr, setupJSONErr, setupCloseErr)
-	if setupErr != nil {
-		setupErr = fmt.Errorf("setup: %w", setupErr)
-		experiment.State, experiment.Error = stopReason(setupErr)
-		experiment.End = time.Now()
-		return errors.Join(setupErr, r.UpdateExperiment(experiment))
+	if err := errors.Join(ctx.Err(), setupExecErr, setupJSONErr, setupCloseErr); err != nil {
+		return finishExperiment(experiment, r, fmt.Errorf("setup: %w", err))
+	}
+	index, err := r.OpenRunIndex()
+	if err != nil {
+		return finishExperiment(experiment, r, err)
+	}
+	defer func() { _ = index.Close() }()
+
+	// Copy reusable runs before executing new ones so progress estimates only
+	// include pending work, even when reused points occur later in the schedule.
+	type pendingRun struct {
+		point     model.Point
+		replicate int
+		hash      string
+	}
+	var pending []pendingRun
+	for replicate, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
+		for _, pointIndex := range row {
+			if err := ctx.Err(); err != nil {
+				return finishExperiment(experiment, r, err)
+			}
+			point := experiment.Points[pointIndex]
+			hash, err := experiment.RunHash(point, replicate+1)
+			if err != nil {
+				return finishExperiment(experiment, r, err)
+			}
+			if reuse {
+				copied, err := index.Reuse(experiment.ID, hash)
+				if err != nil {
+					return finishExperiment(experiment, r, err)
+				}
+				if copied {
+					continue
+				}
+			}
+			pending = append(pending, pendingRun{point, replicate + 1, hash})
+		}
 	}
 	experiment.State = model.StateRunning
 	if err := r.UpdateExperiment(experiment); err != nil {
 		return err
 	}
-
-	for replicate, row := range model.Schedule(len(experiment.Points), experiment.Replicates) {
-		for _, index := range row {
-			if err := runDesignPoint(ctx, experiment, r, projectDir, experiment.Points[index], replicate+1); err != nil {
-				experiment.State, experiment.Error = stopReason(err)
-				experiment.End = time.Now()
-				return errors.Join(err, r.UpdateExperiment(experiment))
-			}
+	for _, run := range pending {
+		if err := runDesignPoint(ctx, experiment, r, index, projectDir, run.point, run.replicate, run.hash); err != nil {
+			return finishExperiment(experiment, r, err)
 		}
 	}
-	experiment.State = model.StateDone
-	experiment.End = time.Now()
-	return r.UpdateExperiment(experiment)
+	return finishExperiment(experiment, r, ctx.Err())
 }
 
-func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *results.Results, projectDir string, point model.Point, replicate int) error {
+func finishExperiment(experiment *model.Experiment, r *results.Results, err error) error {
+	experiment.State, experiment.Error = stopReason(err)
+	experiment.End = time.Now()
+	return errors.Join(err, r.UpdateExperiment(experiment))
+}
+
+func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *results.Results, index *results.RunIndex, projectDir string, point model.Point, replicate int, hash string) error {
 	// Avoid publishing another run if cancellation happened between runs.
 	if err := ctx.Err(); err != nil {
 		return err
@@ -297,6 +329,9 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *result
 	run.Outcome = outcome
 	run.End = time.Now()
 	err = errors.Join(err, r.UpdateRun(run))
+	if err == nil {
+		err = index.Add(hash, run)
+	}
 	if err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
@@ -394,7 +429,7 @@ Options:
 func experimentUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe experiment [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [-n count] [-c] [--design]
+Usage: doe experiment [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [-n count] [-c] [--no-reuse] [--design]
 
 Options:
   -f, --file        Load factors, scripts, and replicates from a YAML study.
@@ -403,6 +438,7 @@ Options:
   -r, --run         Override the run script with a shell command.
   -n, --replicates  Override runs per design point (default: 1).
   -c, --clean       Remove previous results before running.
+      --no-reuse    Execute all runs instead of reusing successful runs.
       --design      Print the resolved design as YAML without running.
   -h, --help        Print help text.
 
@@ -411,5 +447,6 @@ inherited by the selected preset; CLI options override both. In run scripts,
 {factor} expands to the setting.
 Setup scripts do not expand factor placeholders.
 A study's replicates key runs each design point that many times (default: 1).
+Successful runs with matching scripts, point, and replicate are reused by default.
 `)
 }

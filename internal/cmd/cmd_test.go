@@ -187,9 +187,10 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 		code           int
 		stdout, stderr string
 	}, 1)
+	args := []string{"experiment", "foo=[1,2]", "-r",
+		`if [ {foo} = 1 ]; then echo '{}'; else printf partial; touch started; while [ ! -f resume ]; do sleep 0.01; done; printf '\n{}\n'; fi`}
 	go func() {
-		code, stdout, stderr := runCommand(ctx, "experiment", "foo=[1,2]", "-r",
-			`if [ {foo} = 1 ]; then echo '{}'; else printf partial; touch started; while :; do sleep 0.01; done; fi`)
+		code, stdout, stderr := runCommand(ctx, args...)
 		done <- struct {
 			code           int
 			stdout, stderr string
@@ -218,6 +219,14 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 	log, err := os.ReadFile(filepath.Join("results", "experiments", experiment.ID.String(), "runs", runs[1].ID.String()+".log"))
 	if err != nil || string(log) != "partial" {
 		t.Errorf("interrupted log = %q, %v", log, err)
+	}
+	if err := os.WriteFile("resume", nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	continued, continuedRuns := completedCommand(t, args[1:]...)
+	if len(continuedRuns) != 2 || continuedRuns[0].ID != runs[0].ID ||
+		continuedRuns[1].ID == runs[1].ID || continuedRuns[1].ExperimentID != continued.ID {
+		t.Errorf("continued canceled experiment = %+v", continuedRuns)
 	}
 }
 
