@@ -63,6 +63,12 @@ func TestStatusProgress(t *testing.T) {
 	if err := r.UpdateExperiment(&experiment); err != nil {
 		t.Fatal(err)
 	}
+	code, stdout, stderr = runStatusCommand(t, "status")
+	want = "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 0/2 complete (0%)\n"
+	if code != 0 || stdout != want || stderr != "" {
+		t.Fatalf("running status without active run = %d, %q, %q; want %q", code, stdout, stderr, want)
+	}
+
 	run := model.NewRun(experiment.ID, experiment.Points[1], 3)
 	run.Start = time.Time{}
 	log, err = r.CreateRun(run)
@@ -71,8 +77,9 @@ func TestStatusProgress(t *testing.T) {
 	}
 	_ = log.Close()
 	code, stdout, stderr = runStatusCommand(t, "status")
-	want = "Experiment: " + experiment.ID.String() + "\nState: Running\nRuns: 0/2 complete (0%)\n" +
-		"Current run: replicate 3, design point foo=2\n"
+	want = "Experiment: " + experiment.ID.String() + "\nState: Running\n" +
+		"Runs: 0/2 complete (0%)\nCurrent run: replicate 3, design point foo=2\n" +
+		"Run log: " + filepath.Join("results", "experiments", experiment.ID.String(), "runs", run.ID.String()+".log") + "\n"
 	if code != 0 || stdout != want || stderr != "" {
 		t.Errorf("running status = %d, %q, %q; want %q", code, stdout, stderr, want)
 	}
@@ -140,6 +147,18 @@ func TestStatusUnfinishedWithoutOwner(t *testing.T) {
 	want := "Experiment: " + experiment.ID.String() + "\nState: Stopped\nRuns: 0/1 complete (0%)\n"
 	if code != 0 || stdout != want || stderr != "" {
 		t.Errorf("status = %d, %q, %q; want %q", code, stdout, stderr, want)
+	}
+}
+
+func TestFormatStatusRunLogAfterElapsed(t *testing.T) {
+	r := results.Open("results")
+	status := &results.Status{
+		State:      results.StateRunning,
+		RunElapsed: 3 * time.Second,
+		RunLogPath: "active.log",
+	}
+	if output := formatStatus(status, r); !strings.Contains(output, "Run elapsed: 3s\nRun log: active.log\n") {
+		t.Errorf("status = %q; want run log immediately after run elapsed", output)
 	}
 }
 

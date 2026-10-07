@@ -72,7 +72,8 @@ func TestStatusTransitionsAndActualRun(t *testing.T) {
 	createStatusRun(t, r, active)
 	status, err = r.statusAt(now)
 	if err != nil || status.State != StateRunning || status.RunReplicate != 7 ||
-		status.RunPoint.String() != "foo=2" || status.RunElapsed != 3*time.Second {
+		status.RunPoint.String() != "foo=2" || status.RunElapsed != 3*time.Second ||
+		status.RunLogPath != filepath.Join(dir, "experiments", experiment.ID.String(), "runs", active.ID.String()+".log") {
 		t.Fatalf("running status = %+v, %v; want actual active run", status, err)
 	}
 
@@ -88,7 +89,7 @@ func TestStatusTransitionsAndActualRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err = r.statusAt(now.Add(time.Hour))
-	if err != nil || status.State != StateDone || status.Completed != 1 || status.ExperimentElapsed != 2*time.Minute || status.RunReplicate != 0 {
+	if err != nil || status.State != StateDone || status.Completed != 1 || status.ExperimentElapsed != 2*time.Minute || status.RunReplicate != 0 || status.RunLogPath != "" {
 		t.Errorf("done status = %+v, %v", status, err)
 	}
 }

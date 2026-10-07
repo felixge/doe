@@ -32,6 +32,7 @@ type Status struct {
 	Total             int
 	RunReplicate      int
 	RunPoint          model.Point
+	RunLogPath        string // Empty when no run is active.
 	RunElapsed        time.Duration
 	ExperimentElapsed time.Duration
 	Remaining         time.Duration
@@ -108,6 +109,7 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 	if status.State == StateRunning && active != nil {
 		status.RunReplicate = active.Replicate
 		status.RunPoint = active.Point
+		status.RunLogPath = r.runLogPath(experiment.ID, active.ID)
 		if !active.Start.IsZero() && !now.Before(active.Start) {
 			status.RunElapsed = now.Sub(active.Start)
 		}

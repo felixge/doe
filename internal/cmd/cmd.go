@@ -167,6 +167,9 @@ func formatStatus(status *results.Status, r *results.Results) string {
 	if status.RunElapsed > 0 {
 		_, _ = fmt.Fprintf(&output, "Run elapsed: %s\n", formatDuration(status.RunElapsed))
 	}
+	if status.State == results.StateRunning && status.RunLogPath != "" {
+		_, _ = fmt.Fprintf(&output, "Run log: %s\n", status.RunLogPath)
+	}
 	if status.ExperimentElapsed > 0 {
 		_, _ = fmt.Fprintf(&output, "Experiment elapsed: %s\n", formatDuration(status.ExperimentElapsed))
 	}
