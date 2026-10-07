@@ -104,12 +104,16 @@ func (index *RunIndex) Reuse(experimentID uuid.UUID, hash string) (bool, error) 
 		return false, nil
 	}
 	path = filepath.Join(index.results.dir, filepath.FromSlash(path))
-	run, err := readJSON[model.Run](path)
+	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("read reuse candidate %s: %w", path, err)
+	}
+	var run model.Run
+	if err := json.Unmarshal(data, &run); err != nil {
+		return false, fmt.Errorf("decode reuse candidate %s: %w", path, err)
 	}
 	if run.State != model.StateDone {
 		return false, nil
@@ -137,11 +141,7 @@ func (index *RunIndex) Reuse(experimentID uuid.UUID, hash string) (bool, error) 
 	err = errors.Join(copyErr, destLog.Close())
 	// Publish JSON last so discovering a run always implies its log is complete.
 	if err == nil {
-		var data []byte
-		data, err = os.ReadFile(path)
-		if err == nil {
-			err = writeFile(r.runPath(experimentID, run.ID), data)
-		}
+		err = writeFile(r.runPath(experimentID, run.ID), data)
 	}
 	if err != nil {
 		_ = os.Remove(destLogPath)

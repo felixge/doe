@@ -38,6 +38,15 @@ func TestRunIndexReuseLatestAndPreserveFiles(t *testing.T) {
 		}
 		latest = run
 	}
+	// Noncanonical whitespace must survive copying, not just JSON decoding.
+	recordPath := r.runPath(experiment.ID, latest.ID)
+	record, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recordPath, append([]byte(" \n"), record...), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := index.Close(); err != nil {
 		t.Fatal(err)
 	}
