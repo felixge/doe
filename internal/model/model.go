@@ -3,6 +3,7 @@ package model
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -74,9 +75,23 @@ func (d Design) Validate() error {
 	if d.Replicates < 1 {
 		return fmt.Errorf("replicates must be a positive integer")
 	}
-	for factor, settings := range d.Factors {
+	for _, factor := range slices.Sorted(maps.Keys(d.Factors)) {
+		settings := d.Factors[factor]
 		if len(settings) == 0 {
 			return fmt.Errorf("factor %q has no settings", factor)
+		}
+		// Compare stored JSON values, including lists and maps, not shell arguments.
+		seen := make(map[string]bool, len(settings))
+		for _, setting := range settings {
+			data, err := json.Marshal(setting)
+			if err != nil {
+				return fmt.Errorf("factor %q: encode setting: %w", factor, err)
+			}
+			key := string(data)
+			if seen[key] {
+				return fmt.Errorf("factor %q has duplicate setting %s", factor, key)
+			}
+			seen[key] = true
 		}
 	}
 	placeholders := make(map[Factor]bool)

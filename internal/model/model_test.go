@@ -83,6 +83,7 @@ func TestDesignValidate(t *testing.T) {
 	}{
 		{"valid", Design{Factors: Factors{"foo": {1}}, Run: "echo '{foo}'", Replicates: 2}, ""},
 		{"multiple factors", Design{Factors: Factors{"foo": {1}, "bar": {2}}, Run: "echo {foo} {bar}", Replicates: 1}, ""},
+		{"same setting across factors", Design{Factors: Factors{"foo": {1}, "bar": {1}}, Run: "echo {foo} {bar}", Replicates: 1}, ""},
 		{"missing placeholder", Design{Factors: Factors{"foo": {1}}, Run: "echo '{}'", Replicates: 1}, `missing placeholder {foo}`},
 		{"missing one of two", Design{Factors: Factors{"foo": {1}, "bar": {2}}, Run: "echo {foo}", Replicates: 1}, `missing placeholder {bar}`},
 		{"partial name", Design{Factors: Factors{"foo": {1}}, Run: "echo {foobar}", Replicates: 1}, `missing placeholder {foo}`},
@@ -101,6 +102,41 @@ func TestDesignValidate(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("Validate() = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDesignValidateDuplicateSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings, duplicate string
+	}{
+		{"integers", "[1, 2, 1]", "1"},
+		{"floats", "[1.5, 1.5]", "1.5"},
+		{"equivalent numbers", "[1, 1.0]", "1"},
+		{"strings", `["same", "same"]`, `"same"`},
+		{"booleans", "[true, true]", "true"},
+		{"nulls", "[null, null]", "null"},
+		{"lists", "[[1, 2], [1, 2]]", "[1,2]"},
+		{"maps", "[{a: 1, b: 2}, {b: 2, a: 1}]", `{"a":1,"b":2}`},
+		{"distinct types", `[1, "1", true, [1], {value: 1}]`, ""},
+		{"distinct lists", "[[1, 2], [2, 1]]", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			design := Design{Run: "echo {foo}", Replicates: 2}
+			if err := design.Factors.Set("foo", []byte(tc.settings)); err != nil {
+				t.Fatal(err)
+			}
+			err := design.Validate()
+			if tc.duplicate == "" {
+				if err != nil {
+					t.Errorf("distinct settings rejected: %v", err)
+				}
+			} else {
+				want := `factor "foo" has duplicate setting ` + tc.duplicate
+				if err == nil || err.Error() != want {
+					t.Errorf("Validate() = %v; want %q", err, want)
+				}
 			}
 		})
 	}

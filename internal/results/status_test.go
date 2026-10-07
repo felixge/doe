@@ -179,32 +179,43 @@ func TestStatusRemainingEstimate(t *testing.T) {
 }
 
 func TestStatusRemainingUsesPointAverages(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 2})
-	experiment.State = model.StateRunning
-	release, err := r.Lock(experiment.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = release() }()
-	createStatusExperiment(t, r, &experiment)
-	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	first := model.NewRun(experiment.ID, experiment.Points[0], 1)
-	first.Start, first.End, first.State = started, started.Add(2*time.Second), model.StateDone
-	createStatusRun(t, r, first)
-	second := model.NewRun(experiment.ID, experiment.Points[1], 1)
-	second.Start, second.End, second.State = first.End, first.End.Add(6*time.Second), model.StateDone
-	createStatusRun(t, r, second)
-	// The second replicate reverses the point order: Points[1], then Points[0].
-	active := model.NewRun(experiment.ID, experiment.Points[1], 2)
-	active.Start = second.End
-	createStatusRun(t, r, active)
-	status, err := r.statusAt(active.Start.Add(time.Second))
-	if err != nil || status.Completed != 2 || status.Remaining != 7*time.Second {
-		t.Errorf("status = %+v, %v; want 2 completed and 7s remaining", status, err)
+	for _, tc := range []struct {
+		name                     string
+		first, second, remaining time.Duration
+	}{
+		{"different points", 2 * time.Second, 6 * time.Second, 7 * time.Second},
+		{"zero first duration", 0, 6 * time.Second, 5 * time.Second},
+		{"zero second duration", 2 * time.Second, 0, 2 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 2})
+			experiment.State = model.StateRunning
+			release, err := r.Lock(experiment.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = release() }()
+			createStatusExperiment(t, r, &experiment)
+			started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+			first := model.NewRun(experiment.ID, experiment.Points[0], 1)
+			first.Start, first.End, first.State = started, started.Add(tc.first), model.StateDone
+			createStatusRun(t, r, first)
+			second := model.NewRun(experiment.ID, experiment.Points[1], 1)
+			second.Start, second.End, second.State = first.End, first.End.Add(tc.second), model.StateDone
+			createStatusRun(t, r, second)
+			// The second replicate reverses the point order: Points[1], then Points[0].
+			active := model.NewRun(experiment.ID, experiment.Points[1], 2)
+			active.Start = second.End
+			createStatusRun(t, r, active)
+			status, err := r.statusAt(active.Start.Add(time.Second))
+			if err != nil || status.Completed != 2 || status.Remaining != tc.remaining {
+				t.Errorf("status = %+v, %v; want 2 completed and %s remaining", status, err, tc.remaining)
+			}
+		})
 	}
 }
 
