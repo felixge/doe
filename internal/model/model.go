@@ -108,15 +108,18 @@ func (d Design) Validate() error {
 }
 
 // RunHash identifies reusable inputs for one point and one-based replicate.
-// JSON sorts map keys. Other points, total replicates, and external dependencies
-// are deliberately excluded so an extended design can reuse earlier runs.
+// JSON sorts map keys. Include the expanded command because settings with the
+// same JSON encoding can expand differently (e.g. large integers and floats).
+// Other points, total replicates, and external dependencies are excluded so an
+// extended design can reuse earlier runs.
 func (d Design) RunHash(point Point, replicate int) (string, error) {
 	data, err := json.Marshal(struct {
-		Run       Script `json:"run"`
-		Setup     Script `json:"setup"`
-		Point     Point  `json:"point"`
-		Replicate int    `json:"replicate"`
-	}{d.Run, d.Setup, point, replicate})
+		Run         Script `json:"run"`
+		Setup       Script `json:"setup"`
+		Point       Point  `json:"point"`
+		Replicate   int    `json:"replicate"`
+		ExpandedRun string `json:"expanded_run"`
+	}{d.Run, d.Setup, point, replicate, d.Run.Expand(point)})
 	if err != nil {
 		return "", fmt.Errorf("hash run inputs: %w", err)
 	}

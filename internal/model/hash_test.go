@@ -2,6 +2,21 @@ package model
 
 import "testing"
 
+func TestRunHashIncludesExpandedCommand(t *testing.T) {
+	design := Design{Run: "run {foo}"}
+	integerHash, err := design.RunHash(Point{"foo": 1000000}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	floatHash, err := design.RunHash(Point{"foo": 1000000.0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if integerHash == floatHash {
+		t.Error("different expanded commands have the same hash")
+	}
+}
+
 func TestRunHash(t *testing.T) {
 	design := Design{Run: "run {foo} {bar}", Setup: "setup", Replicates: 1}
 	point := Point{"foo": 1, "bar": map[string]any{"b": true, "a": "value"}}

@@ -62,6 +62,25 @@ func TestExperimentReusesExtendedDesign(t *testing.T) {
 	}
 }
 
+func TestExperimentDoesNotReuseDifferentExpandedCommands(t *testing.T) {
+	t.Chdir(t.TempDir())
+	script := `printf '{"argument":"%s"}\n' '{foo}'`
+	_, integerRuns := completedCommand(t, "foo=1000000", "-r", script)
+	floatExperiment, floatRuns := completedCommand(t, "foo=1000000.0", "-r", script)
+	if integerRuns[0].Outcome["argument"] != "1000000" {
+		t.Errorf("integer argument = %v", integerRuns[0].Outcome["argument"])
+	}
+	// JSON encodes these settings identically, but their expanded commands differ.
+	if floatRuns[0].ID == integerRuns[0].ID || floatRuns[0].ExperimentID != floatExperiment.ID ||
+		floatRuns[0].Outcome["argument"] != "1e+06" {
+		t.Errorf("different expanded command reused integer outcome: %+v", floatRuns[0])
+	}
+	_, repeatedRuns := completedCommand(t, "foo=1000000.0", "-r", script)
+	if repeatedRuns[0].ID != floatRuns[0].ID || repeatedRuns[0].Outcome["argument"] != "1e+06" {
+		t.Errorf("identical expanded command was not reused: %+v", repeatedRuns[0])
+	}
+}
+
 func TestExperimentNoReuseAndLatestMatch(t *testing.T) {
 	t.Chdir(t.TempDir())
 	args := []string{"foo=1", "-r", "echo run >> executed; echo '{}'; true '{foo}'"}
