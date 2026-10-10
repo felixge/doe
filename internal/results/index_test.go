@@ -10,7 +10,7 @@ import (
 	"github.com/felixge/doe/internal/model"
 )
 
-func TestRunIndexReuseLatestAndPreserveFiles(t *testing.T) {
+func TestRunIndexReuseLatestAndPreserveExecution(t *testing.T) {
 	r, err := New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -23,8 +23,9 @@ func TestRunIndexReuseLatestAndPreserveFiles(t *testing.T) {
 	createStatusExperiment(t, r, &experiment)
 	var latest *model.Run
 	for range 2 {
-		run := model.NewRun(experiment.ID, experiment.Points[0], 1)
+		run := model.NewRun(experiment.ID, model.Point{"foo": json.Number("9007199254740993")}, 1)
 		run.State, run.End = model.StateDone, run.Start
+		run.Outcome = model.Outcome{"precise": json.Number("1.234567890123456789")}
 		log, err := r.CreateRun(run)
 		if err != nil {
 			t.Fatal(err)
@@ -38,15 +39,6 @@ func TestRunIndexReuseLatestAndPreserveFiles(t *testing.T) {
 		}
 		latest = run
 	}
-	// Noncanonical whitespace must survive copying, not just JSON decoding.
-	recordPath := r.runPath(experiment.ID, latest.ID)
-	record, err := os.ReadFile(recordPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(recordPath, append([]byte(" \n"), record...), 0600); err != nil {
-		t.Fatal(err)
-	}
 	if err := index.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -55,32 +47,54 @@ func TestRunIndexReuseLatestAndPreserveFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = index.Close() }()
-	dest := model.NewExperiment(experiment.Design)
-	createStatusExperiment(t, r, &dest)
-	if copied, err := index.Reuse(dest.ID, "hash"); err != nil || !copied {
-		t.Fatalf("Reuse = %v, %v", copied, err)
-	}
-	for _, ext := range []string{".json", ".log"} {
-		original, err := os.ReadFile(filepath.Join(r.runsDir(experiment.ID), latest.ID.String()+ext))
+
+	// Reuse twice, with the first copy as the second candidate.
+	for range 2 {
+		dest := model.NewExperiment(experiment.Design)
+		createStatusExperiment(t, r, &dest)
+		if copied, err := index.Reuse(dest.ID, "hash"); err != nil || !copied {
+			t.Fatalf("Reuse = %v, %v", copied, err)
+		}
+		want := *latest
+		want.ExperimentID, want.OriginalExperimentID = dest.ID, experiment.ID
+		expected, err := marshalJSON(&want)
 		if err != nil {
 			t.Fatal(err)
 		}
-		copied, err := os.ReadFile(filepath.Join(r.runsDir(dest.ID), latest.ID.String()+ext))
-		if err != nil || !bytes.Equal(copied, original) {
-			t.Errorf("copied %s differs: %q, %v", ext, copied, err)
+		data, err := os.ReadFile(r.runPath(dest.ID, latest.ID))
+		if err != nil || !bytes.Equal(data, expected) {
+			t.Fatalf("copied run = %s, %v; want %s", data, err, expected)
 		}
-		originalInfo, err := os.Stat(filepath.Join(r.runsDir(experiment.ID), latest.ID.String()+ext))
+		log, err := os.ReadFile(r.runLogPath(dest.ID, latest.ID))
+		if err != nil || string(log) != "warning\n{}\n" {
+			t.Errorf("copied log = %q, %v", log, err)
+		}
+		run, err := r.ReadRun(dest.ID, latest.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		copiedInfo, err := os.Stat(filepath.Join(r.runsDir(dest.ID), latest.ID.String()+ext))
-		if err != nil || os.SameFile(originalInfo, copiedInfo) {
-			t.Errorf("copy %s is not independent: %v", ext, err)
+		if !run.Reused() {
+			t.Error("copied run does not report reuse")
 		}
+		if err := index.Add("hash", run); err == nil {
+			t.Error("reused run was indexed")
+		}
+		path, err := filepath.Rel(r.dir, r.runPath(dest.ID, latest.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		index.paths["hash"] = path
 	}
-	run, err := r.ReadRun(dest.ID, latest.ID)
-	if err != nil || run.ExperimentID != experiment.ID || !run.Start.Equal(latest.Start) {
-		t.Errorf("copied provenance = %+v, %v", run, err)
+	original, err := os.ReadFile(r.runPath(experiment.ID, latest.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := marshalJSON(latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(original, expected) {
+		t.Error("reuse changed source JSON")
 	}
 	data, err := os.ReadFile(filepath.Join(r.dir, "runs.index.jsonl"))
 	if err != nil || bytes.Count(data, []byte{'\n'}) != 2 {

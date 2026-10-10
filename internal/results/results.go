@@ -255,7 +255,7 @@ func writeJSON(path string, value any) error {
 	return writeFile(path, data)
 }
 
-// writeFile publishes bytes atomically, preserving copied records exactly.
+// writeFile publishes bytes atomically.
 func writeFile(path string, data []byte) error {
 	temp, err := writeTemp(path, data)
 	if err != nil {

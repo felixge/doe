@@ -264,7 +264,7 @@ func TestNewRun(t *testing.T) {
 	before := time.Now()
 	run := NewRun(experimentID, point, 2)
 	after := time.Now()
-	if run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.State != StateRunning || run.Outcome != nil {
+	if run.Reused() || run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.State != StateRunning || run.Outcome != nil {
 		t.Errorf("NewRun = %+v, want running UUIDv7 and point %v", run, point)
 	}
 	if run.Start.Before(before) || run.Start.After(after) || !run.End.IsZero() {
@@ -316,7 +316,7 @@ func TestRunSerialization(t *testing.T) {
 	if err := json.Unmarshal(running, &record); err != nil {
 		t.Fatal(err)
 	}
-	for _, omitted := range []string{"end", "error", "outcome"} {
+	for _, omitted := range []string{"original_experiment_id", "end", "error", "outcome"} {
 		if _, ok := record[omitted]; ok {
 			t.Errorf("running record has unavailable %s: %s", omitted, running)
 		}

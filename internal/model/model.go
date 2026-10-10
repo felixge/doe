@@ -255,15 +255,21 @@ func flowYAML(node *yaml.Node) {
 
 // Run is an execution of a design point, identified by a UUID.
 type Run struct {
-	ID           uuid.UUID `json:"id"`
-	ExperimentID uuid.UUID `json:"experiment_id"`
-	Point        Point     `json:"point"`
-	Replicate    int       `json:"replicate"`
-	State        State     `json:"state"`
-	Start        time.Time `json:"start,omitzero"`
-	End          time.Time `json:"end,omitzero"`
-	Error        string    `json:"error,omitempty"`
-	Outcome      Outcome   `json:"outcome,omitzero"`
+	ID                   uuid.UUID `json:"id"`
+	ExperimentID         uuid.UUID `json:"experiment_id"`                   // Experiment containing this record.
+	OriginalExperimentID uuid.UUID `json:"original_experiment_id,omitzero"` // Execution origin; zero for fresh runs.
+	Point                Point     `json:"point"`
+	Replicate            int       `json:"replicate"`
+	State                State     `json:"state"`
+	Start                time.Time `json:"start,omitzero"`
+	End                  time.Time `json:"end,omitzero"`
+	Error                string    `json:"error,omitempty"`
+	Outcome              Outcome   `json:"outcome,omitzero"`
+}
+
+// Reused reports whether the run was copied from an earlier experiment.
+func (r Run) Reused() bool {
+	return r.OriginalExperimentID != (uuid.UUID{})
 }
 
 // NewRun creates a run for an experiment, design point, and one-based replicate with a UUIDv7 ID.

@@ -224,8 +224,9 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	continued, continuedRuns := completedCommand(t, args[1:]...)
-	if len(continuedRuns) != 2 || continuedRuns[0].ID != runs[0].ID ||
-		continuedRuns[1].ID == runs[1].ID || continuedRuns[1].ExperimentID != continued.ID {
+	if len(continuedRuns) != 2 || !continuedRuns[0].Reused() || continuedRuns[0].ID != runs[0].ID ||
+		continuedRuns[0].ExperimentID != continued.ID || continuedRuns[0].OriginalExperimentID != experiment.ID ||
+		continuedRuns[1].Reused() || continuedRuns[1].ID == runs[1].ID || continuedRuns[1].ExperimentID != continued.ID {
 		t.Errorf("continued canceled experiment = %+v", continuedRuns)
 	}
 }

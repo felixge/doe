@@ -29,12 +29,15 @@ func TestExperimentReusesExtendedDesign(t *testing.T) {
 	}
 	var reused int
 	for _, run := range secondRuns {
+		if run.ExperimentID != second.ID {
+			t.Errorf("run belongs to wrong experiment: %+v", run)
+		}
 		if run.Replicate == 1 && run.Point["foo"] != float64(3) {
 			reused++
-			if run.ExperimentID != first.ID {
+			if !run.Reused() || run.OriginalExperimentID != first.ID {
 				t.Errorf("reused run lost provenance: %+v", run)
 			}
-		} else if run.ExperimentID != second.ID {
+		} else if run.Reused() {
 			t.Errorf("new slot was reused: %+v", run)
 		}
 	}
@@ -52,7 +55,7 @@ func TestExperimentReusesExtendedDesign(t *testing.T) {
 		t.Fatalf("third runs = %d", len(thirdRuns))
 	}
 	for _, run := range thirdRuns {
-		if run.ExperimentID == third.ID {
+		if !run.Reused() || run.ExperimentID != third.ID {
 			t.Errorf("fully reusable experiment executed a run: %+v", run)
 		}
 	}
@@ -71,12 +74,14 @@ func TestExperimentDoesNotReuseDifferentExpandedCommands(t *testing.T) {
 		t.Errorf("integer argument = %v", integerRuns[0].Outcome["argument"])
 	}
 	// JSON encodes these settings identically, but their expanded commands differ.
-	if floatRuns[0].ID == integerRuns[0].ID || floatRuns[0].ExperimentID != floatExperiment.ID ||
+	if floatRuns[0].Reused() || floatRuns[0].ID == integerRuns[0].ID || floatRuns[0].ExperimentID != floatExperiment.ID ||
 		floatRuns[0].Outcome["argument"] != "1e+06" {
 		t.Errorf("different expanded command reused integer outcome: %+v", floatRuns[0])
 	}
-	_, repeatedRuns := completedCommand(t, "foo=1000000.0", "-r", script)
-	if repeatedRuns[0].ID != floatRuns[0].ID || repeatedRuns[0].Outcome["argument"] != "1e+06" {
+	repeated, repeatedRuns := completedCommand(t, "foo=1000000.0", "-r", script)
+	if !repeatedRuns[0].Reused() || repeatedRuns[0].ExperimentID != repeated.ID ||
+		repeatedRuns[0].OriginalExperimentID != floatExperiment.ID ||
+		repeatedRuns[0].ID != floatRuns[0].ID || repeatedRuns[0].Outcome["argument"] != "1e+06" {
 		t.Errorf("identical expanded command was not reused: %+v", repeatedRuns[0])
 	}
 }
@@ -88,11 +93,13 @@ func TestExperimentNoReuseAndLatestMatch(t *testing.T) {
 	second, secondRuns := completedCommand(t, append(args, "--no-reuse")...)
 	third, thirdRuns := completedCommand(t, args...)
 	fourth, fourthRuns := completedCommand(t, args...)
-	if secondRuns[0].ExperimentID != second.ID || secondRuns[0].ID == firstRuns[0].ID {
+	if secondRuns[0].Reused() || secondRuns[0].ExperimentID != second.ID || secondRuns[0].ID == firstRuns[0].ID {
 		t.Errorf("--no-reuse did not execute a fresh run: %+v", secondRuns[0])
 	}
-	for _, runs := range [][]*model.Run{thirdRuns, fourthRuns} {
-		if runs[0].ID != secondRuns[0].ID || runs[0].ExperimentID != second.ID {
+	for i, runs := range [][]*model.Run{thirdRuns, fourthRuns} {
+		experiment := []*model.Experiment{third, fourth}[i]
+		if !runs[0].Reused() || runs[0].ID != secondRuns[0].ID ||
+			runs[0].ExperimentID != experiment.ID || runs[0].OriginalExperimentID != second.ID {
 			t.Errorf("latest original execution not reused: %+v", runs[0])
 		}
 	}
@@ -129,11 +136,9 @@ func TestExperimentContinuesFailedExperiment(t *testing.T) {
 		t.Fatalf("continued runs = %d", len(secondRuns))
 	}
 	for _, run := range secondRuns {
-		wantExperiment := second.ID
-		if run.Point["foo"] == float64(1) {
-			wantExperiment = first.ID
-		}
-		if run.State != model.StateDone || run.ExperimentID != wantExperiment || run.ID == firstRuns[1].ID {
+		wantReused := run.Point["foo"] == float64(1)
+		if run.Reused() != wantReused || (wantReused && run.OriginalExperimentID != first.ID) ||
+			run.State != model.StateDone || run.ExperimentID != second.ID || run.ID == firstRuns[1].ID {
 			t.Errorf("continued run = %+v", run)
 		}
 	}
@@ -164,7 +169,7 @@ func TestExperimentChangedScriptsAndCleanPreventReuse(t *testing.T) {
 				args = append(args, "--clean")
 			}
 			second, runs := completedCommand(t, args...)
-			if len(runs) != 1 || runs[0].ExperimentID != second.ID || runs[0].ID == firstRuns[0].ID {
+			if len(runs) != 1 || runs[0].Reused() || runs[0].ExperimentID != second.ID || runs[0].ID == firstRuns[0].ID {
 				t.Errorf("new execution = %+v", runs)
 			}
 			if tc.clean {

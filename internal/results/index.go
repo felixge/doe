@@ -77,6 +77,9 @@ func (index *RunIndex) Add(hash string, run *model.Run) error {
 	if run.State != model.StateDone {
 		return fmt.Errorf("cannot index unfinished run %s", run.ID)
 	}
+	if run.Reused() {
+		return fmt.Errorf("cannot index reused run %s", run.ID)
+	}
 	path, err := filepath.Rel(index.results.dir, index.results.runPath(run.ExperimentID, run.ID))
 	if err != nil {
 		return err
@@ -97,7 +100,7 @@ func (index *RunIndex) Add(hash string, run *model.Run) error {
 }
 
 // Reuse copies the latest successful candidate into an experiment, preserving
-// its JSON bytes and provenance. Missing candidates are misses.
+// its execution ID and origin. Missing candidates are misses.
 func (index *RunIndex) Reuse(experimentID uuid.UUID, hash string) (bool, error) {
 	path, ok := index.paths[hash]
 	if !ok {
@@ -112,7 +115,10 @@ func (index *RunIndex) Reuse(experimentID uuid.UUID, hash string) (bool, error) 
 		return false, fmt.Errorf("read reuse candidate %s: %w", path, err)
 	}
 	var run model.Run
-	if err := json.Unmarshal(data, &run); err != nil {
+	// Preserve numeric values when rewriting arbitrary points and outcomes.
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&run); err != nil {
 		return false, fmt.Errorf("decode reuse candidate %s: %w", path, err)
 	}
 	if run.State != model.StateDone {
@@ -139,9 +145,13 @@ func (index *RunIndex) Reuse(experimentID uuid.UUID, hash string) (bool, error) 
 	}
 	_, copyErr := io.Copy(destLog, log)
 	err = errors.Join(copyErr, destLog.Close())
+	if !run.Reused() {
+		run.OriginalExperimentID = run.ExperimentID
+	}
+	run.ExperimentID = experimentID
 	// Publish JSON last so discovering a run always implies its log is complete.
 	if err == nil {
-		err = writeFile(r.runPath(experimentID, run.ID), data)
+		err = writeJSON(r.runPath(experimentID, run.ID), &run)
 	}
 	if err != nil {
 		_ = os.Remove(destLogPath)
