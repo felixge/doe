@@ -100,6 +100,9 @@ func runCommandHandler(ctx context.Context, env *cli.Env, args []string) int {
 			return env.Fail(err)
 		}
 	}
+	if err := r.InitVersion(); err != nil {
+		return env.Fail(err)
+	}
 	setupLog, err := r.CreateExperiment(experiment)
 	if err != nil {
 		return env.Fail(err)

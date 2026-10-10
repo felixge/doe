@@ -96,6 +96,9 @@ func TestWatchExperiment(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = release() }()
+			if err := r.InitVersion(); err != nil {
+				t.Fatal(err)
+			}
 			log, err := r.CreateExperiment(&experiment)
 			if err != nil {
 				t.Fatal(err)

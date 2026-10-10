@@ -45,6 +45,9 @@ func TestStatusProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = release() }()
+	if err := r.InitVersion(); err != nil {
+		t.Fatal(err)
+	}
 	log, err := r.CreateExperiment(&experiment)
 	if err != nil {
 		t.Fatal(err)
@@ -133,6 +136,9 @@ func TestStatusUnfinishedWithoutOwner(t *testing.T) {
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
 	release, err := r.Lock(experiment.ID)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.InitVersion(); err != nil {
 		t.Fatal(err)
 	}
 	log, err := r.CreateExperiment(&experiment)

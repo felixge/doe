@@ -50,10 +50,19 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 	if err != nil {
 		return nil, err
 	}
+	if lock != nil {
+		defer func() { _ = lock.file.Close() }()
+	}
+	version, _, err := r.readVersion()
+	if err != nil {
+		return nil, err
+	}
+	if err := r.checkVersion(version); err != nil {
+		return nil, err
+	}
 	if lock == nil {
 		return nil, nil
 	}
-	defer func() { _ = lock.file.Close() }()
 
 	status := &Status{ExperimentID: lock.experimentID}
 	experiment, err := r.ReadExperiment(lock.experimentID)

@@ -3,6 +3,7 @@ package results
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,9 @@ import (
 
 func createStatusExperiment(t *testing.T, r *Results, experiment *model.Experiment) {
 	t.Helper()
+	if err := os.WriteFile(filepath.Join(r.dir, versionFile), []byte(strconv.Itoa(databaseVersion)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	log, err := r.CreateExperiment(experiment)
 	if err != nil {
 		t.Fatal(err)
