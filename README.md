@@ -92,24 +92,24 @@ $ duckdb -c "SELECT point.algorithm AS algorithm, point.file AS file, outcome.le
 │ algorithm │    file    │ level │ effort  │ ratio  │ throughput │ count(1) │
 │  varchar  │  varchar   │ int64 │ varchar │ double │   double   │  int64   │
 ├───────────┼────────────┼───────┼─────────┼────────┼────────────┼──────────┤
-│ gzip      │ sample.pb  │     1 │ min     │   1.08 │      70.94 │        6 │
-│ gzip      │ sample.pb  │     6 │ default │   1.09 │      39.41 │        6 │
-│ gzip      │ sample.pb  │     9 │ max     │   1.08 │      23.65 │        6 │
-│ gzip      │ sample.png │     1 │ min     │    1.0 │       83.0 │        6 │
-│ gzip      │ sample.png │     6 │ default │    1.0 │      46.11 │        6 │
-│ gzip      │ sample.png │     9 │ max     │    1.0 │      27.67 │        6 │
-│ gzip      │ sample.txt │     1 │ min     │  10.12 │      69.33 │        6 │
-│ gzip      │ sample.txt │     6 │ default │  10.76 │      38.52 │        6 │
-│ gzip      │ sample.txt │     9 │ max     │  11.04 │      23.11 │        6 │
-│ zstd      │ sample.pb  │     1 │ min     │   1.09 │      70.94 │        6 │
-│ zstd      │ sample.pb  │     3 │ default │   1.09 │      39.41 │        6 │
-│ zstd      │ sample.pb  │    22 │ max     │   1.11 │       8.87 │        6 │
-│ zstd      │ sample.png │     1 │ min     │    1.0 │       83.0 │        6 │
-│ zstd      │ sample.png │     3 │ default │    1.0 │      46.11 │        6 │
-│ zstd      │ sample.png │    22 │ max     │    1.0 │      10.38 │        6 │
-│ zstd      │ sample.txt │     1 │ min     │  15.61 │      69.33 │        6 │
-│ zstd      │ sample.txt │     3 │ default │  15.64 │      38.52 │        6 │
-│ zstd      │ sample.txt │    22 │ max     │  16.73 │       8.67 │        6 │
+│ gzip      │ sample.pb  │     1 │ min     │   1.08 │      68.44 │        6 │
+│ gzip      │ sample.pb  │     6 │ default │   1.09 │      44.51 │        6 │
+│ gzip      │ sample.pb  │     9 │ max     │   1.08 │      17.55 │        6 │
+│ gzip      │ sample.png │     1 │ min     │    1.0 │      68.59 │        6 │
+│ gzip      │ sample.png │     6 │ default │    1.0 │      67.16 │        6 │
+│ gzip      │ sample.png │     9 │ max     │    1.0 │      67.15 │        6 │
+│ gzip      │ sample.txt │     1 │ min     │  10.12 │     381.32 │        6 │
+│ gzip      │ sample.txt │     6 │ default │  10.76 │     204.19 │        6 │
+│ gzip      │ sample.txt │     9 │ max     │  11.04 │     110.21 │        6 │
+│ zstd      │ sample.pb  │     1 │ min     │   1.09 │     237.15 │        6 │
+│ zstd      │ sample.pb  │     3 │ default │   1.09 │     175.48 │        6 │
+│ zstd      │ sample.pb  │    22 │ max     │   1.11 │      17.15 │        6 │
+│ zstd      │ sample.png │     1 │ min     │    1.0 │     596.86 │        6 │
+│ zstd      │ sample.png │     3 │ default │    1.0 │     630.49 │        6 │
+│ zstd      │ sample.png │    22 │ max     │    1.0 │      24.67 │        6 │
+│ zstd      │ sample.txt │     1 │ min     │  15.61 │     385.04 │        6 │
+│ zstd      │ sample.txt │     3 │ default │  15.64 │     378.07 │        6 │
+│ zstd      │ sample.txt │    22 │ max     │  18.11 │        3.3 │        6 │
 └───────────┴────────────┴───────┴─────────┴────────┴────────────┴──────────┘
 ```
 
