@@ -57,32 +57,37 @@ $ ./run.bash zstd default sample.pb
 {"level":3,"wall_seconds":0.00039,"cpu_seconds":0.00036,"peak_rss_bytes":2588672,"input_size_bytes":26400,"output_size_bytes":24243}
 ```
 
-Run an experiment by passing the study file and a preset name to `doe run`. The command prints the experiment ID on success. Use `-c` to remove previous results before running again.
+Run an experiment with `doe run`, a study file, and a preset name. It displays live progress on a terminal, or prints the experiment ID when piped or redirected.
 
 ```bash
 $ doe run -f compression.study.yaml -p full
-<experiment ID on stdout>
 ```
+
+Successful runs with matching setup and run commands, factor settings, and replicate numbers are reused by default. Use `--no-reuse` to execute all runs, or `-c` to remove previous results first. Reuse does not track script file contents or external dependencies.
+
+CLI options override study and preset settings. For example, add `-n 2 'effort=[min, max]'` to change replicates and factor settings, or `--design` to print the resolved YAML without running.
+
+Use `doe status -f compression.study.yaml` to check the latest experiment, including progress and the active setup or run log path.
 
 doe stores each experiment and run as an individual JSON document. Run inputs are nested under `point`, measurements are nested under `outcome`, and only runs with `state = 'done'` completed successfully:
 
 ```text
 results/
 ├── results.lock
-├── experiments/
-│   └── <experiment-id>/
-│       ├── experiment.json
-│       ├── setup.log
-│       └── runs.ids
-└── runs/
-    ├── <run-id>.json
-    └── <run-id>.log
+├── runs.index.jsonl
+└── experiments/
+    └── <experiment-id>/
+        ├── experiment.json
+        ├── setup.log
+        └── runs/
+            ├── <run-id>.json
+            └── <run-id>.log
 ```
 
-You can analyze the run documents with DuckDB's `read_json` function:
+Analyze runs from all experiments in `results` with DuckDB's `read_json` function:
 
 ```bash
-$ duckdb -c "SELECT point.algorithm AS algorithm, point.file AS file, outcome.level AS level, point.effort AS effort, round(avg(outcome.input_size_bytes/outcome.output_size_bytes), 2) AS ratio, round(avg(outcome.input_size_bytes/outcome.cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/runs/*.json') WHERE state = 'done' GROUP BY ALL ORDER BY ALL;"
+$ duckdb -c "SELECT point.algorithm AS algorithm, point.file AS file, outcome.level AS level, point.effort AS effort, round(avg(outcome.input_size_bytes/outcome.output_size_bytes), 2) AS ratio, round(avg(outcome.input_size_bytes/outcome.cpu_seconds/1024/1024), 2) AS throughput, count(1) FROM read_json('./results/experiments/*/runs/*.json') WHERE state = 'done' GROUP BY ALL ORDER BY ALL;"
 ┌───────────┬────────────┬───────┬─────────┬────────┬────────────┬──────────┐
 │ algorithm │    file    │ level │ effort  │ ratio  │ throughput │ count(1) │
 │  varchar  │  varchar   │ int64 │ varchar │ double │   double   │  int64   │
@@ -115,7 +120,7 @@ $ duckdb -c "SELECT point.algorithm AS algorithm, point.file AS file, outcome.le
 | experiment   | A single `doe run` invocation.                               |
 | factor       | A factor that influences the outcome of the experiment.      |
 | setting      | A value for a factor.                                        |
-| matrix       | A mapping of factor:settings where settings can either be a single setting or a sequence of values that is used to form a cartesian product with the other factor=settings pairs in the matrix. |
+| factors      | A mapping of factor names to settings. Scalars or sequences form a Cartesian product of design points. |
 | input        | A factor=setting pair passed to a run.                       |
 | design point | A combination of factor=setting pairs passed to a run.       |
 | response     | A name of a measured outcome of the experiment.              |
