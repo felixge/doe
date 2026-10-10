@@ -99,7 +99,7 @@ func TestStatusCompletedAndFailedExperiments(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			args := []string{"experiment", "foo=1", "-r", "echo '{}' ; true '{foo}'"}
+			args := []string{"run", "foo=1", "-r", "echo '{}' ; true '{foo}'"}
 			if tc.setup != "" {
 				args = append(args, "-s", tc.setup)
 			}

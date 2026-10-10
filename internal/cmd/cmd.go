@@ -36,8 +36,8 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 	case "-h", "--help", "help":
 		rootUsage(env.Stdout)
 		return 0
-	case "experiment":
-		return experimentCommand(ctx, env, args[1:])
+	case "run":
+		return runCommandHandler(ctx, env, args[1:])
 	case "status":
 		return statusCommand(env, args[1:])
 	default:
@@ -46,9 +46,9 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 	}
 }
 
-func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
+func runCommandHandler(ctx context.Context, env *cli.Env, args []string) int {
 	// Parse flags.
-	flags := pflag.NewFlagSet("doe experiment", pflag.ContinueOnError)
+	flags := pflag.NewFlagSet("doe run", pflag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	flags.SetInterspersed(true)
 	flags.Usage = func() {}
@@ -61,7 +61,7 @@ func experimentCommand(ctx context.Context, env *cli.Env, args []string) int {
 	noReuse := flags.Bool("no-reuse", false, "execute all runs instead of reusing successful runs")
 	design := flags.Bool("design", false, "print the resolved design as YAML without running")
 	if err := flags.Parse(args); errors.Is(err, pflag.ErrHelp) {
-		experimentUsage(env.Stdout)
+		runUsage(env.Stdout)
 		return 0
 	} else if err != nil {
 		return env.Fail(err)
@@ -411,8 +411,8 @@ func rootUsage(w io.Writer) {
 Usage: doe <command> [command options] [arguments]
 
 Commands:
-  experiment  Run an experiment and save run logs.
-  status      Show the latest experiment's progress.
+  run     Run an experiment and save run logs.
+  status  Show the latest experiment's progress.
 
 Run "doe <command> -h" for command-specific help.
 `)
@@ -429,10 +429,10 @@ Options:
 `)
 }
 
-func experimentUsage(w io.Writer) {
+func runUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe experiment [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [-n count] [-c] [--no-reuse] [--design]
+Usage: doe run [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [-n count] [-c] [--no-reuse] [--design]
 
 Options:
   -f, --file        Load factors, scripts, and replicates from a YAML study.

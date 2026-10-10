@@ -11,7 +11,7 @@ import (
 
 func completedCommand(t *testing.T, args ...string) (*model.Experiment, []*model.Run) {
 	t.Helper()
-	code, stdout, stderr := runCommand(t.Context(), append([]string{"experiment"}, args...)...)
+	code, stdout, stderr := runCommand(t.Context(), append([]string{"run"}, args...)...)
 	if code != 0 || stderr != "" {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -112,7 +112,7 @@ func TestExperimentNoReuseAndLatestMatch(t *testing.T) {
 func TestExperimentContinuesFailedExperiment(t *testing.T) {
 	t.Chdir(t.TempDir())
 	script := `echo {foo} >> executed; echo '{}'; if [ {foo} = 2 ] && [ ! -f gate ]; then exit 7; fi`
-	args := []string{"experiment", "foo=[1,2,3]", "-r", script}
+	args := []string{"run", "foo=[1,2,3]", "-r", script}
 	code, stdout, stderr := runCommand(t.Context(), args...)
 	if code != 1 || stderr == "" {
 		t.Fatalf("failed experiment = %d, %q, %q", code, stdout, stderr)

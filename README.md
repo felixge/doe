@@ -57,10 +57,10 @@ $ ./run.bash zstd default sample.pb
 {"level":3,"wall_seconds":0.00039,"cpu_seconds":0.00036,"peak_rss_bytes":2588672,"input_size_bytes":26400,"output_size_bytes":24243}
 ```
 
-Run an experiment by passing the study file and a preset name to `doe experiment`. The command prints the experiment ID on success. Use `-c` to remove previous results before running again.
+Run an experiment by passing the study file and a preset name to `doe run`. The command prints the experiment ID on success. Use `-c` to remove previous results before running again.
 
 ```bash
-$ doe experiment -f compression.study.yaml -p full
+$ doe run -f compression.study.yaml -p full
 <experiment ID on stdout>
 ```
 
@@ -112,7 +112,7 @@ $ duckdb -c "SELECT point.algorithm AS algorithm, point.file AS file, outcome.le
 
 | term         | description                                                  |
 | ------------ | ------------------------------------------------------------ |
-| experiment   | A single `doe experiment` invocation.                        |
+| experiment   | A single `doe run` invocation.                               |
 | factor       | A factor that influences the outcome of the experiment.      |
 | setting      | A value for a factor.                                        |
 | matrix       | A mapping of factor:settings where settings can either be a single setting or a sequence of values that is used to form a cartesian product with the other factor=settings pairs in the matrix. |

@@ -41,7 +41,7 @@ func TestExperimentPrintsIDBeforeSetupFinishes(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		done <- Main(ctx, &cli.Env{Stdout: frames, Stderr: io.Discard}, []string{
-			"experiment", "foo=1", "-s", "while [ ! -f gate ]; do sleep 0.01; done",
+			"run", "foo=1", "-s", "while [ ! -f gate ]; do sleep 0.01; done",
 			"-r", "echo '{}'; true '{foo}'",
 		})
 	}()
@@ -178,7 +178,7 @@ func TestExperimentIgnoresStdoutFailure(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stderr strings.Builder
 	code := Main(t.Context(), &cli.Env{Stdout: failingWriter{}, Stderr: &stderr},
-		[]string{"experiment", "foo=1", "-r", "echo '{}'; true '{foo}'"})
+		[]string{"run", "foo=1", "-r", "echo '{}'; true '{foo}'"})
 	if code != 0 || stderr.Len() != 0 {
 		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
 	}
