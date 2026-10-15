@@ -24,14 +24,14 @@ type Results struct {
 	dir string
 }
 
-// New creates and locks the results directory for an experiment, optionally
+// Open creates and locks the results directory for an experiment, optionally
 // removes previous results, then checks or initializes the database version.
 // The caller must call release when the experiment ends. Errors release the lock.
-func New(dir string, id uuid.UUID, clean bool) (*Results, func() error, error) {
+func Open(dir string, id uuid.UUID, clean bool) (*Results, func() error, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, nil, fmt.Errorf("create results directory: %w", err)
 	}
-	r := Open(dir)
+	r := OpenReadOnly(dir)
 	release, err := r.lock(id)
 	if err != nil {
 		return nil, nil, err
@@ -49,12 +49,13 @@ func New(dir string, id uuid.UUID, clean bool) (*Results, func() error, error) {
 	return r, release, nil
 }
 
-// Open returns Results for dir without creating it. The directory may be absent.
-func Open(dir string) *Results {
+// OpenReadOnly returns a handle for reading results without creating or locking
+// the directory. The directory may be absent. Status manages its own shared lock.
+func OpenReadOnly(dir string) *Results {
 	return &Results{dir: dir}
 }
 
-// lock writes the experiment ID and holds the shared results lock until the
+// lock writes the experiment ID and holds the exclusive results lock until the
 // returned release function is called. Only one experiment can run per directory.
 func (r *Results) lock(id uuid.UUID) (func() error, error) {
 	path := r.lockPath()

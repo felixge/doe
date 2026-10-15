@@ -50,7 +50,7 @@ func TestExperimentPrintsIDBeforeSetupFinishes(t *testing.T) {
 	if err != nil || idLine != id.String()+"\n" {
 		t.Fatalf("ID output = %q, %v", idLine, err)
 	}
-	experiment, err := results.Open("results").ReadExperiment(id)
+	experiment, err := results.OpenReadOnly("results").ReadExperiment(id)
 	if err != nil || experiment.State != model.StateSetup {
 		t.Fatalf("experiment at ID output = %+v, %v", experiment, err)
 	}
@@ -87,7 +87,7 @@ func TestWatchExperiment(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-			r, release, err := results.New(t.TempDir(), experiment.ID, false)
+			r, release, err := results.Open(t.TempDir(), experiment.ID, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +178,7 @@ func TestExperimentIgnoresStdoutFailure(t *testing.T) {
 	if code != 0 || stderr.Len() != 0 {
 		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
 	}
-	status, err := results.Open("results").Status()
+	status, err := results.OpenReadOnly("results").Status()
 	if err != nil || status == nil || status.State != results.StateDone {
 		t.Errorf("status = %+v, %v; want Done", status, err)
 	}

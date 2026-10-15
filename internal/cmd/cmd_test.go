@@ -31,7 +31,7 @@ func readCompletedExperiment(t *testing.T, dir, stdout string) (*model.Experimen
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := results.Open(dir)
+	r := results.OpenReadOnly(dir)
 	experiment, err := r.ReadExperiment(id)
 	if err != nil {
 		t.Fatal(err)
@@ -374,7 +374,7 @@ func TestExperimentVisibleWhileRunning(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	status, err := results.Open("results").Status()
+	status, err := results.OpenReadOnly("results").Status()
 	if err != nil || status == nil || status.State != results.StateRunning || status.RunPoint.String() != "foo=1" {
 		t.Errorf("status = %+v, %v", status, err)
 	}

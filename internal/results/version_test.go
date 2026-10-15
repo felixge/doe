@@ -10,7 +10,7 @@ import (
 	"uuid"
 )
 
-func TestNewVersion(t *testing.T) {
+func TestOpenVersion(t *testing.T) {
 	for _, tc := range []struct {
 		name, data, want string
 		stored, legacy   bool
@@ -38,13 +38,13 @@ func TestNewVersion(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			r, release, err := New(dir, uuid.NewV7(), false)
+			r, release, err := Open(dir, uuid.NewV7(), false)
 			if tc.want != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), dir) {
-					t.Fatalf("New = %v, want %q and directory", err, tc.want)
+					t.Fatalf("Open = %v, want %q and directory", err, tc.want)
 				}
 				if r != nil || release != nil {
-					t.Fatal("failed New returned results or release function")
+					t.Fatal("failed Open returned results or release function")
 				}
 				assertResultsUnlocked(t, dir)
 			} else {
@@ -77,7 +77,7 @@ func TestNewVersion(t *testing.T) {
 
 func assertResultsUnlocked(t *testing.T, dir string) {
 	t.Helper()
-	release, err := Open(dir).lock(uuid.NewV7())
+	release, err := OpenReadOnly(dir).lock(uuid.NewV7())
 	if err != nil {
 		t.Fatalf("constructor left results locked: %v", err)
 	}
@@ -86,25 +86,25 @@ func assertResultsUnlocked(t *testing.T, dir string) {
 	}
 }
 
-func TestNewVersionIOErrorReleasesLock(t *testing.T) {
+func TestOpenVersionIOErrorReleasesLock(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, versionFile), 0755); err != nil {
 		t.Fatal(err)
 	}
-	r, release, err := New(dir, uuid.NewV7(), false)
+	r, release, err := Open(dir, uuid.NewV7(), false)
 	if err == nil || !strings.Contains(err.Error(), "read results database version") {
-		t.Fatalf("New = %v", err)
+		t.Fatalf("Open = %v", err)
 	}
 	if r != nil || release != nil {
-		t.Fatal("failed New returned results or release function")
+		t.Fatal("failed Open returned results or release function")
 	}
 	assertResultsUnlocked(t, dir)
-	if _, err := Open(dir).Status(); err == nil || !strings.Contains(err.Error(), "read results database version") {
+	if _, err := OpenReadOnly(dir).Status(); err == nil || !strings.Contains(err.Error(), "read results database version") {
 		t.Errorf("Status = %v", err)
 	}
 }
 
-func TestNewPermissionErrorsReleaseLock(t *testing.T) {
+func TestOpenPermissionErrorsReleaseLock(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses permission checks")
 	}
@@ -129,21 +129,21 @@ func TestNewPermissionErrorsReleaseLock(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = os.Chmod(blocked, 0755) }()
-			r, release, err := New(dir, uuid.NewV7(), clean)
+			r, release, err := Open(dir, uuid.NewV7(), clean)
 			if err == nil || !strings.Contains(err.Error(), want) {
-				t.Fatalf("New = %v, want %q", err, want)
+				t.Fatalf("Open = %v, want %q", err, want)
 			}
 			if r != nil || release != nil {
-				t.Fatal("failed New returned results or release function")
+				t.Fatal("failed Open returned results or release function")
 			}
 			assertResultsUnlocked(t, dir)
 		})
 	}
 }
 
-func TestNewCreatesDirectory(t *testing.T) {
+func TestOpenCreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "results")
-	r, release, err := New(dir, uuid.NewV7(), false)
+	r, release, err := Open(dir, uuid.NewV7(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestNewCreatesDirectory(t *testing.T) {
 func TestStatusEmptyDirectoryIsReadOnly(t *testing.T) {
 	for _, lock := range []bool{false, true} {
 		t.Run(strconv.FormatBool(lock), func(t *testing.T) {
-			r := Open(t.TempDir())
+			r := OpenReadOnly(t.TempDir())
 			if lock {
 				release, err := r.lock(uuid.NewV7())
 				if err != nil {

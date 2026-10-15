@@ -17,7 +17,7 @@ import (
 // an active experiment acquire their own lock with the relevant experiment ID.
 func newTestResults(t *testing.T, dir string) *Results {
 	t.Helper()
-	r, release, err := New(dir, uuid.NewV7(), false)
+	r, release, err := Open(dir, uuid.NewV7(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,11 +27,11 @@ func newTestResults(t *testing.T, dir string) *Results {
 	return r
 }
 
-func TestNewLocksBeforeCleaning(t *testing.T) {
+func TestOpenLocksBeforeCleaning(t *testing.T) {
 	dir := t.TempDir()
 	id := uuid.NewV7()
 	other := uuid.NewV7()
-	_, release, err := New(dir, id, false)
+	_, release, err := Open(dir, id, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestNewLocksBeforeCleaning(t *testing.T) {
 	if err := os.WriteFile(oldPath, []byte("old"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, otherRelease, err := New(dir, other, true); err == nil {
+	if _, otherRelease, err := Open(dir, other, true); err == nil {
 		_ = otherRelease()
 		t.Error("second experiment acquired the lock")
 	} else if !strings.Contains(err.Error(), "another experiment is running: "+id.String()) {
@@ -57,7 +57,7 @@ func TestNewLocksBeforeCleaning(t *testing.T) {
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	_, releaseOther, err := New(dir, other, true)
+	_, releaseOther, err := Open(dir, other, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,9 +210,9 @@ func TestRunsDiscoversOnlyJSONRecords(t *testing.T) {
 	}
 }
 
-func TestMissingRecordsAndOpenDoNotCreate(t *testing.T) {
+func TestMissingRecordsAndOpenReadOnlyDoNotCreate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "results")
-	r := Open(dir)
+	r := OpenReadOnly(dir)
 	if _, err := r.ReadExperiment(uuid.NewV7()); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("missing experiment error = %v", err)
 	}

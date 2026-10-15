@@ -36,7 +36,7 @@ func TestStatusProgress(t *testing.T) {
 	t.Chdir(t.TempDir())
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 1})
 	experiment.Start = time.Time{}
-	r, release, err := results.New("results", experiment.ID, false)
+	r, release, err := results.Open("results", experiment.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestStatusCompletedAndFailedExperiments(t *testing.T) {
 func TestStatusUnfinishedWithoutOwner(t *testing.T) {
 	t.Chdir(t.TempDir())
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-	r, release, err := results.New("results", experiment.ID, false)
+	r, release, err := results.Open("results", experiment.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestStatusUnfinishedWithoutOwner(t *testing.T) {
 }
 
 func TestFormatStatusRunLogAfterElapsed(t *testing.T) {
-	r := results.Open("results")
+	r := results.OpenReadOnly("results")
 	status := &results.Status{
 		State:      results.StateRunning,
 		RunElapsed: 3 * time.Second,

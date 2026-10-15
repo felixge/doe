@@ -34,7 +34,7 @@ func createStatusRun(t *testing.T, r *Results, run *model.Run) {
 
 func TestStatusTransitionsAndActualRun(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "results")
-	r := Open(dir)
+	r := OpenReadOnly(dir)
 	if status, err := r.Status(); err != nil || status != nil {
 		t.Fatalf("missing directory = %+v, %v; want no status", status, err)
 	}

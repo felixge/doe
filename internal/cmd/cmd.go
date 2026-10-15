@@ -84,7 +84,7 @@ func runCommandHandler(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Validate before touching previous results, and lock before cleaning them.
-	r, release, err := results.New(resultsDir(*file), experiment.ID, *clean)
+	r, release, err := results.Open(resultsDir(*file), experiment.ID, *clean)
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -126,7 +126,7 @@ func statusCommand(env *cli.Env, args []string) int {
 	if len(flags.Args()) != 0 {
 		return env.Fail(fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " ")))
 	}
-	r := results.Open(resultsDir(*file))
+	r := results.OpenReadOnly(resultsDir(*file))
 	status, err := r.Status()
 	if err != nil {
 		return env.Fail(err)
