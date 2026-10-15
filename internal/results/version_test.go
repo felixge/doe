@@ -10,7 +10,7 @@ import (
 	"uuid"
 )
 
-func TestInitVersion(t *testing.T) {
+func TestNewVersion(t *testing.T) {
 	for _, tc := range []struct {
 		name, data, want string
 		stored, legacy   bool
@@ -26,33 +26,35 @@ func TestInitVersion(t *testing.T) {
 		{name: "overflow", stored: true, data: "999999999999999999999999999999", want: "invalid results database version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			release, err := r.Lock(uuid.NewV7())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = release() }()
-			path := filepath.Join(r.dir, versionFile)
+			dir := t.TempDir()
+			path := filepath.Join(dir, versionFile)
 			if tc.stored {
 				if err := os.WriteFile(path, []byte(tc.data), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if tc.legacy {
-				if err := os.Mkdir(filepath.Join(r.dir, "experiments"), 0755); err != nil {
+				if err := os.Mkdir(filepath.Join(dir, "experiments"), 0755); err != nil {
 					t.Fatal(err)
 				}
 			}
-			err = r.InitVersion()
+			r, release, err := New(dir, uuid.NewV7(), false)
 			if tc.want != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), r.dir) {
-					t.Fatalf("InitVersion = %v, want %q and directory", err, tc.want)
+				if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), dir) {
+					t.Fatalf("New = %v, want %q and directory", err, tc.want)
 				}
-			} else if err != nil {
-				t.Fatal(err)
+				if r != nil || release != nil {
+					t.Fatal("failed New returned results or release function")
+				}
+				assertResultsUnlocked(t, dir)
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = release() }()
+				if r.dir != dir {
+					t.Errorf("directory = %q, want %q", r.dir, dir)
+				}
 			}
 			data, readErr := os.ReadFile(path)
 			switch {
@@ -73,39 +75,91 @@ func TestInitVersion(t *testing.T) {
 	}
 }
 
-func TestVersionIOErrors(t *testing.T) {
-	t.Run("version is directory", func(t *testing.T) {
-		r, err := New(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Mkdir(filepath.Join(r.dir, versionFile), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := r.InitVersion(); err == nil || !strings.Contains(err.Error(), "read results database version") {
-			t.Errorf("InitVersion = %v", err)
-		}
-		if _, err := r.Status(); err == nil || !strings.Contains(err.Error(), "read results database version") {
-			t.Errorf("Status = %v", err)
-		}
-	})
-	t.Run("missing directory cannot initialize", func(t *testing.T) {
-		r := Open(filepath.Join(t.TempDir(), "missing"))
-		if err := r.InitVersion(); err == nil || !strings.Contains(err.Error(), "write results database version") {
-			t.Errorf("InitVersion = %v", err)
-		}
-	})
+func assertResultsUnlocked(t *testing.T, dir string) {
+	t.Helper()
+	release, err := Open(dir).lock(uuid.NewV7())
+	if err != nil {
+		t.Fatalf("constructor left results locked: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewVersionIOErrorReleasesLock(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, versionFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	r, release, err := New(dir, uuid.NewV7(), false)
+	if err == nil || !strings.Contains(err.Error(), "read results database version") {
+		t.Fatalf("New = %v", err)
+	}
+	if r != nil || release != nil {
+		t.Fatal("failed New returned results or release function")
+	}
+	assertResultsUnlocked(t, dir)
+	if _, err := Open(dir).Status(); err == nil || !strings.Contains(err.Error(), "read results database version") {
+		t.Errorf("Status = %v", err)
+	}
+}
+
+func TestNewPermissionErrorsReleaseLock(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses permission checks")
+	}
+	for _, clean := range []bool{false, true} {
+		t.Run(strconv.FormatBool(clean), func(t *testing.T) {
+			dir := t.TempDir()
+			// Pre-create the lock so the constructor can reach the failing step.
+			assertResultsUnlocked(t, dir)
+			blocked := dir
+			want := "write results database version"
+			if clean {
+				blocked = filepath.Join(dir, "blocked")
+				if err := os.Mkdir(blocked, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(blocked, "old"), []byte("old"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				want = "remove result"
+			}
+			if err := os.Chmod(blocked, 0500); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = os.Chmod(blocked, 0755) }()
+			r, release, err := New(dir, uuid.NewV7(), clean)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("New = %v, want %q", err, want)
+			}
+			if r != nil || release != nil {
+				t.Fatal("failed New returned results or release function")
+			}
+			assertResultsUnlocked(t, dir)
+		})
+	}
+}
+
+func TestNewCreatesDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "results")
+	r, release, err := New(dir, uuid.NewV7(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	data, err := os.ReadFile(filepath.Join(r.dir, versionFile))
+	if err != nil || string(data) != strconv.Itoa(databaseVersion)+"\n" {
+		t.Errorf("initialized version = %q, %v", data, err)
+	}
 }
 
 func TestStatusEmptyDirectoryIsReadOnly(t *testing.T) {
 	for _, lock := range []bool{false, true} {
 		t.Run(strconv.FormatBool(lock), func(t *testing.T) {
-			r, err := New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := Open(t.TempDir())
 			if lock {
-				release, err := r.Lock(uuid.NewV7())
+				release, err := r.lock(uuid.NewV7())
 				if err != nil {
 					t.Fatal(err)
 				}

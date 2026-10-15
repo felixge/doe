@@ -24,12 +24,29 @@ type Results struct {
 	dir string
 }
 
-// New creates the results directory and returns a Results for dir.
-func New(dir string) (*Results, error) {
+// New creates and locks the results directory for an experiment, optionally
+// removes previous results, then checks or initializes the database version.
+// The caller must call release when the experiment ends. Errors release the lock.
+func New(dir string, id uuid.UUID, clean bool) (*Results, func() error, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("create results directory: %w", err)
+		return nil, nil, fmt.Errorf("create results directory: %w", err)
 	}
-	return Open(dir), nil
+	r := Open(dir)
+	release, err := r.lock(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if clean {
+		err = r.clean()
+	}
+	if err == nil {
+		err = r.initVersion()
+	}
+	if err != nil {
+		_ = release()
+		return nil, nil, err
+	}
+	return r, release, nil
 }
 
 // Open returns Results for dir without creating it. The directory may be absent.
@@ -37,9 +54,9 @@ func Open(dir string) *Results {
 	return &Results{dir: dir}
 }
 
-// Lock writes the experiment ID and holds the shared results lock until the
+// lock writes the experiment ID and holds the shared results lock until the
 // returned release function is called. Only one experiment can run per directory.
-func (r *Results) Lock(id uuid.UUID) (func() error, error) {
+func (r *Results) lock(id uuid.UUID) (func() error, error) {
 	path := r.lockPath()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -72,9 +89,9 @@ func (r *Results) Lock(id uuid.UUID) (func() error, error) {
 	return file.Close, nil
 }
 
-// Clean removes previous results while preserving the lock file and directory.
+// clean removes previous results while preserving the lock file and directory.
 // The caller must hold the results lock so another process cannot write here.
-func (r *Results) Clean() error {
+func (r *Results) clean() error {
 	entries, err := os.ReadDir(r.dir)
 	if err != nil {
 		return fmt.Errorf("read results directory: %w", err)

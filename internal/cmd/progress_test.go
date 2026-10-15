@@ -86,19 +86,12 @@ func TestWatchExperiment(t *testing.T) {
 		{"canceled", model.StateStopped, context.Canceled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := results.New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
 			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-			release, err := r.Lock(experiment.ID)
+			r, release, err := results.New(t.TempDir(), experiment.ID, false)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = release() }()
-			if err := r.InitVersion(); err != nil {
-				t.Fatal(err)
-			}
 			log, err := r.CreateExperiment(&experiment)
 			if err != nil {
 				t.Fatal(err)

@@ -13,35 +13,55 @@ import (
 	"uuid"
 )
 
-func TestLockAndClean(t *testing.T) {
-	dir := t.TempDir()
-	r, err := New(dir)
+// newTestResults initializes storage for low-level file tests. Tests that need
+// an active experiment acquire their own lock with the relevant experiment ID.
+func newTestResults(t *testing.T, dir string) *Results {
+	t.Helper()
+	r, release, err := New(dir, uuid.NewV7(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestNewLocksBeforeCleaning(t *testing.T) {
+	dir := t.TempDir()
 	id := uuid.NewV7()
 	other := uuid.NewV7()
-	release, err := r.Lock(id)
+	_, release, err := New(dir, id, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if otherRelease, err := r.Lock(other); err == nil {
+	defer func() { _ = release() }()
+	oldPath := filepath.Join(dir, "old")
+	if err := os.WriteFile(oldPath, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, otherRelease, err := New(dir, other, true); err == nil {
 		_ = otherRelease()
 		t.Error("second experiment acquired the lock")
 	} else if !strings.Contains(err.Error(), "another experiment is running: "+id.String()) {
 		t.Errorf("lock error = %q, want running experiment ID", err)
+	}
+	if data, err := os.ReadFile(oldPath); err != nil || string(data) != "old" {
+		t.Errorf("locked constructor cleaned results: %q, %v", data, err)
 	}
 	lockPath := filepath.Join(dir, resultsLockFile)
 	before, err := os.Stat(lockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "old"), []byte("old"), 0600); err != nil {
+	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Clean(); err != nil {
+	_, releaseOther, err := New(dir, other, true)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = releaseOther() }()
 	after, err := os.Stat(lockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -50,25 +70,17 @@ func TestLockAndClean(t *testing.T) {
 		t.Error("Clean replaced the lock file")
 	}
 	data, err := os.ReadFile(lockPath)
-	if err != nil || strings.TrimSpace(string(data)) != id.String() {
-		t.Errorf("lock contains %q, %v; want %s", data, err, id)
+	if err != nil || strings.TrimSpace(string(data)) != other.String() {
+		t.Errorf("lock contains %q, %v; want %s", data, err, other)
 	}
-	if err := release(); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Errorf("clean kept old results: %v", err)
 	}
-	releaseOther, err := r.Lock(other)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = releaseOther() }()
 }
 
 func TestExperimentAndRunRecords(t *testing.T) {
 	dir := t.TempDir()
-	r, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, dir)
 	experiment := model.NewExperiment(model.Design{
 		Factors: model.Factors{"foo": {1}}, Run: "echo {foo}", Replicates: 1,
 	})
@@ -142,10 +154,7 @@ func TestExperimentAndRunRecords(t *testing.T) {
 
 func TestCreateFailureRemovesOnlyCreatedFiles(t *testing.T) {
 	dir := t.TempDir()
-	r, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, dir)
 	experiment := model.NewExperiment(model.Design{})
 	experimentDir := filepath.Join(dir, "experiments", experiment.ID.String())
 	if err := os.MkdirAll(experimentDir, 0755); err != nil {
@@ -168,10 +177,7 @@ func TestCreateFailureRemovesOnlyCreatedFiles(t *testing.T) {
 }
 
 func TestRunsDiscoversOnlyJSONRecords(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	experiment := model.NewExperiment(model.Design{})
 	log, err := r.CreateExperiment(&experiment)
 	if err != nil {
@@ -219,10 +225,7 @@ func TestMissingRecordsAndOpenDoNotCreate(t *testing.T) {
 }
 
 func TestUpdateRequiresExistingRecord(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	if err := r.UpdateExperiment(&model.Experiment{ID: uuid.NewV7()}); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("UpdateExperiment error = %v", err)
 	}

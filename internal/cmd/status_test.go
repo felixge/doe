@@ -34,20 +34,13 @@ func TestStatusNoExperiment(t *testing.T) {
 
 func TestStatusProgress(t *testing.T) {
 	t.Chdir(t.TempDir())
-	r, err := results.New("results")
-	if err != nil {
-		t.Fatal(err)
-	}
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 1})
 	experiment.Start = time.Time{}
-	release, err := r.Lock(experiment.ID)
+	r, release, err := results.New("results", experiment.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = release() }()
-	if err := r.InitVersion(); err != nil {
-		t.Fatal(err)
-	}
 	log, err := r.CreateExperiment(&experiment)
 	if err != nil {
 		t.Fatal(err)
@@ -129,18 +122,12 @@ func TestStatusCompletedAndFailedExperiments(t *testing.T) {
 
 func TestStatusUnfinishedWithoutOwner(t *testing.T) {
 	t.Chdir(t.TempDir())
-	r, err := results.New("results")
-	if err != nil {
-		t.Fatal(err)
-	}
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-	release, err := r.Lock(experiment.ID)
+	r, release, err := results.New("results", experiment.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.InitVersion(); err != nil {
-		t.Fatal(err)
-	}
+	defer func() { _ = release() }()
 	log, err := r.CreateExperiment(&experiment)
 	if err != nil {
 		t.Fatal(err)

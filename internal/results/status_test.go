@@ -3,7 +3,6 @@ package results
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,9 +12,6 @@ import (
 
 func createStatusExperiment(t *testing.T, r *Results, experiment *model.Experiment) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(r.dir, versionFile), []byte(strconv.Itoa(databaseVersion)+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	log, err := r.CreateExperiment(experiment)
 	if err != nil {
 		t.Fatal(err)
@@ -45,16 +41,13 @@ func TestStatusTransitionsAndActualRun(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("Status created results directory: %v", err)
 	}
-	r, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r = newTestResults(t, dir)
 	experiment := model.NewExperiment(model.Design{
 		Factors: model.Factors{"foo": {1, 2}}, Run: "echo {foo}", Replicates: 1,
 	})
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	experiment.Start = now.Add(-2 * time.Minute)
-	release, err := r.Lock(experiment.ID)
+	release, err := r.lock(experiment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,12 +92,9 @@ func TestStatusTransitionsAndActualRun(t *testing.T) {
 }
 
 func TestStatusCountsOnlySuccessfulTerminalRuns(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2, 3}}, Replicates: 1})
-	release, err := r.Lock(experiment.ID)
+	release, err := r.lock(experiment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,12 +121,9 @@ func TestStatusCountsOnlySuccessfulTerminalRuns(t *testing.T) {
 }
 
 func TestStatusUnfinishedWithoutOwnerIsStopped(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-	release, err := r.Lock(experiment.ID)
+	release, err := r.lock(experiment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,13 +142,10 @@ func TestStatusUnfinishedWithoutOwnerIsStopped(t *testing.T) {
 }
 
 func TestStatusRemainingEstimate(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2, 3}}, Replicates: 2})
 	experiment.State = model.StateRunning
-	release, err := r.Lock(experiment.ID)
+	release, err := r.lock(experiment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,13 +177,10 @@ func TestStatusRemainingUsesPointAverages(t *testing.T) {
 		{"zero second duration", 2 * time.Second, 0, 2 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := newTestResults(t, t.TempDir())
 			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 2})
 			experiment.State = model.StateRunning
-			release, err := r.Lock(experiment.ID)
+			release, err := r.lock(experiment.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,10 +206,7 @@ func TestStatusRemainingUsesPointAverages(t *testing.T) {
 }
 
 func TestStatusExcludesReusedRunsLaterInSchedule(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	design := model.Design{Factors: model.Factors{"foo": {1, 2, 3}}, Replicates: 1}
 	original := model.NewExperiment(design)
 	createStatusExperiment(t, r, &original)
@@ -252,7 +230,7 @@ func TestStatusExcludesReusedRunsLaterInSchedule(t *testing.T) {
 	experiment := model.NewExperiment(design)
 	experiment.State, experiment.Start = model.StateRunning, started
 	createStatusExperiment(t, r, &experiment)
-	release, err := r.Lock(experiment.ID)
+	release, err := r.lock(experiment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,10 +250,7 @@ func TestStatusExcludesReusedRunsLaterInSchedule(t *testing.T) {
 }
 
 func TestStatusInvalidLock(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	if err := os.WriteFile(r.lockPath(), []byte("not an ID\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

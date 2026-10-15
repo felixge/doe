@@ -84,25 +84,11 @@ func runCommandHandler(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Validate before touching previous results, and lock before cleaning them.
-	r, err := results.New(resultsDir(*file))
-	if err != nil {
-		return env.Fail(err)
-	}
-
-	// Hold the lock while running so other processes can check for liveness.
-	release, err := r.Lock(experiment.ID)
+	r, release, err := results.New(resultsDir(*file), experiment.ID, *clean)
 	if err != nil {
 		return env.Fail(err)
 	}
 	defer func() { _ = release() }()
-	if *clean {
-		if err := r.Clean(); err != nil {
-			return env.Fail(err)
-		}
-	}
-	if err := r.InitVersion(); err != nil {
-		return env.Fail(err)
-	}
 	setupLog, err := r.CreateExperiment(experiment)
 	if err != nil {
 		return env.Fail(err)

@@ -11,10 +11,7 @@ import (
 )
 
 func TestRunIndexReuseLatestAndPreserveExecution(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	index, err := r.OpenRunIndex()
 	if err != nil {
 		t.Fatal(err)
@@ -103,10 +100,7 @@ func TestRunIndexReuseLatestAndPreserveExecution(t *testing.T) {
 }
 
 func TestRunIndexPartialLineRecovery(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	path := filepath.Join(r.dir, "runs.index.jsonl")
 	complete := []byte("{\"hash\":\"old\",\"path\":\"experiments/old/runs/old.json\"}\n")
 	if err := os.WriteFile(path, append(bytes.Clone(complete), []byte("{\"hash\":\"partial")...), 0600); err != nil {
@@ -139,10 +133,7 @@ func TestRunIndexInvalidEntries(t *testing.T) {
 		`{"hash":"h","path":"runs/run.log"}`,
 	} {
 		t.Run(line, func(t *testing.T) {
-			r, err := New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := newTestResults(t, t.TempDir())
 			if err := os.WriteFile(filepath.Join(r.dir, "runs.index.jsonl"), []byte(line+"\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -157,10 +148,7 @@ func TestRunIndexInvalidEntries(t *testing.T) {
 func TestRunIndexOnlyReusesCompleteAvailableRuns(t *testing.T) {
 	for _, state := range []model.State{model.StateRunning, model.StateStopped, model.StateError, model.StateDone} {
 		t.Run(string(state), func(t *testing.T) {
-			r, err := New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := newTestResults(t, t.TempDir())
 			experiment := model.NewExperiment(model.Design{})
 			createStatusExperiment(t, r, &experiment)
 			run := model.NewRun(experiment.ID, nil, 1)
@@ -198,10 +186,7 @@ func TestRunIndexOnlyReusesCompleteAvailableRuns(t *testing.T) {
 }
 
 func TestRunIndexPathsAreRelative(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := newTestResults(t, t.TempDir())
 	index, err := r.OpenRunIndex()
 	if err != nil {
 		t.Fatal(err)

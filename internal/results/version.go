@@ -15,9 +15,9 @@ const databaseVersion = 1
 
 const versionFile = "version"
 
-// InitVersion checks existing results or initializes an empty directory.
-// The caller must hold the results lock. Clean must run first for a reset.
-func (r *Results) InitVersion() error {
+// initVersion checks existing results or initializes an empty directory.
+// The caller must hold the results lock. Cleaning must run first for a reset.
+func (r *Results) initVersion() error {
 	version, exists, err := r.readVersion()
 	if err != nil {
 		return err
