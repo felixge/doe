@@ -523,6 +523,54 @@ func TestExpandRunScript(t *testing.T) {
 	}
 }
 
+func TestRootHelp(t *testing.T) {
+	var help string
+	for _, args := range [][]string{nil, {"-h"}, {"--help"}, {"help"}} {
+		code, stdout, stderr := runCommand(context.Background(), args...)
+		if code != 0 || stderr != "" {
+			t.Fatalf("Main(%q) = %d, %q, %q", args, code, stdout, stderr)
+		}
+		if help == "" {
+			help = stdout
+		} else if stdout != help {
+			t.Errorf("Main(%q) differs from default help", args)
+		}
+	}
+	for _, section := range []string{"Study files:", "Scripts:", "Workflow:", "Results (next to the study file):", "--no-reuse", `state = "done"`} {
+		if !strings.Contains(help, section) {
+			t.Errorf("help is missing %q", section)
+		}
+	}
+
+	// Validate the documented study and preset without executing external scripts.
+	_, example, ok := strings.Cut(help, "Example study.yaml:\n")
+	if !ok {
+		t.Fatal("help is missing the example study")
+	}
+	example, _, _ = strings.Cut(example, "\n\n")
+	path := filepath.Join(t.TempDir(), "study.yaml")
+	if err := os.WriteFile(path, []byte(example), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		preset     string
+		points     int
+		replicates int
+	}{
+		{"smoke", 2, 1},
+		{"full", 4, 6},
+	} {
+		experiment, err := prepareExperiment(path, tc.preset, "", "", 0, nil)
+		if err != nil {
+			t.Fatalf("example preset %s: %v", tc.preset, err)
+		}
+		if len(experiment.Points) != tc.points || experiment.Replicates != tc.replicates {
+			t.Errorf("example preset %s: got %d points, %d replicates; want %d, %d",
+				tc.preset, len(experiment.Points), experiment.Replicates, tc.points, tc.replicates)
+		}
+	}
+}
+
 func TestExperimentHelpAndErrors(t *testing.T) {
 	for _, tc := range []struct {
 		args []string

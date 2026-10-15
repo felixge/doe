@@ -403,6 +403,53 @@ Commands:
   run     Run an experiment and save run logs.
   status  Show the latest experiment's progress.
 
+Study files:
+  A study is a YAML file with scripts, factors, and optional named presets.
+  Each combination of factor settings is a design point. An experiment is
+  one "doe run" invocation, with each point run replicates times (default: 1).
+
+Example study.yaml:
+  setup: ./setup.bash
+  run: ./run.bash {algorithm} {effort}
+  factors:
+    algorithm: [gzip, zstd]
+    effort: [default]
+  presets:
+    smoke: {}
+    full:
+      factors:
+        effort: [min, max]
+      replicates: 6
+
+  Presets inherit study settings. Preset factors override individual factors;
+  CLI options override both. Factor settings can be YAML scalars or sequences.
+  To change a study, edit its scripts, factors, replicates, or preset overrides.
+
+Scripts:
+  Scripts are shell commands executed in the study file's directory.
+  Optional setup runs once before any runs; its final stdout line can be a
+  JSON object describing the environment. Run must end stdout with a JSON
+  object of measurements, e.g. {"seconds":0.12}, and exit successfully.
+  Every factor needs a {factor} placeholder in run. Substitution is literal,
+  not shell-escaped. Setup does not expand placeholders.
+
+Workflow:
+  doe run -f study.yaml -p full --design       # Preview resolved YAML; do not run.
+  doe run -f study.yaml -p smoke               # Run a small experiment.
+  doe run -f study.yaml -p full -n 2 'effort=[min, max]'  # Override replicates and factors.
+  doe status -f study.yaml                    # Show progress and active log path.
+
+  Successful runs with matching setup/run commands, point, and replicate
+  are reused. Script file contents and dependencies are NOT tracked: use
+  --no-reuse after changing them. Use -c to delete previous results first.
+
+Results (next to the study file):
+  results/experiments/<experiment-id>/experiment.json
+  results/experiments/<experiment-id>/setup.log
+  results/experiments/<experiment-id>/runs/<run-id>.{json,log}
+  Run JSON stores inputs under point and measurements under outcome.
+  Analyze only runs with state = "done"; group by point to compare settings.
+
 Run "doe <command> -h" for command-specific help.
 `)
 }
