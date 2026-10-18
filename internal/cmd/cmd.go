@@ -289,7 +289,7 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, r *results
 			pending = append(pending, pendingRun{point, replicate + 1, hash})
 		}
 	}
-	experiment.State = model.StateRunning
+	experiment.State = model.ExperimentStateRunning
 	if err := r.UpdateExperiment(experiment); err != nil {
 		return err
 	}
@@ -317,7 +317,7 @@ func runReport(ctx context.Context, experiment *model.Experiment, r *results.Res
 		return err
 	}
 	defer func() { _ = log.Close() }()
-	experiment.State = model.StateReporting
+	experiment.State = model.ExperimentStateReporting
 	if err := r.UpdateExperiment(experiment); err != nil {
 		return err
 	}
@@ -326,7 +326,7 @@ func runReport(ctx context.Context, experiment *model.Experiment, r *results.Res
 }
 
 func finishExperiment(experiment *model.Experiment, r *results.Results, err error) error {
-	experiment.State, experiment.Error = stopReason(err)
+	experiment.State, experiment.Error = experimentStopReason(err)
 	experiment.End = time.Now()
 	return errors.Join(err, r.UpdateExperiment(experiment))
 }
@@ -342,7 +342,7 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *result
 	outcome, outcomeErr := lastJSON[model.Outcome](log, true)
 	closeErr := log.Close()
 	err = errors.Join(ctx.Err(), executionErr, outcomeErr, closeErr)
-	run.State, run.Error = stopReason(err)
+	run.State, run.Error = runStopReason(err)
 	run.Outcome = outcome
 	run.End = time.Now()
 	err = errors.Join(err, r.UpdateRun(run))
@@ -404,16 +404,29 @@ func lastLogLine(log *os.File) ([]byte, error) {
 	}
 }
 
-// stopReason maps an error to a terminal state. Only cancellation means stopped;
-// a deadline is recorded as an error.
-func stopReason(err error) (model.State, string) {
+// experimentStopReason maps an error to a terminal experiment state.
+// Only cancellation means stopped; a deadline is recorded as an error.
+func experimentStopReason(err error) (model.ExperimentState, string) {
 	switch {
 	case err == nil:
-		return model.StateDone, ""
+		return model.ExperimentStateDone, ""
 	case errors.Is(err, context.Canceled):
-		return model.StateStopped, ""
+		return model.ExperimentStateStopped, ""
 	default:
-		return model.StateError, err.Error()
+		return model.ExperimentStateError, err.Error()
+	}
+}
+
+// runStopReason maps an error to a terminal run state.
+// Only cancellation means stopped; a deadline is recorded as an error.
+func runStopReason(err error) (model.RunState, string) {
+	switch {
+	case err == nil:
+		return model.RunStateDone, ""
+	case errors.Is(err, context.Canceled):
+		return model.RunStateStopped, ""
+	default:
+		return model.RunStateError, err.Error()
 	}
 }
 

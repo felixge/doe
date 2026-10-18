@@ -59,7 +59,7 @@ func TestStatusTransitionsAndActualRun(t *testing.T) {
 		t.Fatalf("setup status = %+v, %v", status, err)
 	}
 
-	experiment.State = model.StateRunning
+	experiment.State = model.ExperimentStateRunning
 	experiment.SetupEnd = now.Add(-time.Minute)
 	if err := r.UpdateExperiment(&experiment); err != nil {
 		t.Fatal(err)
@@ -74,13 +74,13 @@ func TestStatusTransitionsAndActualRun(t *testing.T) {
 		t.Fatalf("running status = %+v, %v; want actual active run", status, err)
 	}
 
-	active.State = model.StateDone
+	active.State = model.RunStateDone
 	active.End = now
 	active.Outcome = model.Outcome{"ok": true}
 	if err := r.UpdateRun(active); err != nil {
 		t.Fatal(err)
 	}
-	experiment.State = model.StateReporting
+	experiment.State = model.ExperimentStateReporting
 	if err := r.UpdateExperiment(&experiment); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestStatusTransitionsAndActualRun(t *testing.T) {
 		t.Errorf("reporting status = %+v, %v", status, err)
 	}
 
-	experiment.State = model.StateDone
+	experiment.State = model.ExperimentStateDone
 	experiment.End = now
 	if err := r.UpdateExperiment(&experiment); err != nil {
 		t.Fatal(err)
@@ -109,16 +109,16 @@ func TestStatusCountsOnlySuccessfulTerminalRuns(t *testing.T) {
 	}
 	defer func() { _ = release() }()
 	createStatusExperiment(t, r, &experiment)
-	experiment.State = model.StateRunning
+	experiment.State = model.ExperimentStateRunning
 	if err := r.UpdateExperiment(&experiment); err != nil {
 		t.Fatal(err)
 	}
-	states := []model.State{model.StateDone, model.StateStopped, model.StateError}
+	states := []model.RunState{model.RunStateDone, model.RunStateStopped, model.RunStateError}
 	for index, state := range states {
 		run := model.NewRun(experiment.ID, experiment.Points[index], 1)
 		run.State = state
 		run.End = run.Start
-		if state == model.StateError {
+		if state == model.RunStateError {
 			run.Error = "exit status 7"
 		}
 		createStatusRun(t, r, run)
@@ -130,7 +130,7 @@ func TestStatusCountsOnlySuccessfulTerminalRuns(t *testing.T) {
 }
 
 func TestStatusUnfinishedWithoutOwnerIsStopped(t *testing.T) {
-	for _, state := range []model.State{model.StateSetup, model.StateRunning, model.StateReporting} {
+	for _, state := range []model.ExperimentState{model.ExperimentStateSetup, model.ExperimentStateRunning, model.ExperimentStateReporting} {
 		t.Run(string(state), func(t *testing.T) {
 			r := newTestResults(t, t.TempDir())
 			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
@@ -154,7 +154,7 @@ func TestStatusUnfinishedWithoutOwnerIsStopped(t *testing.T) {
 func TestStatusRemainingEstimate(t *testing.T) {
 	r := newTestResults(t, t.TempDir())
 	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2, 3}}, Replicates: 2})
-	experiment.State = model.StateRunning
+	experiment.State = model.ExperimentStateRunning
 	release, err := r.lock(experiment.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestStatusRemainingEstimate(t *testing.T) {
 	createStatusExperiment(t, r, &experiment)
 	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	first := model.NewRun(experiment.ID, experiment.Points[0], 1)
-	first.Start, first.End, first.State = started, started.Add(2*time.Second), model.StateDone
+	first.Start, first.End, first.State = started, started.Add(2*time.Second), model.RunStateDone
 	active := model.NewRun(experiment.ID, experiment.Points[1], 1)
 	active.Start = started.Add(2 * time.Second)
 	// Reverse file order to prove status matches point/replicate, not filenames.
@@ -189,7 +189,7 @@ func TestStatusRemainingUsesPointAverages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newTestResults(t, t.TempDir())
 			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1, 2}}, Replicates: 2})
-			experiment.State = model.StateRunning
+			experiment.State = model.ExperimentStateRunning
 			release, err := r.lock(experiment.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -198,10 +198,10 @@ func TestStatusRemainingUsesPointAverages(t *testing.T) {
 			createStatusExperiment(t, r, &experiment)
 			started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 			first := model.NewRun(experiment.ID, experiment.Points[0], 1)
-			first.Start, first.End, first.State = started, started.Add(tc.first), model.StateDone
+			first.Start, first.End, first.State = started, started.Add(tc.first), model.RunStateDone
 			createStatusRun(t, r, first)
 			second := model.NewRun(experiment.ID, experiment.Points[1], 1)
-			second.Start, second.End, second.State = first.End, first.End.Add(tc.second), model.StateDone
+			second.Start, second.End, second.State = first.End, first.End.Add(tc.second), model.RunStateDone
 			createStatusRun(t, r, second)
 			// The second replicate reverses the point order: Points[1], then Points[0].
 			active := model.NewRun(experiment.ID, experiment.Points[1], 2)
@@ -222,7 +222,7 @@ func TestStatusExcludesReusedRunsLaterInSchedule(t *testing.T) {
 	createStatusExperiment(t, r, &original)
 	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	reused := model.NewRun(original.ID, original.Points[1], 1)
-	reused.Start, reused.End, reused.State = started.Add(-time.Hour), started.Add(-time.Hour+6*time.Second), model.StateDone
+	reused.Start, reused.End, reused.State = started.Add(-time.Hour), started.Add(-time.Hour+6*time.Second), model.RunStateDone
 	createStatusRun(t, r, reused)
 	index, err := r.OpenRunIndex()
 	if err != nil {
@@ -238,7 +238,7 @@ func TestStatusExcludesReusedRunsLaterInSchedule(t *testing.T) {
 	}
 	defer func() { _ = index.Close() }()
 	experiment := model.NewExperiment(design)
-	experiment.State, experiment.Start = model.StateRunning, started
+	experiment.State, experiment.Start = model.ExperimentStateRunning, started
 	createStatusExperiment(t, r, &experiment)
 	release, err := r.lock(experiment.ID)
 	if err != nil {

@@ -41,7 +41,7 @@ func TestNewExperiment(t *testing.T) {
 	if version := experiment.ID[6] >> 4; version != 7 {
 		t.Errorf("ID version = %d, want 7", version)
 	}
-	if experiment.Env == nil || len(experiment.Env) != 0 || experiment.State != StateSetup {
+	if experiment.Env == nil || len(experiment.Env) != 0 || experiment.State != ExperimentStateSetup {
 		t.Errorf("new experiment env/state = %v/%q, want empty/setup", experiment.Env, experiment.State)
 	}
 	if experiment.Run != study.Run || !reflect.DeepEqual(experiment.Factors, study.Factors) {
@@ -233,7 +233,7 @@ func TestDesignSerialization(t *testing.T) {
 	if _, ok := record["error"]; ok {
 		t.Errorf("experiment without an error records one: %s", data)
 	}
-	if record["state"] != string(StateSetup) {
+	if record["state"] != string(ExperimentStateSetup) {
 		t.Errorf("experiment state = %v, want setup", record["state"])
 	}
 	if !reflect.DeepEqual(record["points"], []any{map[string]any{"foo": float64(1)}}) {
@@ -264,7 +264,7 @@ func TestNewRun(t *testing.T) {
 	before := time.Now()
 	run := NewRun(experimentID, point, 2)
 	after := time.Now()
-	if run.Reused() || run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.State != StateRunning || run.Outcome != nil {
+	if run.Reused() || run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.State != RunStateRunning || run.Outcome != nil {
 		t.Errorf("NewRun = %+v, want running UUIDv7 and point %v", run, point)
 	}
 	if run.Start.Before(before) || run.Start.After(after) || !run.End.IsZero() {
@@ -284,7 +284,7 @@ func TestRunSerialization(t *testing.T) {
 	end := start.Add(1500 * time.Millisecond)
 	run := &Run{
 		ID: id, ExperimentID: experimentID, Point: point, Replicate: 2,
-		State: StateDone, Start: start, End: end, Outcome: outcome,
+		State: RunStateDone, Start: start, End: end, Outcome: outcome,
 	}
 	data, err := json.Marshal(run)
 	if err != nil {
@@ -322,7 +322,7 @@ func TestRunSerialization(t *testing.T) {
 		}
 	}
 
-	emptyOutcome, err := json.Marshal(&Run{State: StateDone, Outcome: Outcome{}})
+	emptyOutcome, err := json.Marshal(&Run{State: RunStateDone, Outcome: Outcome{}})
 	if err != nil {
 		t.Fatal(err)
 	}

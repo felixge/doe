@@ -100,12 +100,12 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 			return nil, err
 		}
 		switch run.State {
-		case model.StateDone:
+		case model.RunStateDone:
 			status.Completed++
 			completed[slot{string(key), run.Replicate}] = run.End.Sub(run.Start)
-		case model.StateRunning:
+		case model.RunStateRunning:
 			active = run
-		case model.StateError:
+		case model.RunStateError:
 			if status.Error == "" {
 				status.Error = run.Error
 			}
@@ -157,22 +157,22 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 	return status, nil
 }
 
-func observedState(recorded model.State, running bool) State {
-	if !running && (recorded == model.StateSetup || recorded == model.StateRunning || recorded == model.StateReporting) {
+func observedState(recorded model.ExperimentState, running bool) State {
+	if !running && (recorded == model.ExperimentStateSetup || recorded == model.ExperimentStateRunning || recorded == model.ExperimentStateReporting) {
 		return StateStopped
 	}
 	switch recorded {
-	case model.StateSetup:
+	case model.ExperimentStateSetup:
 		return StateSetup
-	case model.StateRunning:
+	case model.ExperimentStateRunning:
 		return StateRunning
-	case model.StateReporting:
+	case model.ExperimentStateReporting:
 		return StateReporting
-	case model.StateDone:
+	case model.ExperimentStateDone:
 		return StateDone
-	case model.StateError:
+	case model.ExperimentStateError:
 		return StateError
-	case model.StateStopped:
+	case model.ExperimentStateStopped:
 		return StateStopped
 	default:
 		return StateStopped

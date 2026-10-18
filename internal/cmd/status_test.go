@@ -55,7 +55,7 @@ func TestStatusProgress(t *testing.T) {
 		t.Fatalf("setup status = %d, %q, %q; want %q", code, stdout, stderr, want)
 	}
 
-	experiment.State = model.StateRunning
+	experiment.State = model.ExperimentStateRunning
 	if err := r.UpdateExperiment(&experiment); err != nil {
 		t.Fatal(err)
 	}

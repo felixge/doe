@@ -21,7 +21,7 @@ func TestRunIndexReuseLatestAndPreserveExecution(t *testing.T) {
 	var latest *model.Run
 	for range 2 {
 		run := model.NewRun(experiment.ID, model.Point{"foo": json.Number("9007199254740993")}, 1)
-		run.State, run.End = model.StateDone, run.Start
+		run.State, run.End = model.RunStateDone, run.Start
 		run.Outcome = model.Outcome{"precise": json.Number("1.234567890123456789")}
 		log, err := r.CreateRun(run)
 		if err != nil {
@@ -111,7 +111,7 @@ func TestRunIndexPartialLineRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := model.NewRun(model.NewExperiment(model.Design{}).ID, nil, 1)
-	run.State = model.StateDone
+	run.State = model.RunStateDone
 	if err := index.Add("new", run); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestRunIndexInvalidEntries(t *testing.T) {
 }
 
 func TestRunIndexOnlyReusesCompleteAvailableRuns(t *testing.T) {
-	for _, state := range []model.State{model.StateRunning, model.StateStopped, model.StateError, model.StateDone} {
+	for _, state := range []model.RunState{model.RunStateRunning, model.RunStateStopped, model.RunStateError, model.RunStateDone} {
 		t.Run(string(state), func(t *testing.T) {
 			r := newTestResults(t, t.TempDir())
 			experiment := model.NewExperiment(model.Design{})
@@ -159,7 +159,7 @@ func TestRunIndexOnlyReusesCompleteAvailableRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = index.Close() }()
-			if state != model.StateDone {
+			if state != model.RunStateDone {
 				if err := index.Add("hash", run); err == nil {
 					t.Error("unfinished run was indexed")
 				}
@@ -192,7 +192,7 @@ func TestRunIndexPathsAreRelative(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := model.NewRun(model.NewExperiment(model.Design{}).ID, nil, 1)
-	run.State = model.StateDone
+	run.State = model.RunStateDone
 	if err := index.Add("hash", run); err != nil {
 		t.Fatal(err)
 	}

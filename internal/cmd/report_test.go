@@ -87,7 +87,7 @@ report: |
 	}
 	r := results.OpenReadOnly(filepath.Join("study dir", "results"))
 	experiment, runs := readCompletedExperiment(t, filepath.Join("study dir", "results"), stdout)
-	if experiment.State != model.StateDone || experiment.Report == "" || len(runs) != 2 {
+	if experiment.State != model.ExperimentStateDone || experiment.Report == "" || len(runs) != 2 {
 		t.Fatalf("experiment = %+v, runs = %+v", experiment, runs)
 	}
 	log, err := os.ReadFile(r.ReportLogPath(experiment.ID))
@@ -113,14 +113,14 @@ func TestExperimentSkipsReport(t *testing.T) {
 		name, setup, run, report string
 		canceled                 bool
 		code                     int
-		state                    model.State
+		state                    model.ExperimentState
 	}{
-		{"optional", "", "echo '{}'; true '{foo}'", "", false, 0, model.StateDone},
-		{"blank", "", "echo '{}'; true '{foo}'", "  ", false, 0, model.StateDone},
-		{"setup failure", "exit 7", "echo '{}'; true '{foo}'", "touch report-ran", false, 1, model.StateError},
-		{"run failure", "", "true '{foo}'; exit 7", "touch report-ran", false, 1, model.StateError},
-		{"invalid outcome", "", "echo invalid; true '{foo}'", "touch report-ran", false, 1, model.StateError},
-		{"canceled", "", "echo '{}'; true '{foo}'", "touch report-ran", true, 130, model.StateStopped},
+		{"optional", "", "echo '{}'; true '{foo}'", "", false, 0, model.ExperimentStateDone},
+		{"blank", "", "echo '{}'; true '{foo}'", "  ", false, 0, model.ExperimentStateDone},
+		{"setup failure", "exit 7", "echo '{}'; true '{foo}'", "touch report-ran", false, 1, model.ExperimentStateError},
+		{"run failure", "", "true '{foo}'; exit 7", "touch report-ran", false, 1, model.ExperimentStateError},
+		{"invalid outcome", "", "echo invalid; true '{foo}'", "touch report-ran", false, 1, model.ExperimentStateError},
+		{"canceled", "", "echo '{}'; true '{foo}'", "touch report-ran", true, 130, model.ExperimentStateStopped},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
@@ -156,7 +156,7 @@ func TestExperimentReportFailureAndReuse(t *testing.T) {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
 	first, runs := readCompletedExperiment(t, "results", stdout)
-	if first.State != model.StateError || first.Error != "report: exit status 7" || len(runs) != 1 || runs[0].State != model.StateDone {
+	if first.State != model.ExperimentStateError || first.Error != "report: exit status 7" || len(runs) != 1 || runs[0].State != model.RunStateDone {
 		t.Fatalf("failed report = %+v, runs = %+v", first, runs)
 	}
 	r := results.OpenReadOnly("results")
@@ -219,7 +219,7 @@ func TestExperimentReportCancellationAndStatus(t *testing.T) {
 			t.Errorf("canceled report = %+v", result)
 		}
 		experiment, runs := readCompletedExperiment(t, "results", result.stdout)
-		if experiment.State != model.StateStopped || experiment.Error != "" || experiment.End.IsZero() || len(runs) != 1 || runs[0].State != model.StateDone {
+		if experiment.State != model.ExperimentStateStopped || experiment.Error != "" || experiment.End.IsZero() || len(runs) != 1 || runs[0].State != model.RunStateDone {
 			t.Errorf("canceled report = %+v, runs = %+v", experiment, runs)
 		}
 	case <-time.After(5 * time.Second):

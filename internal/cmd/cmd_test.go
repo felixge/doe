@@ -60,7 +60,7 @@ run: |
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
 	experiment, runs := readCompletedExperiment(t, filepath.Join(dir, "results"), stdout)
-	if experiment.State != model.StateDone || len(experiment.Points) != 6 || experiment.SetupEnd.Before(experiment.Start) || experiment.End.Before(experiment.SetupEnd) {
+	if experiment.State != model.ExperimentStateDone || len(experiment.Points) != 6 || experiment.SetupEnd.Before(experiment.Start) || experiment.End.Before(experiment.SetupEnd) {
 		t.Errorf("experiment = %+v", experiment)
 	}
 	if len(runs) != 6 {
@@ -70,7 +70,7 @@ run: |
 		foo := int(run.Point["foo"].(float64))
 		bar := int(run.Point["bar"].(float64))
 		result := int(run.Outcome["result"].(float64))
-		if run.ExperimentID != experiment.ID || run.State != model.StateDone || result != foo+bar || run.End.Before(run.Start) {
+		if run.ExperimentID != experiment.ID || run.State != model.RunStateDone || result != foo+bar || run.End.Before(run.Start) {
 			t.Errorf("run = %+v", run)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "results", "experiments", experiment.ID.String(), "runs", run.ID.String()+".log")); err != nil {
@@ -94,7 +94,7 @@ func TestExperimentSetup(t *testing.T) {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
 	experiment, _ := readCompletedExperiment(t, filepath.Join(dir, "results"), stdout)
-	if !reflect.DeepEqual(experiment.Env, model.Env{"os": "test"}) || experiment.State != model.StateDone {
+	if !reflect.DeepEqual(experiment.Env, model.Env{"os": "test"}) || experiment.State != model.ExperimentStateDone {
 		t.Errorf("experiment = %+v", experiment)
 	}
 	log, err := os.ReadFile(filepath.Join(dir, "results", "experiments", experiment.ID.String(), "setup.log"))
@@ -122,11 +122,11 @@ func TestExperimentSetupFailureAndCancellation(t *testing.T) {
 		ctx       func() context.Context
 		script    string
 		wantCode  int
-		wantState model.State
+		wantState model.ExperimentState
 		wantError string
 	}{
-		{"failure", func() context.Context { return context.Background() }, "echo failed; exit 7", 1, model.StateError, "setup: exit status 7"},
-		{"canceled", func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }, "echo '{}'", 130, model.StateStopped, ""},
+		{"failure", func() context.Context { return context.Background() }, "echo failed; exit 7", 1, model.ExperimentStateError, "setup: exit status 7"},
+		{"canceled", func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }, "echo '{}'", 130, model.ExperimentStateStopped, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
@@ -174,7 +174,7 @@ func TestExperimentSetupCanceledWhileRunning(t *testing.T) {
 		t.Errorf("canceled setup = %+v", result)
 	}
 	experiment, runs := readCompletedExperiment(t, "results", result.stdout)
-	if experiment.State != model.StateStopped || experiment.Error != "" || experiment.End.IsZero() || len(runs) != 0 {
+	if experiment.State != model.ExperimentStateStopped || experiment.Error != "" || experiment.End.IsZero() || len(runs) != 0 {
 		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 	}
 }
@@ -214,7 +214,7 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 		t.Errorf("canceled experiment = %+v", result)
 	}
 	experiment, runs := readCompletedExperiment(t, "results", result.stdout)
-	if experiment.State != model.StateStopped || len(runs) != 2 || runs[0].State != model.StateDone || runs[1].State != model.StateStopped || !runs[1].End.After(runs[1].Start) {
+	if experiment.State != model.ExperimentStateStopped || len(runs) != 2 || runs[0].State != model.RunStateDone || runs[1].State != model.RunStateStopped || !runs[1].End.After(runs[1].Start) {
 		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 	}
 	if _, err := os.Stat("report-ran"); !os.IsNotExist(err) {
@@ -315,7 +315,7 @@ func TestRunOutputErrors(t *testing.T) {
 				t.Fatalf("experiment = %d, %q", code, stdout)
 			}
 			experiment, runs := readCompletedExperiment(t, "results", stdout)
-			if experiment.State != model.StateError || len(runs) != 1 || runs[0].State != model.StateError || runs[0].Error == "" {
+			if experiment.State != model.ExperimentStateError || len(runs) != 1 || runs[0].State != model.RunStateError || runs[0].Error == "" {
 				t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 			}
 		})
@@ -341,7 +341,7 @@ func TestFailedRunKeepsOutcomeAndStopsSchedule(t *testing.T) {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
 	experiment, runs := readCompletedExperiment(t, "results", stdout)
-	if experiment.State != model.StateError || len(runs) != 1 || runs[0].State != model.StateError || runs[0].Outcome["value"] != float64(42) || !strings.Contains(runs[0].Error, "exit status 7") {
+	if experiment.State != model.ExperimentStateError || len(runs) != 1 || runs[0].State != model.RunStateError || runs[0].Outcome["value"] != float64(42) || !strings.Contains(runs[0].Error, "exit status 7") {
 		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
 	}
 }
@@ -437,7 +437,7 @@ func TestExperimentCleanPreservesLock(t *testing.T) {
 		t.Errorf("clean kept old file: %v", err)
 	}
 	experiment, runs := readCompletedExperiment(t, "results", stdout)
-	if experiment.State != model.StateDone || len(runs) != 1 {
+	if experiment.State != model.ExperimentStateDone || len(runs) != 1 {
 		t.Errorf("clean experiment = %+v, runs = %+v", experiment, runs)
 	}
 }
@@ -503,20 +503,25 @@ func TestLastLogLine(t *testing.T) {
 func TestStopReason(t *testing.T) {
 	failure := fmt.Errorf("failed")
 	for _, tc := range []struct {
-		name    string
-		err     error
-		state   model.State
-		message string
+		name            string
+		err             error
+		experimentState model.ExperimentState
+		runState        model.RunState
+		message         string
 	}{
-		{"success", nil, model.StateDone, ""},
-		{"canceled", fmt.Errorf("setup: %w", context.Canceled), model.StateStopped, ""},
-		{"deadline", context.DeadlineExceeded, model.StateError, context.DeadlineExceeded.Error()},
-		{"error", failure, model.StateError, failure.Error()},
+		{"success", nil, model.ExperimentStateDone, model.RunStateDone, ""},
+		{"canceled", fmt.Errorf("setup: %w", context.Canceled), model.ExperimentStateStopped, model.RunStateStopped, ""},
+		{"deadline", context.DeadlineExceeded, model.ExperimentStateError, model.RunStateError, context.DeadlineExceeded.Error()},
+		{"error", failure, model.ExperimentStateError, model.RunStateError, failure.Error()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			state, message := stopReason(tc.err)
-			if state != tc.state || message != tc.message {
-				t.Errorf("stopReason(%v) = %q, %q; want %q, %q", tc.err, state, message, tc.state, tc.message)
+			experimentState, message := experimentStopReason(tc.err)
+			if experimentState != tc.experimentState || message != tc.message {
+				t.Errorf("experimentStopReason(%v) = %q, %q; want %q, %q", tc.err, experimentState, message, tc.experimentState, tc.message)
+			}
+			runState, message := runStopReason(tc.err)
+			if runState != tc.runState || message != tc.message {
+				t.Errorf("runStopReason(%v) = %q, %q; want %q, %q", tc.err, runState, message, tc.runState, tc.message)
 			}
 		})
 	}

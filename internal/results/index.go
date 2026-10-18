@@ -74,7 +74,7 @@ func (index *RunIndex) Close() error {
 // Add indexes a newly executed successful run. Copies are never indexed, and
 // new entries do not become candidates within the current experiment.
 func (index *RunIndex) Add(hash string, run *model.Run) error {
-	if run.State != model.StateDone {
+	if run.State != model.RunStateDone {
 		return fmt.Errorf("cannot index unfinished run %s", run.ID)
 	}
 	if run.Reused() {
@@ -121,7 +121,7 @@ func (index *RunIndex) Reuse(experimentID uuid.UUID, hash string) (bool, error) 
 	if err := decoder.Decode(&run); err != nil {
 		return false, fmt.Errorf("decode reuse candidate %s: %w", path, err)
 	}
-	if run.State != model.StateDone {
+	if run.State != model.RunStateDone {
 		return false, nil
 	}
 	logPath := strings.TrimSuffix(path, ".json") + ".log"

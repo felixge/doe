@@ -125,7 +125,7 @@ func TestExperimentContinuesFailedExperiment(t *testing.T) {
 		t.Fatalf("failed experiment = %d, %q, %q", code, stdout, stderr)
 	}
 	first, firstRuns := readCompletedExperiment(t, "results", stdout)
-	if len(firstRuns) != 2 || firstRuns[1].State != model.StateError {
+	if len(firstRuns) != 2 || firstRuns[1].State != model.RunStateError {
 		t.Fatalf("failed runs = %+v", firstRuns)
 	}
 	if err := os.WriteFile("gate", nil, 0600); err != nil {
@@ -138,7 +138,7 @@ func TestExperimentContinuesFailedExperiment(t *testing.T) {
 	for _, run := range secondRuns {
 		wantReused := run.Point["foo"] == float64(1)
 		if run.Reused() != wantReused || (wantReused && run.OriginalExperimentID != first.ID) ||
-			run.State != model.StateDone || run.ExperimentID != second.ID || run.ID == firstRuns[1].ID {
+			run.State != model.RunStateDone || run.ExperimentID != second.ID || run.ID == firstRuns[1].ID {
 			t.Errorf("continued run = %+v", run)
 		}
 	}

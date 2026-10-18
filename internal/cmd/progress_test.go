@@ -51,7 +51,7 @@ func TestExperimentPrintsIDBeforeSetupFinishes(t *testing.T) {
 		t.Fatalf("ID output = %q, %v", idLine, err)
 	}
 	experiment, err := results.OpenReadOnly("results").ReadExperiment(id)
-	if err != nil || experiment.State != model.StateSetup {
+	if err != nil || experiment.State != model.ExperimentStateSetup {
 		t.Fatalf("experiment at ID output = %+v, %v", experiment, err)
 	}
 	select {
@@ -78,12 +78,12 @@ func TestExperimentPrintsIDBeforeSetupFinishes(t *testing.T) {
 func TestWatchExperiment(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		state model.State
+		state model.ExperimentState
 		err   error
 	}{
-		{"done", model.StateDone, nil},
-		{"error", model.StateError, errors.New("setup failed")},
-		{"canceled", model.StateStopped, context.Canceled},
+		{"done", model.ExperimentStateDone, nil},
+		{"error", model.ExperimentStateError, errors.New("setup failed")},
+		{"canceled", model.ExperimentStateStopped, context.Canceled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
@@ -107,7 +107,7 @@ func TestWatchExperiment(t *testing.T) {
 			start := make(chan struct{})
 			go func() {
 				run := func() error {
-					experiment.State = model.StateRunning
+					experiment.State = model.ExperimentStateRunning
 					if err := r.UpdateExperiment(&experiment); err != nil {
 						return err
 					}
@@ -117,7 +117,7 @@ func TestWatchExperiment(t *testing.T) {
 					}
 					experiment.State = tc.state
 					experiment.End = time.Now()
-					if tc.state == model.StateError {
+					if tc.state == model.ExperimentStateError {
 						experiment.Error = tc.err.Error()
 					}
 					return errors.Join(tc.err, r.UpdateExperiment(&experiment))
@@ -138,7 +138,7 @@ func TestWatchExperiment(t *testing.T) {
 			if !strings.HasPrefix(running, "\x1b[5A\r\x1b[J") || !strings.Contains(running, "State: Running\n") || strings.Contains(running, "Setup log:") {
 				t.Fatalf("refresh = %q", running)
 			}
-			if tc.state == model.StateStopped {
+			if tc.state == model.ExperimentStateStopped {
 				cancel()
 			} else {
 				close(finish)

@@ -162,30 +162,30 @@ func (d Design) Points() []Point {
 	return points
 }
 
-// State describes the recorded lifecycle of an experiment or run.
-type State string
+// ExperimentState describes the recorded lifecycle of an experiment.
+type ExperimentState string
 
 const (
-	StateSetup     State = "setup"
-	StateRunning   State = "running"
-	StateReporting State = "reporting"
-	StateDone      State = "done"
-	StateStopped   State = "stopped"
-	StateError     State = "error"
+	ExperimentStateSetup     ExperimentState = "setup"
+	ExperimentStateRunning   ExperimentState = "running"
+	ExperimentStateReporting ExperimentState = "reporting"
+	ExperimentStateDone      ExperimentState = "done"
+	ExperimentStateStopped   ExperimentState = "stopped"
+	ExperimentStateError     ExperimentState = "error"
 )
 
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.
 type Experiment struct {
 	ID       uuid.UUID `json:"id"`
 	Design   `json:"design"`
-	Points   []Point   `json:"points"`
-	Preset   string    `json:"preset,omitempty"`
-	Env      Env       `json:"env"`
-	State    State     `json:"state"`
-	Start    time.Time `json:"start,omitzero"`
-	SetupEnd time.Time `json:"setup_end,omitzero"`
-	End      time.Time `json:"end,omitzero"`
-	Error    string    `json:"error,omitempty"`
+	Points   []Point         `json:"points"`
+	Preset   string          `json:"preset,omitempty"`
+	Env      Env             `json:"env"`
+	State    ExperimentState `json:"state"`
+	Start    time.Time       `json:"start,omitzero"`
+	SetupEnd time.Time       `json:"setup_end,omitzero"`
+	End      time.Time       `json:"end,omitzero"`
+	Error    string          `json:"error,omitempty"`
 }
 
 // NewExperiment creates an experiment from a design with a UUIDv7 ID.
@@ -195,7 +195,7 @@ func NewExperiment(design Design) Experiment {
 		ID:     uuid.NewV7(),
 		Start:  time.Now(),
 		Env:    Env{},
-		State:  StateSetup,
+		State:  ExperimentStateSetup,
 		Points: design.Points(),
 		Design: design,
 	}
@@ -256,6 +256,16 @@ func flowYAML(node *yaml.Node) {
 	}
 }
 
+// RunState describes the recorded lifecycle of a run.
+type RunState string
+
+const (
+	RunStateRunning RunState = "running"
+	RunStateDone    RunState = "done"
+	RunStateStopped RunState = "stopped"
+	RunStateError   RunState = "error"
+)
+
 // Run is an execution of a design point, identified by a UUID.
 type Run struct {
 	ID                   uuid.UUID `json:"id"`
@@ -263,7 +273,7 @@ type Run struct {
 	OriginalExperimentID uuid.UUID `json:"original_experiment_id,omitzero"` // Execution origin; zero for fresh runs.
 	Point                Point     `json:"point"`
 	Replicate            int       `json:"replicate"`
-	State                State     `json:"state"`
+	State                RunState  `json:"state"`
 	Start                time.Time `json:"start,omitzero"`
 	End                  time.Time `json:"end,omitzero"`
 	Error                string    `json:"error,omitempty"`
@@ -279,7 +289,7 @@ func (r Run) Reused() bool {
 func NewRun(experimentID uuid.UUID, point Point, replicate int) *Run {
 	return &Run{
 		ID: uuid.NewV7(), ExperimentID: experimentID, Point: point,
-		Replicate: replicate, State: StateRunning, Start: time.Now(),
+		Replicate: replicate, State: RunStateRunning, Start: time.Now(),
 	}
 }
 

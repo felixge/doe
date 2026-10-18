@@ -101,7 +101,7 @@ func TestExperimentAndRunRecords(t *testing.T) {
 		t.Errorf("duplicate experiment error = %v, want fs.ErrExist", err)
 	}
 
-	experiment.State = model.StateRunning
+	experiment.State = model.ExperimentStateRunning
 	if err := r.UpdateExperiment(&experiment); err != nil {
 		t.Fatal(err)
 	}
@@ -127,14 +127,14 @@ func TestExperimentAndRunRecords(t *testing.T) {
 	if runs, err := r.Runs(experiment.ID); err != nil || len(runs) != 1 {
 		t.Errorf("runs after creation = %+v, %v", runs, err)
 	}
-	run.State = model.StateDone
+	run.State = model.RunStateDone
 	run.End = run.Start
 	run.Outcome = model.Outcome{"ok": true}
 	if err := r.UpdateRun(run); err != nil {
 		t.Fatal(err)
 	}
 	gotRuns, err := r.Runs(experiment.ID)
-	if err != nil || len(gotRuns) != 1 || gotRuns[0].ID != run.ID || gotRuns[0].State != model.StateDone || gotRuns[0].Outcome["ok"] != true {
+	if err != nil || len(gotRuns) != 1 || gotRuns[0].ID != run.ID || gotRuns[0].State != model.RunStateDone || gotRuns[0].Outcome["ok"] != true {
 		t.Errorf("runs = %+v, %v; want completed run %+v", gotRuns, err, run)
 	}
 
