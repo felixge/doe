@@ -59,11 +59,11 @@ func TestNewExperiment(t *testing.T) {
 }
 
 func TestDesignMerge(t *testing.T) {
-	base := Design{Factors: Factors{"foo": {1}, "bar": {2}}, Setup: "setup", Run: "run", Replicates: 3}
-	preset := Design{Factors: Factors{"foo": {4}, "baz": {5}}, Run: "preset run"}
-	cli := Design{Factors: Factors{"bar": {6}}, Replicates: 2}
+	base := Design{Factors: Factors{"foo": {1}, "bar": {2}}, Setup: "setup", Run: "run", Report: "report", Replicates: 3}
+	preset := Design{Factors: Factors{"foo": {4}, "baz": {5}}, Run: "preset run", Report: "preset report"}
+	cli := Design{Factors: Factors{"bar": {6}}, Report: "CLI report", Replicates: 2}
 	merged := base.Merge(preset).Merge(cli)
-	want := Design{Factors: Factors{"foo": {4}, "bar": {6}, "baz": {5}}, Setup: "setup", Run: "preset run", Replicates: 2}
+	want := Design{Factors: Factors{"foo": {4}, "bar": {6}, "baz": {5}}, Setup: "setup", Run: "preset run", Report: "CLI report", Replicates: 2}
 	if !reflect.DeepEqual(merged, want) {
 		t.Errorf("merged design = %+v, want %+v", merged, want)
 	}

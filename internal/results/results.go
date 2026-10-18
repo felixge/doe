@@ -112,7 +112,7 @@ func (r *Results) clean() error {
 // CreateExperiment exclusively creates an experiment record and its setup log.
 // The returned read/write log is owned by the caller.
 func (r *Results) CreateExperiment(experiment *model.Experiment) (*os.File, error) {
-	dir := r.experimentDir(experiment.ID)
+	dir := r.ExperimentDir(experiment.ID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create experiment directory %s: %w", dir, err)
 	}
@@ -223,19 +223,36 @@ func (r *Results) Runs(experimentID uuid.UUID) ([]*model.Run, error) {
 
 // SetupLogPath returns the path to an experiment's setup log.
 func (r *Results) SetupLogPath(experimentID uuid.UUID) string {
-	return filepath.Join(r.experimentDir(experimentID), "setup.log")
+	return filepath.Join(r.ExperimentDir(experimentID), "setup.log")
 }
 
-func (r *Results) experimentDir(id uuid.UUID) string {
+// CreateReportLog exclusively creates an experiment's report log.
+// The caller closes the returned log.
+func (r *Results) CreateReportLog(experimentID uuid.UUID) (*os.File, error) {
+	path := r.ReportLogPath(experimentID)
+	log, err := openExclusiveLog(path)
+	if err != nil {
+		return nil, fmt.Errorf("create report log %s: %w", path, err)
+	}
+	return log, nil
+}
+
+// ReportLogPath returns the path to an experiment's report log.
+func (r *Results) ReportLogPath(experimentID uuid.UUID) string {
+	return filepath.Join(r.ExperimentDir(experimentID), "report.log")
+}
+
+// ExperimentDir returns the path to an experiment's directory.
+func (r *Results) ExperimentDir(id uuid.UUID) string {
 	return filepath.Join(r.dir, "experiments", id.String())
 }
 
 func (r *Results) experimentPath(id uuid.UUID) string {
-	return filepath.Join(r.experimentDir(id), "experiment.json")
+	return filepath.Join(r.ExperimentDir(id), "experiment.json")
 }
 
 func (r *Results) runsDir(experimentID uuid.UUID) string {
-	return filepath.Join(r.experimentDir(experimentID), "runs")
+	return filepath.Join(r.ExperimentDir(experimentID), "runs")
 }
 
 func (r *Results) runPath(experimentID, runID uuid.UUID) string {

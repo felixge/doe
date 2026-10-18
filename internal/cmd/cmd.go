@@ -56,6 +56,7 @@ func runCommandHandler(ctx context.Context, env *cli.Env, args []string) int {
 	preset := flags.StringP("preset", "p", "", "named study preset")
 	setupScript := flags.StringP("setup", "s", "", "shell script to run before any runs")
 	runScript := flags.StringP("run", "r", "", "shell script to run at each design point")
+	reportScript := flags.String("report", "", "shell script to run after all runs succeed")
 	replicates := flags.IntP("replicates", "n", 0, "runs per design point")
 	clean := flags.BoolP("clean", "c", false, "remove previous results before running")
 	noReuse := flags.Bool("no-reuse", false, "execute all runs instead of reusing successful runs")
@@ -68,7 +69,7 @@ func runCommandHandler(ctx context.Context, env *cli.Env, args []string) int {
 	}
 
 	// Prepare and validate the experiment before starting any runs.
-	experiment, err := prepareExperiment(*file, *preset, *setupScript, *runScript, *replicates, flags.Args())
+	experiment, err := prepareExperiment(*file, *preset, *setupScript, *runScript, *reportScript, *replicates, flags.Args())
 	if err != nil {
 		return env.Fail(err)
 	}
@@ -144,6 +145,9 @@ func formatStatus(status *results.Status, r *results.Results) string {
 	if status.State == results.StateSetup {
 		_, _ = fmt.Fprintf(&output, "Setup log: %s\n", r.SetupLogPath(status.ExperimentID))
 	}
+	if status.State == results.StateReporting {
+		_, _ = fmt.Fprintf(&output, "Report log: %s\n", r.ReportLogPath(status.ExperimentID))
+	}
 	if status.Total > 0 {
 		_, _ = fmt.Fprintf(&output, "Runs: %d/%d complete (%d%%)\n", status.Completed, status.Total, status.Completed*100/status.Total)
 	}
@@ -187,7 +191,7 @@ func formatDuration(duration time.Duration) string {
 	return strings.Join(parts, " ")
 }
 
-func prepareExperiment(path, preset, setupScript, runScript string, replicates int, args []string) (*model.Experiment, error) {
+func prepareExperiment(path, preset, setupScript, runScript, reportScript string, replicates int, args []string) (*model.Experiment, error) {
 	// Keep each source separate so only its specified options override earlier ones.
 	study := model.NewStudy()
 	if path != "" {
@@ -203,7 +207,7 @@ func prepareExperiment(path, preset, setupScript, runScript string, replicates i
 			return nil, fmt.Errorf("unknown preset %q", preset)
 		}
 	}
-	cliDesign := model.Design{Setup: model.Script(setupScript), Run: model.Script(runScript), Replicates: replicates}
+	cliDesign := model.Design{Setup: model.Script(setupScript), Run: model.Script(runScript), Report: model.Script(reportScript), Replicates: replicates}
 	for _, arg := range args {
 		factor, settingsYAML, ok := strings.Cut(arg, "=")
 		if !ok {
@@ -219,6 +223,7 @@ func prepareExperiment(path, preset, setupScript, runScript string, replicates i
 	design.Replicates = cmp.Or(design.Replicates, 1)
 	design.Setup = model.Script(strings.TrimSpace(string(design.Setup)))
 	design.Run = model.Script(strings.TrimSpace(string(design.Run)))
+	design.Report = model.Script(strings.TrimSpace(string(design.Report)))
 	if err := design.Validate(); err != nil {
 		return nil, err
 	}
@@ -293,7 +298,34 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, r *results
 			return finishExperiment(experiment, r, err)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return finishExperiment(experiment, r, err)
+	}
+	if experiment.Report != "" {
+		if err := runReport(ctx, experiment, r, projectDir); err != nil {
+			return finishExperiment(experiment, r, fmt.Errorf("report: %w", err))
+		}
+	}
 	return finishExperiment(experiment, r, ctx.Err())
+}
+
+// runReport runs only after all run records have been saved successfully.
+func runReport(ctx context.Context, experiment *model.Experiment, r *results.Results, projectDir string) error {
+	dir, err := filepath.Abs(r.ExperimentDir(experiment.ID))
+	if err != nil {
+		return err
+	}
+	log, err := r.CreateReportLog(experiment.ID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = log.Close() }()
+	experiment.State = model.StateReporting
+	if err := r.UpdateExperiment(experiment); err != nil {
+		return err
+	}
+	executionErr := executeScript(ctx, string(experiment.Report), projectDir, log, "DOE_EXPERIMENT_DIR="+dir)
+	return errors.Join(ctx.Err(), executionErr, log.Close())
 }
 
 func finishExperiment(experiment *model.Experiment, r *results.Results, err error) error {
@@ -331,9 +363,11 @@ func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *result
 }
 
 // executeScript streams both output streams to log. The caller closes the log.
-func executeScript(ctx context.Context, script, projectDir string, log *os.File) error {
+// Extra environment variables override inherited values.
+func executeScript(ctx context.Context, script, projectDir string, log *os.File, env ...string) error {
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", script)
 	command.Dir = projectDir
+	command.Env = append(command.Environ(), env...)
 	command.Stdout = log
 	command.Stderr = log
 	return command.Run()
@@ -411,6 +445,7 @@ Study files:
 Example study.yaml:
   setup: ./setup.bash
   run: ./run.bash {algorithm} {effort}
+  report: ./report.bash
   factors:
     algorithm: [gzip, zstd]
     effort: [default]
@@ -431,7 +466,11 @@ Scripts:
   JSON object describing the environment. Run must end stdout with a JSON
   object of measurements, e.g. {"seconds":0.12}, and exit successfully.
   Every factor needs a {factor} placeholder in run. Substitution is literal,
-  not shell-escaped. Setup does not expand placeholders.
+  not shell-escaped. Setup and report do not expand placeholders.
+  Optional report runs once after all runs succeed, including reused runs.
+  DOE_EXPERIMENT_DIR gives report the absolute experiment directory path.
+  Report output is logged; no JSON output is required. A report failure
+  fails the experiment but does not invalidate successful runs.
 
 Workflow:
   doe run -f study.yaml -p full --design       # Preview resolved YAML; do not run.
@@ -446,6 +485,7 @@ Workflow:
 Results (next to the study file):
   results/experiments/<experiment-id>/experiment.json
   results/experiments/<experiment-id>/setup.log
+  results/experiments/<experiment-id>/report.log (when report is configured)
   results/experiments/<experiment-id>/runs/<run-id>.{json,log}
   Run JSON stores inputs under point and measurements under outcome.
   Analyze only runs with state = "done"; group by point to compare settings.
@@ -468,13 +508,14 @@ Options:
 func runUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `Run one script for each combination of factor settings.
 
-Usage: doe run [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [-n count] [-c] [--no-reuse] [--design]
+Usage: doe run [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [--report script] [-n count] [-c] [--no-reuse] [--design]
 
 Options:
   -f, --file        Load factors, scripts, and replicates from a YAML study.
   -p, --preset      Apply a named preset from the study.
   -s, --setup       Override the setup script, run once before any runs.
   -r, --run         Override the run script with a shell command.
+      --report      Override the optional report script, run after all runs succeed.
   -n, --replicates  Override runs per design point (default: 1).
   -c, --clean       Remove previous results before running.
       --no-reuse    Execute all runs instead of reusing successful runs.
@@ -484,7 +525,10 @@ Options:
 Factor settings are YAML values or sequences of values. Study defaults are
 inherited by the selected preset; CLI options override both. In run scripts,
 {factor} expands to the setting.
-Setup scripts do not expand factor placeholders.
+Setup and report scripts do not expand factor placeholders.
+Report runs once after success, including reused runs, and requires no JSON.
+DOE_EXPERIMENT_DIR gives report the absolute experiment directory path.
+Report stdout and stderr go to report.log; report failure fails the experiment.
 A study's replicates key runs each design point that many times (default: 1).
 Successful runs with matching scripts, point, and replicate are reused by default.
 `)

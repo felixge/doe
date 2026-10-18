@@ -47,6 +47,7 @@ type Design struct {
 	Factors    Factors `json:"factors" yaml:"factors"`
 	Setup      Script  `json:"setup,omitempty" yaml:"setup"`
 	Run        Script  `json:"run" yaml:"run"`
+	Report     Script  `json:"report,omitempty" yaml:"report,omitempty"`
 	Replicates int     `json:"replicates" yaml:"replicates"`
 }
 
@@ -61,6 +62,7 @@ func (d Design) Merge(override Design) Design {
 	}
 	d.Setup = cmp.Or(override.Setup, d.Setup)
 	d.Run = cmp.Or(override.Run, d.Run)
+	d.Report = cmp.Or(override.Report, d.Report)
 	d.Replicates = cmp.Or(override.Replicates, d.Replicates)
 	return d
 }
@@ -111,7 +113,7 @@ func (d Design) Validate() error {
 // JSON sorts map keys. Include the expanded command because settings with the
 // same JSON encoding can expand differently (e.g. large integers and floats).
 // Other points, total replicates, and external dependencies are excluded so an
-// extended design can reuse earlier runs.
+// extended design can reuse earlier runs. Reporting is also excluded.
 func (d Design) RunHash(point Point, replicate int) (string, error) {
 	data, err := json.Marshal(struct {
 		Run         Script `json:"run"`
@@ -164,11 +166,12 @@ func (d Design) Points() []Point {
 type State string
 
 const (
-	StateSetup   State = "setup"
-	StateRunning State = "running"
-	StateDone    State = "done"
-	StateStopped State = "stopped"
-	StateError   State = "error"
+	StateSetup     State = "setup"
+	StateRunning   State = "running"
+	StateReporting State = "reporting"
+	StateDone      State = "done"
+	StateStopped   State = "stopped"
+	StateError     State = "error"
 )
 
 // Experiment is a single invocation of a study. Its ID is a UUIDv7.

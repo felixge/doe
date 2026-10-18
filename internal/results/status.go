@@ -16,11 +16,12 @@ import (
 type State string
 
 const (
-	StateSetup   State = "Setup"
-	StateRunning State = "Running"
-	StateDone    State = "Done"
-	StateStopped State = "Stopped"
-	StateError   State = "Error"
+	StateSetup     State = "Setup"
+	StateRunning   State = "Running"
+	StateReporting State = "Reporting"
+	StateDone      State = "Done"
+	StateStopped   State = "Stopped"
+	StateError     State = "Error"
 )
 
 // Status is a snapshot of the selected experiment in a results directory.
@@ -157,7 +158,7 @@ func (r *Results) statusAt(now time.Time) (*Status, error) {
 }
 
 func observedState(recorded model.State, running bool) State {
-	if !running && (recorded == model.StateSetup || recorded == model.StateRunning) {
+	if !running && (recorded == model.StateSetup || recorded == model.StateRunning || recorded == model.StateReporting) {
 		return StateStopped
 	}
 	switch recorded {
@@ -165,6 +166,8 @@ func observedState(recorded model.State, running bool) State {
 		return StateSetup
 	case model.StateRunning:
 		return StateRunning
+	case model.StateReporting:
+		return StateReporting
 	case model.StateDone:
 		return StateDone
 	case model.StateError:

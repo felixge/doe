@@ -29,6 +29,7 @@ func TestRunHash(t *testing.T) {
 	extended := design
 	extended.Factors = Factors{"foo": {1, 2, 3}, "bar": {"value"}}
 	extended.Replicates = 5
+	extended.Report = "different report"
 	if got, err := extended.RunHash(reordered, 1); err != nil || got != hash {
 		t.Errorf("extended/reordered hash = %q, %v; want %q", got, err, hash)
 	}

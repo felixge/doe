@@ -80,6 +80,15 @@ func TestStatusTransitionsAndActualRun(t *testing.T) {
 	if err := r.UpdateRun(active); err != nil {
 		t.Fatal(err)
 	}
+	experiment.State = model.StateReporting
+	if err := r.UpdateExperiment(&experiment); err != nil {
+		t.Fatal(err)
+	}
+	status, err = r.statusAt(now)
+	if err != nil || status.State != StateReporting || status.Completed != 1 || status.RunReplicate != 0 || status.RunLogPath != "" || status.Remaining != 0 {
+		t.Errorf("reporting status = %+v, %v", status, err)
+	}
+
 	experiment.State = model.StateDone
 	experiment.End = now
 	if err := r.UpdateExperiment(&experiment); err != nil {
@@ -121,23 +130,24 @@ func TestStatusCountsOnlySuccessfulTerminalRuns(t *testing.T) {
 }
 
 func TestStatusUnfinishedWithoutOwnerIsStopped(t *testing.T) {
-	r := newTestResults(t, t.TempDir())
-	experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
-	release, err := r.lock(experiment.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	createStatusExperiment(t, r, &experiment)
-	experiment.State = model.StateRunning
-	if err := r.UpdateExperiment(&experiment); err != nil {
-		t.Fatal(err)
-	}
-	if err := release(); err != nil {
-		t.Fatal(err)
-	}
-	status, err := r.Status()
-	if err != nil || status.State != StateStopped || status.ExperimentElapsed != 0 {
-		t.Errorf("orphaned experiment status = %+v, %v", status, err)
+	for _, state := range []model.State{model.StateSetup, model.StateRunning, model.StateReporting} {
+		t.Run(string(state), func(t *testing.T) {
+			r := newTestResults(t, t.TempDir())
+			experiment := model.NewExperiment(model.Design{Factors: model.Factors{"foo": {1}}, Replicates: 1})
+			experiment.State = state
+			release, err := r.lock(experiment.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			createStatusExperiment(t, r, &experiment)
+			if err := release(); err != nil {
+				t.Fatal(err)
+			}
+			status, err := r.Status()
+			if err != nil || status.State != StateStopped || status.ExperimentElapsed != 0 {
+				t.Errorf("orphaned experiment status = %+v, %v", status, err)
+			}
+		})
 	}
 }
 

@@ -188,7 +188,8 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 		stdout, stderr string
 	}, 1)
 	args := []string{"run", "foo=[1,2]", "-r",
-		`if [ {foo} = 1 ]; then echo '{}'; else printf partial; touch started; while [ ! -f resume ]; do sleep 0.01; done; printf '\n{}\n'; fi`}
+		`if [ {foo} = 1 ]; then echo '{}'; else printf partial; touch started; while [ ! -f resume ]; do sleep 0.01; done; printf '\n{}\n'; fi`,
+		"--report", "touch report-ran"}
 	go func() {
 		code, stdout, stderr := runCommand(ctx, args...)
 		done <- struct {
@@ -215,6 +216,12 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 	experiment, runs := readCompletedExperiment(t, "results", result.stdout)
 	if experiment.State != model.StateStopped || len(runs) != 2 || runs[0].State != model.StateDone || runs[1].State != model.StateStopped || !runs[1].End.After(runs[1].Start) {
 		t.Errorf("experiment = %+v, runs = %+v", experiment, runs)
+	}
+	if _, err := os.Stat("report-ran"); !os.IsNotExist(err) {
+		t.Errorf("report ran after cancellation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("results", "experiments", experiment.ID.String(), "report.log")); !os.IsNotExist(err) {
+		t.Errorf("canceled experiment created report log: %v", err)
 	}
 	log, err := os.ReadFile(filepath.Join("results", "experiments", experiment.ID.String(), "runs", runs[1].ID.String()+".log"))
 	if err != nil || string(log) != "partial" {
@@ -267,6 +274,7 @@ func TestExperimentDesign(t *testing.T) {
 	study := `factors: {foo: [1, 2], bar: true}
 setup: "  touch setup-ran  "
 run: "  touch run-ran; true '{foo}' '{bar}'  "
+report: "  touch report-ran  "
 replicates: 3
 presets:
   full:
@@ -284,7 +292,7 @@ presets:
 	if err := yaml.Unmarshal([]byte(stdout), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := model.Design{Factors: model.Factors{"foo": {7, 8}, "bar": {true}}, Setup: "touch setup-ran", Run: "touch run-ran; true '{foo}' '{bar}'", Replicates: 2}
+	want := model.Design{Factors: model.Factors{"foo": {7, 8}, "bar": {true}}, Setup: "touch setup-ran", Run: "touch run-ran; true '{foo}' '{bar}'", Report: "touch report-ran", Replicates: 2}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("design = %+v, want %+v", got, want)
 	}
@@ -448,7 +456,7 @@ presets:
 	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	experiment, err := prepareExperiment(path, "full", "", "echo CLI; true '{foo}' '{bar}' '{baz}'", 2, []string{"bar=[5,6]"})
+	experiment, err := prepareExperiment(path, "full", "", "echo CLI; true '{foo}' '{bar}' '{baz}'", "", 2, []string{"bar=[5,6]"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +464,7 @@ presets:
 		!reflect.DeepEqual(experiment.Factors, model.Factors{"foo": {3}, "bar": {5, 6}, "baz": {4}}) {
 		t.Errorf("experiment = %+v", experiment)
 	}
-	if _, err := prepareExperiment(path, "missing", "", "", 0, nil); err == nil || !strings.Contains(err.Error(), "unknown preset") {
+	if _, err := prepareExperiment(path, "missing", "", "", "", 0, nil); err == nil || !strings.Contains(err.Error(), "unknown preset") {
 		t.Errorf("unknown preset error = %v", err)
 	}
 }
@@ -536,7 +544,7 @@ func TestRootHelp(t *testing.T) {
 			t.Errorf("Main(%q) differs from default help", args)
 		}
 	}
-	for _, section := range []string{"Study files:", "Scripts:", "Workflow:", "Results (next to the study file):", "--no-reuse", `state = "done"`} {
+	for _, section := range []string{"Study files:", "Scripts:", "Workflow:", "Results (next to the study file):", "--no-reuse", "DOE_EXPERIMENT_DIR", "report.log", `state = "done"`} {
 		if !strings.Contains(help, section) {
 			t.Errorf("help is missing %q", section)
 		}
@@ -560,7 +568,7 @@ func TestRootHelp(t *testing.T) {
 		{"smoke", 2, 1},
 		{"full", 4, 6},
 	} {
-		experiment, err := prepareExperiment(path, tc.preset, "", "", 0, nil)
+		experiment, err := prepareExperiment(path, tc.preset, "", "", "", 0, nil)
 		if err != nil {
 			t.Fatalf("example preset %s: %v", tc.preset, err)
 		}
