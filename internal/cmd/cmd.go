@@ -462,8 +462,7 @@ Scripts:
   not shell-escaped. Setup and report do not expand placeholders.
   Optional report runs once after all runs succeed, including reused runs.
   DOE_EXPERIMENT_DIR gives report the absolute experiment directory path.
-  Report output is logged; no JSON output is required. A report failure
-  fails the experiment but does not invalidate successful runs.
+  A report failure fails the experiment but does not invalidate successful runs.
 
 Workflow:
   doe run -f study.yaml -p full --design       # Preview resolved YAML; do not run.
