@@ -298,9 +298,6 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, r *results
 			return finishExperiment(experiment, r, err)
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return finishExperiment(experiment, r, err)
-	}
 	if experiment.Report != "" {
 		if err := runReport(ctx, experiment, r, projectDir); err != nil {
 			return finishExperiment(experiment, r, fmt.Errorf("report: %w", err))
@@ -335,10 +332,6 @@ func finishExperiment(experiment *model.Experiment, r *results.Results, err erro
 }
 
 func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *results.Results, index *results.RunIndex, projectDir string, point model.Point, replicate int, hash string) error {
-	// Avoid publishing another run if cancellation happened between runs.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	run := model.NewRun(experiment.ID, point, replicate)
 	log, err := r.CreateRun(run)
 	if err != nil {
