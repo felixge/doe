@@ -67,7 +67,7 @@ Successful runs with matching setup and run commands, factor settings, and repli
 
 CLI options override study and preset settings. For example, add `-n 2 'effort=[min, max]'` to change replicates and factor settings, or `--design` to print the resolved YAML without running.
 
-Use `doe status -f compression.study.yaml` to check the latest experiment, including progress and the active setup or run log path.
+Use `doe status -f compression.study.yaml` to check the latest experiment, including progress and the active setup, run, or report log path.
 
 doe stores each experiment and run as an individual JSON document. Run inputs are nested under `point`, measurements are nested under `outcome`, and only runs with `state = 'done'` completed successfully:
 
@@ -79,6 +79,7 @@ results/
     └── <experiment-id>/
         ├── experiment.json
         ├── setup.log
+        ├── report.log
         └── runs/
             ├── <run-id>.json
             └── <run-id>.log
