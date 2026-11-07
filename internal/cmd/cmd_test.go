@@ -595,7 +595,7 @@ func TestRootHelp(t *testing.T) {
 			t.Errorf("Main(%q) differs from default help", args)
 		}
 	}
-	for _, section := range []string{"Study files:", "Scripts:", "Workflow:", "Results (next to the study file):", "--no-reuse", "DOE_EXPERIMENT_DIR", "report.log", `state = "done"`} {
+	for _, section := range []string{"Study files:", "Scripts:", "Placeholders:", "Workflow:", "Reuse:", "Results (next to the study file):", "--no-reuse", "DOE_EXPERIMENT_DIR", "report.log", `state = "done"`} {
 		if !strings.Contains(help, section) {
 			t.Errorf("help is missing %q", section)
 		}

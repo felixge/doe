@@ -483,15 +483,20 @@ Example study.yaml:
   To change a study, edit its scripts, factors, replicates, or preset overrides.
 
 Scripts:
-  Scripts are shell commands executed in the study file's directory.
+  Scripts are shell commands executed in the study file's directory. Their
+  stdout and stderr go to the logs listed under Results.
   Optional setup runs once before any runs; its final stdout line can be a
   JSON object describing the environment. Run must end stdout with a JSON
   object of measurements, e.g. {"seconds":0.12}, and exit successfully.
-  Every factor needs a {factor} placeholder in run. Substitution is literal,
-  not shell-escaped. Setup and report do not expand placeholders.
-  Optional report runs once after all runs succeed, including reused runs.
-  DOE_EXPERIMENT_DIR gives report the absolute experiment directory path.
-  A report failure fails the experiment but does not invalidate successful runs.
+  Optional report runs once after all runs succeed, including reused runs,
+  and needs no JSON. DOE_EXPERIMENT_DIR gives report the absolute experiment
+  directory path. A report failure fails the experiment but does not
+  invalidate successful runs.
+
+Placeholders:
+  {factor} in run expands to the run's setting. Substitution is literal, not
+  shell-escaped. Every factor needs a placeholder in run. Setup and report
+  do not expand placeholders.
 
 Workflow:
   doe run -f study.yaml --design              # Preview resolved YAML; do not run.
@@ -499,6 +504,7 @@ Workflow:
   doe run -f study.yaml -n 2 'effort=[min, max]'  # Override replicates and factors.
   doe status -f study.yaml                    # Show progress and active log path.
 
+Reuse:
   Successful runs with matching setup/run commands, point, and replicate
   are reused. Script file contents and dependencies are NOT tracked: use
   --no-reuse after changing them. Use -c to delete previous results first.
@@ -535,23 +541,16 @@ Options:
   -f, --file        Load factors, scripts, and replicates from a YAML study
                     (default: study.yaml if it exists).
   -p, --preset      Apply a named preset from the study.
-  -s, --setup       Override the setup script, run once before any runs.
-  -r, --run         Override the run script with a shell command.
-      --report      Override the optional report script, run after all runs succeed.
-  -n, --replicates  Override runs per design point (default: 1).
+  -s, --setup       Override the setup script.
+  -r, --run         Override the run script.
+      --report      Override the report script.
+  -n, --replicates  Override runs per design point.
   -c, --clean       Remove previous results before running.
       --no-reuse    Execute all runs instead of reusing successful runs.
       --design      Print the resolved design as YAML without running.
   -h, --help        Print help text.
 
-Factor settings are YAML values or sequences of values. Study defaults are
-inherited by the selected preset; CLI options override both. In run scripts,
-{factor} expands to the setting.
-Setup and report scripts do not expand factor placeholders.
-Report runs once after success, including reused runs, and requires no JSON.
-DOE_EXPERIMENT_DIR gives report the absolute experiment directory path.
-Report stdout and stderr go to report.log; report failure fails the experiment.
-A study's replicates key runs each design point that many times (default: 1).
-Successful runs with matching scripts, point, and replicate are reused by default.
+key=value replaces a factor's settings with a YAML value or sequence.
+See "doe -h" for study files, scripts, placeholders, and reuse.
 `)
 }
