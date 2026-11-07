@@ -37,7 +37,7 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 		rootUsage(env.Stdout)
 		return 0
 	case "run":
-		return runCommandHandler(ctx, env, args[1:])
+		return runCommand(ctx, env, args[1:])
 	case "status":
 		return statusCommand(env, args[1:])
 	default:
@@ -46,7 +46,7 @@ func Main(ctx context.Context, env *cli.Env, args []string) int {
 	}
 }
 
-func runCommandHandler(ctx context.Context, env *cli.Env, args []string) int {
+func runCommand(ctx context.Context, env *cli.Env, args []string) int {
 	// Parse flags.
 	flags := pflag.NewFlagSet("doe run", pflag.ContinueOnError)
 	flags.SetOutput(env.Stderr)

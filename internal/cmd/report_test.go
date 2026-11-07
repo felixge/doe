@@ -38,7 +38,7 @@ presets:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"run", "-f", "study.yaml", "--design"}, tc.args...)
-			code, stdout, stderr := runCommand(t.Context(), args...)
+			code, stdout, stderr := runMain(t.Context(), args...)
 			if code != 0 || stderr != "" {
 				t.Fatalf("design = %d, %q, %q", code, stdout, stderr)
 			}
@@ -81,7 +81,7 @@ report: |
 	if err := os.WriteFile(filepath.Join("study dir", "study.yaml"), []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runCommand(t.Context(), "run", "-f", filepath.Join("study dir", "study.yaml"))
+	code, stdout, stderr := runMain(t.Context(), "run", "-f", filepath.Join("study dir", "study.yaml"))
 	if code != 0 || stderr != "" {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -129,7 +129,7 @@ func TestExperimentSkipsReport(t *testing.T) {
 			if tc.canceled {
 				cancel()
 			}
-			code, stdout, stderr := runCommand(ctx, "run", "foo=1", "-s", tc.setup, "-r", tc.run, "--report", tc.report)
+			code, stdout, stderr := runMain(ctx, "run", "foo=1", "-s", tc.setup, "-r", tc.run, "--report", tc.report)
 			if code != tc.code {
 				t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 			}
@@ -151,7 +151,7 @@ func TestExperimentSkipsReport(t *testing.T) {
 func TestExperimentReportFailureAndReuse(t *testing.T) {
 	t.Chdir(t.TempDir())
 	script := "echo '{}'; true '{foo}'"
-	code, stdout, stderr := runCommand(t.Context(), "run", "foo=1", "-r", script, "--report", "echo failed; exit 7")
+	code, stdout, stderr := runMain(t.Context(), "run", "foo=1", "-r", script, "--report", "echo failed; exit 7")
 	if code != 1 || !strings.Contains(stderr, "report: exit status 7") {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -182,7 +182,7 @@ func TestExperimentReportCancellationAndStatus(t *testing.T) {
 	}
 	done := make(chan commandResult, 1)
 	go func() {
-		code, stdout, stderr := runCommand(ctx, "run", "foo=1", "-r", "echo '{}'; true '{foo}'",
+		code, stdout, stderr := runMain(ctx, "run", "foo=1", "-r", "echo '{}'; true '{foo}'",
 			"--report", "echo started; touch report-started; exec sleep 30")
 		done <- commandResult{code, stdout, stderr}
 	}()
@@ -208,7 +208,7 @@ func TestExperimentReportCancellationAndStatus(t *testing.T) {
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "State: Reporting\nReport log: "+r.ReportLogPath(status.ExperimentID)+"\n") {
 		t.Errorf("reporting status = %d, %q, %q", code, stdout, stderr)
 	}
-	code, _, stderr = runCommand(t.Context(), "run", "foo=1", "-r", "echo '{}'; true '{foo}'")
+	code, _, stderr = runMain(t.Context(), "run", "foo=1", "-r", "echo '{}'; true '{foo}'")
 	if code != 1 || !strings.Contains(stderr, "another experiment is running") {
 		t.Errorf("report did not hold results lock: %d, %q", code, stderr)
 	}

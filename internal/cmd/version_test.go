@@ -47,7 +47,7 @@ func TestDatabaseVersionRejectionAndClean(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 			args := []string{"run", "foo=1", "-r", "echo '{}'; true '{foo}'"}
-			code, stdout, stderr := runCommand(context.Background(), args...)
+			code, stdout, stderr := runMain(context.Background(), args...)
 			if code != 0 || stderr != "" {
 				t.Fatalf("initial run = %d, %q, %q", code, stdout, stderr)
 			}
@@ -76,7 +76,7 @@ func TestDatabaseVersionRejectionAndClean(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			code, stdout, stderr = runCommand(context.Background(), "status")
+			code, stdout, stderr = runMain(context.Background(), "status")
 			if code != 1 || stdout != "" || !strings.Contains(stderr, tc.want) {
 				t.Errorf("status = %d, %q, %q; want %q", code, stdout, stderr, tc.want)
 			}
@@ -99,7 +99,7 @@ func TestDatabaseVersionRejectionAndClean(t *testing.T) {
 				if noReuse {
 					runArgs = append(runArgs, "--no-reuse")
 				}
-				code, stdout, stderr = runCommand(context.Background(), runArgs...)
+				code, stdout, stderr = runMain(context.Background(), runArgs...)
 				if code != 1 || stdout != "" || !strings.Contains(stderr, tc.want) {
 					t.Errorf("run (no-reuse=%v) = %d, %q, %q", noReuse, code, stdout, stderr)
 				}
@@ -113,7 +113,7 @@ func TestDatabaseVersionRejectionAndClean(t *testing.T) {
 				}
 			}
 
-			code, _, stderr = runCommand(context.Background(), append(args, "--design", "-c")...)
+			code, _, stderr = runMain(context.Background(), append(args, "--design", "-c")...)
 			if code != 0 || stderr != "" {
 				t.Errorf("design = %d, %q", code, stderr)
 			}
@@ -121,7 +121,7 @@ func TestDatabaseVersionRejectionAndClean(t *testing.T) {
 				t.Error("design changed results")
 			}
 
-			code, stdout, stderr = runCommand(context.Background(), append(args, "-c")...)
+			code, stdout, stderr = runMain(context.Background(), append(args, "-c")...)
 			if code != 0 || stderr != "" {
 				t.Fatalf("clean = %d, %q, %q", code, stdout, stderr)
 			}

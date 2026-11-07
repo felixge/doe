@@ -19,7 +19,7 @@ import (
 	"uuid"
 )
 
-func runCommand(ctx context.Context, args ...string) (int, string, string) {
+func runMain(ctx context.Context, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	code := Main(ctx, &cli.Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}, args)
 	return code, stdout.String(), stderr.String()
@@ -55,7 +55,7 @@ run: |
 	if err := os.WriteFile(studyPath, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runCommand(context.Background(), "run", "-f", studyPath)
+	code, stdout, stderr := runMain(context.Background(), "run", "-f", studyPath)
 	if code != 0 || stderr != "" {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -89,7 +89,7 @@ func TestExperimentSetup(t *testing.T) {
 	if err := os.WriteFile(studyPath, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runCommand(context.Background(), "run", "-f", studyPath)
+	code, stdout, stderr := runMain(context.Background(), "run", "-f", studyPath)
 	if code != 0 || stderr != "" {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -105,7 +105,7 @@ func TestExperimentSetup(t *testing.T) {
 
 func TestExperimentWithoutSetupCreatesEmptyLog(t *testing.T) {
 	t.Chdir(t.TempDir())
-	code, stdout, stderr := runCommand(context.Background(), "run", "foo=1", "-r", "echo '{}'; true '{foo}'")
+	code, stdout, stderr := runMain(context.Background(), "run", "foo=1", "-r", "echo '{}'; true '{foo}'")
 	if code != 0 || stderr != "" {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -130,7 +130,7 @@ func TestExperimentSetupFailureAndCancellation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			code, stdout, stderr := runCommand(tc.ctx(), "run", "foo=1", "-s", tc.script, "-r", "echo '{}'; true '{foo}'")
+			code, stdout, stderr := runMain(tc.ctx(), "run", "foo=1", "-s", tc.script, "-r", "echo '{}'; true '{foo}'")
 			if code != tc.wantCode || (tc.wantError != "" && !strings.Contains(stderr, "exit status 7")) {
 				t.Errorf("experiment = %d, %q, %q", code, stdout, stderr)
 			}
@@ -151,7 +151,7 @@ func TestExperimentSetupCanceledWhileRunning(t *testing.T) {
 		stdout, stderr string
 	}, 1)
 	go func() {
-		code, stdout, stderr := runCommand(ctx, "run", "foo=1", "-s", "touch setup-started; exec sleep 30", "-r", "echo '{}'; true '{foo}'")
+		code, stdout, stderr := runMain(ctx, "run", "foo=1", "-s", "touch setup-started; exec sleep 30", "-r", "echo '{}'; true '{foo}'")
 		done <- struct {
 			code           int
 			stdout, stderr string
@@ -191,7 +191,7 @@ func TestExperimentRunCanceledRecordsStoppedRun(t *testing.T) {
 		`if [ {foo} = 1 ]; then echo '{}'; else printf partial; touch started; while [ ! -f resume ]; do sleep 0.01; done; printf '\n{}\n'; fi`,
 		"--report", "touch report-ran"}
 	go func() {
-		code, stdout, stderr := runCommand(ctx, args...)
+		code, stdout, stderr := runMain(ctx, args...)
 		done <- struct {
 			code           int
 			stdout, stderr string
@@ -251,7 +251,7 @@ presets:
 	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runCommand(context.Background(), "run", "-f", path, "-p", "full")
+	code, stdout, stderr := runMain(context.Background(), "run", "-f", path, "-p", "full")
 	if code != 0 || stderr != "" {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -284,7 +284,7 @@ presets:
 	if err := os.WriteFile(path, []byte(study), 0600); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runCommand(context.Background(), "run", "-f", path, "-p", "full", "foo=[7,8]", "-n", "2", "--design")
+	code, stdout, stderr := runMain(context.Background(), "run", "-f", path, "-p", "full", "foo=[7,8]", "-n", "2", "--design")
 	if code != 0 || stderr != "" {
 		t.Fatalf("design = %d, %q, %q", code, stdout, stderr)
 	}
@@ -310,7 +310,7 @@ func TestRunOutputErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			code, stdout, _ := runCommand(context.Background(), "run", "foo=1", "-r", "true '{foo}'; "+tc.script)
+			code, stdout, _ := runMain(context.Background(), "run", "foo=1", "-r", "true '{foo}'; "+tc.script)
 			if code != 1 {
 				t.Fatalf("experiment = %d, %q", code, stdout)
 			}
@@ -324,7 +324,7 @@ func TestRunOutputErrors(t *testing.T) {
 
 func TestNestedOutcomeAllowsFieldCollisions(t *testing.T) {
 	t.Chdir(t.TempDir())
-	code, stdout, stderr := runCommand(context.Background(), "run", "error=input", "-r", `echo '{"error":"measurement"}'; true '{error}'`)
+	code, stdout, stderr := runMain(context.Background(), "run", "error=input", "-r", `echo '{"error":"measurement"}'; true '{error}'`)
 	if code != 0 || stderr != "" {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -336,7 +336,7 @@ func TestNestedOutcomeAllowsFieldCollisions(t *testing.T) {
 
 func TestFailedRunKeepsOutcomeAndStopsSchedule(t *testing.T) {
 	t.Chdir(t.TempDir())
-	code, stdout, stderr := runCommand(context.Background(), "run", "foo=[1,2]", "-r", `echo '{"value":42}'; true '{foo}'; exit 7`)
+	code, stdout, stderr := runMain(context.Background(), "run", "foo=[1,2]", "-r", `echo '{"value":42}'; true '{foo}'; exit 7`)
 	if code != 1 || !strings.Contains(stderr, "exit status 7") {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -348,7 +348,7 @@ func TestFailedRunKeepsOutcomeAndStopsSchedule(t *testing.T) {
 
 func TestRunOutcomeWithoutFinalNewline(t *testing.T) {
 	t.Chdir(t.TempDir())
-	code, stdout, stderr := runCommand(context.Background(), "run", "foo=1", "-r", `echo warning; true '{foo}'; printf '{"ok":true}'`)
+	code, stdout, stderr := runMain(context.Background(), "run", "foo=1", "-r", `echo warning; true '{foo}'; printf '{"ok":true}'`)
 	if code != 0 || stderr != "" {
 		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
 	}
@@ -365,7 +365,7 @@ func TestExperimentVisibleWhileRunning(t *testing.T) {
 		stdout, stderr string
 	}, 1)
 	go func() {
-		code, stdout, stderr := runCommand(context.Background(), "run", "foo=1", "-r", `touch started; while [ ! -f gate ]; do sleep 0.01; done; echo '{}'; true '{foo}'`)
+		code, stdout, stderr := runMain(context.Background(), "run", "foo=1", "-r", `touch started; while [ ! -f gate ]; do sleep 0.01; done; echo '{}'; true '{foo}'`)
 		done <- struct {
 			code           int
 			stdout, stderr string
@@ -413,7 +413,7 @@ func TestRunDoesNotReadCLIStdin(t *testing.T) {
 func TestExperimentCleanPreservesLock(t *testing.T) {
 	t.Chdir(t.TempDir())
 	args := []string{"run", "foo=1", "-r", "echo '{}'; true '{foo}'"}
-	code, _, stderr := runCommand(context.Background(), args...)
+	code, _, stderr := runMain(context.Background(), args...)
 	if code != 0 || stderr != "" {
 		t.Fatal(stderr)
 	}
@@ -425,7 +425,7 @@ func TestExperimentCleanPreservesLock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join("results", "old"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runCommand(context.Background(), append(args, "--clean")...)
+	code, stdout, stderr := runMain(context.Background(), append(args, "--clean")...)
 	if code != 0 || stderr != "" {
 		t.Fatalf("clean = %d, %q, %q", code, stdout, stderr)
 	}
@@ -539,7 +539,7 @@ func TestExpandRunScript(t *testing.T) {
 func TestRootHelp(t *testing.T) {
 	var help string
 	for _, args := range [][]string{nil, {"-h"}, {"--help"}, {"help"}} {
-		code, stdout, stderr := runCommand(context.Background(), args...)
+		code, stdout, stderr := runMain(context.Background(), args...)
 		if code != 0 || stderr != "" {
 			t.Fatalf("Main(%q) = %d, %q, %q", args, code, stdout, stderr)
 		}
@@ -593,7 +593,7 @@ func TestExperimentHelpAndErrors(t *testing.T) {
 		{[]string{"run", "--help"}, "Usage: doe run"},
 		{[]string{"run", "--help"}, "-c, --clean"},
 	} {
-		code, stdout, stderr := runCommand(context.Background(), tc.args...)
+		code, stdout, stderr := runMain(context.Background(), tc.args...)
 		if code != 0 || !strings.Contains(stdout, tc.want) || stderr != "" {
 			t.Errorf("Main(%q) = %d, %q, %q", tc.args, code, stdout, stderr)
 		}
@@ -608,7 +608,7 @@ func TestExperimentHelpAndErrors(t *testing.T) {
 		{[]string{"experiment"}, "unknown command: experiment"},
 		{[]string{"unknown"}, "unknown command"},
 	} {
-		code, stdout, stderr := runCommand(context.Background(), tc.args...)
+		code, stdout, stderr := runMain(context.Background(), tc.args...)
 		if code != 1 || stdout != "" || !strings.Contains(stderr, tc.want) {
 			t.Errorf("Main(%q) = %d, %q, %q; want %q", tc.args, code, stdout, stderr, tc.want)
 		}
@@ -620,7 +620,7 @@ func TestExperimentHelpAndErrors(t *testing.T) {
 
 func TestRecordJSONIsNested(t *testing.T) {
 	t.Chdir(t.TempDir())
-	code, stdout, stderr := runCommand(context.Background(), "run", "foo=1", "-r", `echo '{"value":2}'; true '{foo}'`)
+	code, stdout, stderr := runMain(context.Background(), "run", "foo=1", "-r", `echo '{"value":2}'; true '{foo}'`)
 	if code != 0 || stderr != "" {
 		t.Fatal(stderr)
 	}
