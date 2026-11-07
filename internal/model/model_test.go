@@ -381,3 +381,15 @@ func TestScriptExpandRunInvalidSetting(t *testing.T) {
 		t.Errorf("ExpandRun() error = %v", err)
 	}
 }
+
+func TestScriptExpandSetup(t *testing.T) {
+	factors := Factors{"a": {12, 13}, "b": {"it's"}, "c": {[]any{1, 2}}, "unused": {true}}
+	got, err := Script("./setup {a} {b} {c} {missing}").ExpandSetup(factors)
+	want := `./setup '[12,13]' '["it'\''s"]' '[[1,2]]' {missing}`
+	if err != nil || got != want {
+		t.Errorf("ExpandSetup() = %q, %v; want %q", got, err, want)
+	}
+	if _, err := Script("{f}").ExpandSetup(Factors{"f": {math.NaN()}}); err == nil || !strings.Contains(err.Error(), "expand {f}") {
+		t.Errorf("ExpandSetup() error = %v", err)
+	}
+}

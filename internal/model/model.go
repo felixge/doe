@@ -114,7 +114,8 @@ func (d Design) Validate() error {
 // JSON sorts map keys. Include the expanded command so runs aren't reused when
 // doe changes how placeholders expand. Other points, total replicates, and
 // external dependencies are excluded so an extended design can reuse earlier
-// runs. Reporting is also excluded.
+// runs. For the same reason, setup is hashed before expanding its placeholders
+// to all settings. Reporting is also excluded.
 func (d Design) RunHash(point Point, replicate int) (string, error) {
 	expandedRun, err := d.Run.ExpandRun(point)
 	if err != nil {
@@ -349,6 +350,19 @@ func (s Script) ExpandRun(point Point) (string, error) {
 		}
 		arg, err := settingArg(setting)
 		return arg, true, err
+	})
+}
+
+// ExpandSetup replaces factor placeholders with JSON arrays of the factors'
+// settings, because setup runs once for all points.
+func (s Script) ExpandSetup(factors Factors) (string, error) {
+	return s.expand(func(factor Factor) (string, bool, error) {
+		settings, ok := factors[factor]
+		if !ok {
+			return "", false, nil
+		}
+		data, err := marshalJSON(settings)
+		return string(data), true, err
 	})
 }
 

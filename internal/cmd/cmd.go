@@ -260,8 +260,13 @@ func resultsDir(path string) string {
 func runExperiment(ctx context.Context, experiment *model.Experiment, r *results.Results, projectDir string, setupLog *os.File, reuse bool) error {
 	var setupExecErr, setupJSONErr error
 	if experiment.Setup != "" {
-		setupExecErr = executeScript(ctx, string(experiment.Setup), projectDir, setupLog)
-		experiment.Env, setupJSONErr = lastJSON[model.Env](setupLog, false)
+		// Setup runs once, so each placeholder expands to all of its factor's settings.
+		var script string
+		script, setupExecErr = experiment.Setup.ExpandSetup(experiment.Factors)
+		if setupExecErr == nil {
+			setupExecErr = executeScript(ctx, script, projectDir, setupLog)
+			experiment.Env, setupJSONErr = lastJSON[model.Env](setupLog, false)
+		}
 	}
 	setupCloseErr := setupLog.Close()
 	experiment.SetupEnd = time.Now()
@@ -465,7 +470,7 @@ Study files:
   one "doe run" invocation, with each point run replicates times (default: 1).
 
 Example study.yaml:
-  setup: ./setup.bash
+  setup: ./setup.bash {algorithm}
   run: ./run.bash {algorithm} {effort}
   report: ./report.bash
   factors:
@@ -496,8 +501,10 @@ Scripts:
 Placeholders:
   {factor} expands to one shell argument, quoted when needed; don't quote it.
   In run, it is the run's setting: scalars as-is, lists and maps as JSON.
-  Every factor needs a placeholder in run. Setup and report do not expand
-  placeholders.
+  In setup, it is a JSON array of all the factor's settings. The example
+  runs setup once as ./setup.bash '["gzip","zstd"]' and each run as, e.g.,
+  ./run.bash zstd default. Every factor needs a placeholder in run.
+  Report does not expand placeholders.
 
 Workflow:
   doe run -f study.yaml --design              # Preview resolved YAML; do not run.
@@ -507,8 +514,10 @@ Workflow:
 
 Reuse:
   Successful runs with matching setup/run commands, point, and replicate
-  are reused. Script file contents and dependencies are NOT tracked: use
-  --no-reuse after changing them. Use -c to delete previous results first.
+  are reused. Setup is compared before expanding placeholders, so adding a
+  setting keeps existing runs. Script file contents and dependencies are
+  NOT tracked: use --no-reuse after changing them. Use -c to delete
+  previous results first.
 
 Results (next to the study file):
   results/experiments/<experiment-id>/experiment.json

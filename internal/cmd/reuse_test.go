@@ -21,7 +21,8 @@ func completedCommand(t *testing.T, args ...string) (*model.Experiment, []*model
 func TestExperimentReusesExtendedDesign(t *testing.T) {
 	t.Chdir(t.TempDir())
 	script := `echo {foo} >> executed; echo '{"ok":true}'`
-	setup := "echo setup >> setups"
+	// Setup sees all settings, but adding a setting must not prevent reuse.
+	setup := "echo {foo} >> setups"
 	first, firstRuns := completedCommand(t, "foo=[1,2]", "-r", script, "-s", setup)
 	second, secondRuns := completedCommand(t, "foo=[3,2,1]", "-n", "2", "-r", script, "-s", setup)
 	if len(firstRuns) != 2 || len(secondRuns) != 6 || first.ID == second.ID {
@@ -62,6 +63,9 @@ func TestExperimentReusesExtendedDesign(t *testing.T) {
 	data, err := os.ReadFile("executed")
 	if err != nil || bytes.Count(data, []byte{'\n'}) != 6 {
 		t.Errorf("third invocation executed runs: %q, %v", data, err)
+	}
+	if data, err := os.ReadFile("setups"); err != nil || string(data) != "[1,2]\n[3,2,1]\n[3,2,1]\n" {
+		t.Errorf("setup arguments = %q, %v", data, err)
 	}
 }
 
