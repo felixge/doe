@@ -22,26 +22,24 @@ $ ls
 compression.study.yaml  run.bash  sample.pb  sample.png  sample.txt  setup.bash
 ```
 
-The heart is the [compression.study.yaml](./example/compression/compression.study.yaml) file which defines a shared protocol and named presets with combinations of factors and settings:
+The heart is the [compression.study.yaml](./example/compression/compression.study.yaml) file which defines the scripts, factors, and replicates, plus a `smoke` preset that overrides some of them for a quick check:
 
 ```yaml
 setup: ./setup.bash
 run: ./run.bash {algorithm} {effort} {file}
 factors:
-  file: [sample.txt]
+  file: [sample.pb, sample.png, sample.txt]
   algorithm: [gzip, zstd]
-  effort: [default]
+  effort: [min, default, max]
+replicates: 6
 
 presets:
-  smoke: {}
-  full:
+  smoke:
     factors:
-      file: [sample.pb, sample.png, sample.txt]
-      effort: [min, default, max]
-    replicates: 6
+      file: [sample.txt]
+      effort: [min]
+    replicates: 1
 ```
-
-The `full` preset inherits the shared protocol and factors, overriding `file` and `effort` while keeping both algorithms.
 
 It uses a [setup.bash](./example/compression/setup.bash) script to install dependencies and to emit a JSON object describing the environment:
 
@@ -57,10 +55,10 @@ $ ./run.bash zstd default sample.pb
 {"level":3,"wall_seconds":0.00039,"cpu_seconds":0.00036,"peak_rss_bytes":2588672,"input_size_bytes":26400,"output_size_bytes":24243}
 ```
 
-Run an experiment with `doe run`, a study file, and a preset name. It displays live progress on a terminal, or prints the experiment ID when piped or redirected.
+Run an experiment with `doe run` and a study file, optionally with `-p smoke`. It displays live progress on a terminal, or prints the experiment ID when piped or redirected.
 
 ```bash
-$ doe run -f compression.study.yaml -p full
+$ doe run -f compression.study.yaml
 ```
 
 Successful runs with matching setup and run commands, factor settings, and replicate numbers are reused by default. Use `--no-reuse` to execute all runs, or `-c` to remove previous results first. Reuse does not track script file contents or external dependencies.

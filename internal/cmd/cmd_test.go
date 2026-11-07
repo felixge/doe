@@ -616,8 +616,8 @@ func TestRootHelp(t *testing.T) {
 		points     int
 		replicates int
 	}{
+		{"", 6, 6},
 		{"smoke", 2, 1},
-		{"full", 4, 6},
 	} {
 		experiment, err := prepareExperiment(path, tc.preset, "", "", "", 0, nil)
 		if err != nil {

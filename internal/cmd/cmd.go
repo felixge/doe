@@ -470,13 +470,13 @@ Example study.yaml:
   report: ./report.bash
   factors:
     algorithm: [gzip, zstd]
-    effort: [default]
+    effort: [min, default, max]
+  replicates: 6
   presets:
-    smoke: {}
-    full:
+    smoke:
       factors:
-        effort: [min, max]
-      replicates: 6
+        effort: min
+      replicates: 1
 
   Presets inherit study settings. Preset factors override individual factors;
   CLI options override both. Factor settings can be YAML scalars or sequences.
@@ -494,9 +494,9 @@ Scripts:
   A report failure fails the experiment but does not invalidate successful runs.
 
 Workflow:
-  doe run -f study.yaml -p full --design       # Preview resolved YAML; do not run.
-  doe run -f study.yaml -p smoke               # Run a small experiment.
-  doe run -f study.yaml -p full -n 2 'effort=[min, max]'  # Override replicates and factors.
+  doe run -f study.yaml --design              # Preview resolved YAML; do not run.
+  doe run -f study.yaml -p smoke              # Run a small experiment.
+  doe run -f study.yaml -n 2 'effort=[min, max]'  # Override replicates and factors.
   doe status -f study.yaml                    # Show progress and active log path.
 
   Successful runs with matching setup/run commands, point, and replicate
