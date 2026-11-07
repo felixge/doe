@@ -469,6 +469,52 @@ presets:
 	}
 }
 
+func TestRunFindsStudy(t *testing.T) {
+	// Each study has a distinct foo setting so the test can tell which was loaded.
+	study := func(foo int) string {
+		return fmt.Sprintf("factors: {foo: [%d]}\nrun: echo '{}'; true '{foo}'\n", foo)
+	}
+	for _, tc := range []struct {
+		name    string
+		files   map[string]string
+		args    []string
+		wantFoo int
+		wantErr string
+	}{
+		{name: "study.yaml", files: map[string]string{"study.yaml": study(1)}, wantFoo: 1},
+		{name: "explicit -f wins", files: map[string]string{"study.yaml": study(1), "b.study.yaml": study(2)}, args: []string{"-f", "b.study.yaml"}, wantFoo: 2},
+		{name: "other study files are ignored", files: map[string]string{"a.study.yaml": study(2)}, wantErr: "no study.yaml file found"},
+		{name: "no study", wantErr: "no study.yaml file found: specify one with -f or pass factor settings as key=value arguments"},
+		{name: "no study with run script", args: []string{"-r", "echo '{}'"}, wantErr: "no study.yaml file found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			for name, content := range tc.files {
+				if err := os.WriteFile(name, []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			code, stdout, stderr := runMain(context.Background(), append([]string{"run", "--design"}, tc.args...)...)
+			if tc.wantErr != "" {
+				if code != 1 || stdout != "" || !strings.Contains(stderr, tc.wantErr) {
+					t.Fatalf("run = %d, %q, %q; want error %q", code, stdout, stderr, tc.wantErr)
+				}
+				return
+			}
+			if code != 0 || stderr != "" {
+				t.Fatalf("run = %d, %q, %q", code, stdout, stderr)
+			}
+			var got model.Design
+			if err := yaml.Unmarshal([]byte(stdout), &got); err != nil {
+				t.Fatal(err)
+			}
+			if want := (model.Factors{"foo": {tc.wantFoo}}); !reflect.DeepEqual(got.Factors, want) {
+				t.Errorf("factors = %+v, want %+v", got.Factors, want)
+			}
+		})
+	}
+}
+
 func TestLastLogLine(t *testing.T) {
 	longWarning := strings.Repeat("x", 2*4096)
 	for _, tc := range []struct {

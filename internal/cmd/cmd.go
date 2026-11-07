@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -23,6 +24,9 @@ import (
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
+
+// defaultStudy is the study file doe run loads when -f is omitted.
+const defaultStudy = "study.yaml"
 
 // Main executes the doe command.
 func Main(ctx context.Context, env *cli.Env, args []string) int {
@@ -66,6 +70,15 @@ func runCommand(ctx context.Context, env *cli.Env, args []string) int {
 		return 0
 	} else if err != nil {
 		return env.Fail(err)
+	}
+
+	// Fall back to study.yaml in the working directory.
+	if *file == "" {
+		if _, err := os.Stat(defaultStudy); err == nil {
+			*file = defaultStudy
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return env.Fail(err)
+		}
 	}
 
 	// Prepare and validate the experiment before starting any runs.
@@ -224,6 +237,9 @@ func prepareExperiment(path, preset, setupScript, runScript, reportScript string
 	design.Setup = model.Script(strings.TrimSpace(string(design.Setup)))
 	design.Run = model.Script(strings.TrimSpace(string(design.Run)))
 	design.Report = model.Script(strings.TrimSpace(string(design.Report)))
+	if path == "" && len(design.Factors) == 0 {
+		return nil, fmt.Errorf("no study.yaml file found: specify one with -f or pass factor settings as key=value arguments")
+	}
 	if err := design.Validate(); err != nil {
 		return nil, err
 	}
@@ -516,7 +532,8 @@ func runUsage(w io.Writer) {
 Usage: doe run [-f study.yaml] [-p name] [key=value ...] [-s script] [-r script] [--report script] [-n count] [-c] [--no-reuse] [--design]
 
 Options:
-  -f, --file        Load factors, scripts, and replicates from a YAML study.
+  -f, --file        Load factors, scripts, and replicates from a YAML study
+                    (default: study.yaml if it exists).
   -p, --preset      Apply a named preset from the study.
   -s, --setup       Override the setup script, run once before any runs.
   -r, --run         Override the run script with a shell command.
