@@ -2,6 +2,7 @@
 package model
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/json"
@@ -110,18 +111,22 @@ func (d Design) Validate() error {
 }
 
 // RunHash identifies reusable inputs for one point and one-based replicate.
-// JSON sorts map keys. Include the expanded command because settings with the
-// same JSON encoding can expand differently (e.g. large integers and floats).
-// Other points, total replicates, and external dependencies are excluded so an
-// extended design can reuse earlier runs. Reporting is also excluded.
+// JSON sorts map keys. Include the expanded command so runs aren't reused when
+// doe changes how placeholders expand. Other points, total replicates, and
+// external dependencies are excluded so an extended design can reuse earlier
+// runs. Reporting is also excluded.
 func (d Design) RunHash(point Point, replicate int) (string, error) {
+	expandedRun, err := d.Run.ExpandRun(point)
+	if err != nil {
+		return "", err
+	}
 	data, err := json.Marshal(struct {
 		Run         Script `json:"run"`
 		Setup       Script `json:"setup"`
 		Point       Point  `json:"point"`
 		Replicate   int    `json:"replicate"`
 		ExpandedRun string `json:"expanded_run"`
-	}{d.Run, d.Setup, point, replicate, d.Run.Expand(point)})
+	}{d.Run, d.Setup, point, replicate, expandedRun})
 	if err != nil {
 		return "", fmt.Errorf("hash run inputs: %w", err)
 	}
@@ -335,13 +340,72 @@ type Setting any
 // Script is a shell command executed by doe.
 type Script string
 
-// Expand replaces factor placeholders with the point's settings.
-func (s Script) Expand(point Point) string {
-	return factorPlaceholder.ReplaceAllStringFunc(string(s), func(placeholder string) string {
-		setting, ok := point[Factor(placeholder[1:len(placeholder)-1])]
+// ExpandRun replaces factor placeholders with the point's settings.
+func (s Script) ExpandRun(point Point) (string, error) {
+	return s.expand(func(factor Factor) (string, bool, error) {
+		setting, ok := point[factor]
+		if !ok {
+			return "", false, nil
+		}
+		arg, err := settingArg(setting)
+		return arg, true, err
+	})
+}
+
+// expand replaces each placeholder that arg resolves with one shell argument.
+// Unresolved placeholders are kept, e.g. the {HOME} in ${HOME}.
+func (s Script) expand(arg func(Factor) (string, bool, error)) (string, error) {
+	var err error
+	expanded := factorPlaceholder.ReplaceAllStringFunc(string(s), func(placeholder string) string {
+		value, ok, argErr := arg(Factor(placeholder[1 : len(placeholder)-1]))
 		if !ok {
 			return placeholder
 		}
-		return fmt.Sprint(setting)
+		if argErr != nil {
+			if err == nil {
+				err = fmt.Errorf("expand %s: %w", placeholder, argErr)
+			}
+			return placeholder
+		}
+		return shellQuote(value)
 	})
+	return expanded, err
+}
+
+// settingArg formats a setting like jq -r: values that encode as JSON strings
+// as-is, e.g. strings and timestamps, and all other values as JSON.
+func settingArg(setting Setting) (string, error) {
+	data, err := marshalJSON(setting)
+	if err != nil {
+		return "", err
+	}
+	if data[0] != '"' {
+		return string(data), nil
+	}
+	var s string
+	err = json.Unmarshal(data, &s)
+	return s, err
+}
+
+// marshalJSON encodes v as JSON without escaping <, >, and & for HTML.
+func marshalJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte{'\n'}), nil
+}
+
+// shellSafe matches arguments that need no quoting in a POSIX shell.
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+:,./-]+$`)
+
+// shellQuote quotes s as a single POSIX shell argument unless it is safe as-is,
+// so that common settings such as names, numbers, and paths stay readable.
+func shellQuote(s string) string {
+	if shellSafe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

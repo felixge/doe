@@ -348,13 +348,17 @@ func finishExperiment(experiment *model.Experiment, r *results.Results, err erro
 }
 
 func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *results.Results, index *results.RunIndex, projectDir string, point model.Point, replicate int, hash string) error {
+	script, err := experiment.Run.ExpandRun(point)
+	if err != nil {
+		return fmt.Errorf("run %v: %w", point, err)
+	}
 	run := model.NewRun(experiment.ID, point, replicate)
 	log, err := r.CreateRun(run)
 	if err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}
 
-	executionErr := executeScript(ctx, expandRunScript(experiment.Run, point), projectDir, log)
+	executionErr := executeScript(ctx, script, projectDir, log)
 	outcome, outcomeErr := lastJSON[model.Outcome](log, true)
 	closeErr := log.Close()
 	err = errors.Join(ctx.Err(), executionErr, outcomeErr, closeErr)
@@ -446,10 +450,6 @@ func runStopReason(err error) (model.RunState, string) {
 	}
 }
 
-func expandRunScript(script model.Script, point model.Point) string {
-	return script.Expand(point)
-}
-
 func rootUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `A lightweight CLI for design of experiments studies.
 
@@ -494,9 +494,10 @@ Scripts:
   invalidate successful runs.
 
 Placeholders:
-  {factor} in run expands to the run's setting. Substitution is literal, not
-  shell-escaped. Every factor needs a placeholder in run. Setup and report
-  do not expand placeholders.
+  {factor} expands to one shell argument, quoted when needed; don't quote it.
+  In run, it is the run's setting: scalars as-is, lists and maps as JSON.
+  Every factor needs a placeholder in run. Setup and report do not expand
+  placeholders.
 
 Workflow:
   doe run -f study.yaml --design              # Preview resolved YAML; do not run.

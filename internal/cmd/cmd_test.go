@@ -560,12 +560,12 @@ func TestStopReason(t *testing.T) {
 	}
 }
 
-func TestExpandRunScript(t *testing.T) {
-	point := model.Point{"foo": "a'b; {bar}", "bar": 42}
-	got := expandRunScript(`{foo} {bar} {missing} {"result":1}`, point)
-	want := `a'b; {bar} 42 {missing} {"result":1}`
-	if got != want {
-		t.Errorf("script = %q, want %q", got, want)
+func TestRunPlaceholdersExpandToSingleArguments(t *testing.T) {
+	t.Chdir(t.TempDir())
+	_, runs := completedCommand(t, "text=has space", "list=[[1, two]]", "-r", `printf '{"text":"%s","list":%s}\n' {text} {list}`)
+	want := model.Outcome{"text": "has space", "list": []any{1.0, "two"}}
+	if !reflect.DeepEqual(runs[0].Outcome, want) {
+		t.Errorf("outcome = %v; want %v", runs[0].Outcome, want)
 	}
 }
 

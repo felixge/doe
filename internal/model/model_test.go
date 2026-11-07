@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -340,5 +341,43 @@ func TestFactorsSet(t *testing.T) {
 	}
 	if !reflect.DeepEqual(factors["foo"], Settings{42}) {
 		t.Errorf("invalid YAML changed settings: %v", factors["foo"])
+	}
+}
+
+func TestScriptExpandRun(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script Script
+		point  Point
+		want   string
+	}{
+		{"plain values", "./run {s} {i} {f} {b} {v}", Point{"s": "zstd", "i": 12, "f": 3.5, "b": true, "v": "0.23.1-1"}, "./run zstd 12 3.5 true 0.23.1-1"},
+		{"json numbers", "{f}", Point{"f": 1000000.0}, "1000000"},
+		{"null", "{n}", Point{"n": nil}, "null"},
+		{"timestamp", "{t}", Point{"t": time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)}, "2026-01-02T00:00:00Z"},
+		{"spaces", "{s}", Point{"s": "has space"}, "'has space'"},
+		{"shell syntax", "{s}", Point{"s": "$HOME; `id`"}, "'$HOME; `id`'"},
+		{"single quote", "{s}", Point{"s": "it's"}, `'it'\''s'`},
+		{"html characters", "{s}", Point{"s": "a<b&c"}, "'a<b&c'"},
+		{"empty", "{s}", Point{"s": ""}, "''"},
+		{"list", "{l}", Point{"l": []any{"x", 1}}, `'["x",1]'`},
+		{"map", "{m}", Point{"m": map[string]any{"k": "a b"}}, `'{"k":"a b"}'`},
+		{"inside word", "work/cuda{v}/bin", Point{"v": 13}, "work/cuda13/bin"},
+		{"unknown placeholders", "echo ${HOME} {missing}", Point{}, "echo ${HOME} {missing}"},
+		{"no re-expansion", "{a} {b}", Point{"a": "{b}", "b": 1}, "'{b}' 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.script.ExpandRun(tc.point)
+			if err != nil || got != tc.want {
+				t.Errorf("ExpandRun() = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestScriptExpandRunInvalidSetting(t *testing.T) {
+	_, err := Script("{f}").ExpandRun(Point{"f": math.NaN()})
+	if err == nil || !strings.Contains(err.Error(), "expand {f}") {
+		t.Errorf("ExpandRun() error = %v", err)
 	}
 }
