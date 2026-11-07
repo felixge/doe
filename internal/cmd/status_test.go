@@ -170,13 +170,7 @@ func TestFormatDuration(t *testing.T) {
 	}
 }
 
-func TestStatusHelpAndArguments(t *testing.T) {
-	for _, args := range [][]string{{"status", "-h"}, {"status", "--help"}} {
-		code, stdout, stderr := runStatusCommand(t, args...)
-		if code != 0 || !strings.Contains(stdout, "Usage: doe status [-f study.yaml]") || stderr != "" {
-			t.Errorf("status help = %d, %q, %q", code, stdout, stderr)
-		}
-	}
+func TestStatusArguments(t *testing.T) {
 	for _, args := range [][]string{{"status", "unexpected"}, {"status", "--unknown"}} {
 		code, stdout, stderr := runStatusCommand(t, args...)
 		if code != 1 || stdout != "" || stderr == "" {

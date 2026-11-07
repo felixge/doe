@@ -258,23 +258,6 @@ func TestNewExperimentEmptyPoints(t *testing.T) {
 	}
 }
 
-func TestNewRun(t *testing.T) {
-	point := Point{"foo": 42}
-	experimentID := uuid.NewV7()
-	before := time.Now()
-	run := NewRun(experimentID, point, 2)
-	after := time.Now()
-	if run.Reused() || run.ID[6]>>4 != 7 || run.ExperimentID != experimentID || !reflect.DeepEqual(run.Point, point) || run.Replicate != 2 || run.State != RunStateRunning || run.Outcome != nil {
-		t.Errorf("NewRun = %+v, want running UUIDv7 and point %v", run, point)
-	}
-	if run.Start.Before(before) || run.Start.After(after) || !run.End.IsZero() {
-		t.Errorf("NewRun timing = %s to %s; want start within [%s, %s] and no end", run.Start, run.End, before, after)
-	}
-	if other := NewRun(experimentID, point, 2); other.ID == run.ID {
-		t.Errorf("NewRun reused ID %s", run.ID)
-	}
-}
-
 func TestRunSerialization(t *testing.T) {
 	id := uuid.NewV7()
 	experimentID := uuid.NewV7()

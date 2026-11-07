@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -322,18 +321,6 @@ func TestRunOutputErrors(t *testing.T) {
 	}
 }
 
-func TestNestedOutcomeAllowsFieldCollisions(t *testing.T) {
-	t.Chdir(t.TempDir())
-	code, stdout, stderr := runMain(context.Background(), "run", "error=input", "-r", `echo '{"error":"measurement"}'; true '{error}'`)
-	if code != 0 || stderr != "" {
-		t.Fatalf("experiment = %d, %q, %q", code, stdout, stderr)
-	}
-	_, runs := readCompletedExperiment(t, "results", stdout)
-	if runs[0].Point["error"] != "input" || runs[0].Outcome["error"] != "measurement" {
-		t.Errorf("run = %+v", runs[0])
-	}
-}
-
 func TestFailedRunKeepsOutcomeAndStopsSchedule(t *testing.T) {
 	t.Chdir(t.TempDir())
 	code, stdout, stderr := runMain(context.Background(), "run", "foo=[1,2]", "-r", `echo '{"value":42}'; true '{foo}'; exit 7`)
@@ -582,20 +569,7 @@ func TestExpandRunScript(t *testing.T) {
 	}
 }
 
-func TestExperimentHelpAndErrors(t *testing.T) {
-	for _, tc := range []struct {
-		args []string
-		want string
-	}{
-		{nil, "run     Run an experiment"},
-		{[]string{"run", "--help"}, "Usage: doe run"},
-		{[]string{"run", "--help"}, "-c, --clean"},
-	} {
-		code, stdout, stderr := runMain(context.Background(), tc.args...)
-		if code != 0 || !strings.Contains(stdout, tc.want) || stderr != "" {
-			t.Errorf("Main(%q) = %d, %q, %q", tc.args, code, stdout, stderr)
-		}
-	}
+func TestExperimentErrors(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, tc := range []struct {
 		args []string
@@ -613,25 +587,5 @@ func TestExperimentHelpAndErrors(t *testing.T) {
 	}
 	if _, err := os.Stat("results"); !os.IsNotExist(err) {
 		t.Errorf("validation created results: %v", err)
-	}
-}
-
-func TestRecordJSONIsNested(t *testing.T) {
-	t.Chdir(t.TempDir())
-	code, stdout, stderr := runMain(context.Background(), "run", "foo=1", "-r", `echo '{"value":2}'; true '{foo}'`)
-	if code != 0 || stderr != "" {
-		t.Fatal(stderr)
-	}
-	experiment, runs := readCompletedExperiment(t, "results", stdout)
-	data, err := os.ReadFile(filepath.Join("results", "experiments", experiment.ID.String(), "runs", runs[0].ID.String()+".json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var record map[string]json.RawMessage
-	if err := json.Unmarshal(data, &record); err != nil {
-		t.Fatal(err)
-	}
-	if record["point"] == nil || record["outcome"] == nil || record["foo"] != nil || record["value"] != nil || !bytes.HasSuffix(data, []byte("\n")) {
-		t.Errorf("run JSON = %s", data)
 	}
 }

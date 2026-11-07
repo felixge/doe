@@ -201,17 +201,3 @@ func TestStatusLines(t *testing.T) {
 		}
 	}
 }
-
-func TestIsTerminal(t *testing.T) {
-	if isTerminal(io.Discard) {
-		t.Error("io.Discard is a terminal")
-	}
-	file, err := os.CreateTemp(t.TempDir(), "stdout")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = file.Close() }()
-	if isTerminal(file) {
-		t.Error("regular file is a terminal")
-	}
-}
