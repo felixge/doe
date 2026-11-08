@@ -117,7 +117,7 @@ func (d Design) Validate() error {
 // runs. For the same reason, setup is hashed before expanding its placeholders
 // to all settings. Reporting is also excluded.
 func (d Design) RunHash(point Point, replicate int) (string, error) {
-	expandedRun, err := d.Run.ExpandRun(point)
+	expandedRun, err := d.Run.ExpandPoint(point)
 	if err != nil {
 		return "", err
 	}
@@ -341,8 +341,8 @@ type Setting any
 // Script is a shell command executed by doe.
 type Script string
 
-// ExpandRun replaces factor placeholders with the point's settings.
-func (s Script) ExpandRun(point Point) (string, error) {
+// ExpandPoint replaces factor placeholders with the point's settings.
+func (s Script) ExpandPoint(point Point) (string, error) {
 	return s.expand(func(factor Factor) (string, bool, error) {
 		setting, ok := point[factor]
 		if !ok {
@@ -353,9 +353,9 @@ func (s Script) ExpandRun(point Point) (string, error) {
 	})
 }
 
-// ExpandSetup replaces factor placeholders with JSON arrays of the factors'
-// settings, because setup runs once for all points.
-func (s Script) ExpandSetup(factors Factors) (string, error) {
+// ExpandFactors replaces factor placeholders with JSON arrays of the factors'
+// settings, e.g. for setup, which runs once for all points.
+func (s Script) ExpandFactors(factors Factors) (string, error) {
 	return s.expand(func(factor Factor) (string, bool, error) {
 		settings, ok := factors[factor]
 		if !ok {

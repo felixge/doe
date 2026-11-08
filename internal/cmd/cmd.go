@@ -262,7 +262,7 @@ func runExperiment(ctx context.Context, experiment *model.Experiment, r *results
 	if experiment.Setup != "" {
 		// Setup runs once, so each placeholder expands to all of its factor's settings.
 		var script string
-		script, setupExecErr = experiment.Setup.ExpandSetup(experiment.Factors)
+		script, setupExecErr = experiment.Setup.ExpandFactors(experiment.Factors)
 		if setupExecErr == nil {
 			setupExecErr = executeScript(ctx, script, projectDir, setupLog)
 			experiment.Env, setupJSONErr = lastJSON[model.Env](setupLog, false)
@@ -353,7 +353,7 @@ func finishExperiment(experiment *model.Experiment, r *results.Results, err erro
 }
 
 func runDesignPoint(ctx context.Context, experiment *model.Experiment, r *results.Results, index *results.RunIndex, projectDir string, point model.Point, replicate int, hash string) error {
-	script, err := experiment.Run.ExpandRun(point)
+	script, err := experiment.Run.ExpandPoint(point)
 	if err != nil {
 		return fmt.Errorf("run %v: %w", point, err)
 	}

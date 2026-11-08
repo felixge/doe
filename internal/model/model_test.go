@@ -344,7 +344,7 @@ func TestFactorsSet(t *testing.T) {
 	}
 }
 
-func TestScriptExpandRun(t *testing.T) {
+func TestScriptExpandPoint(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		script Script
@@ -367,29 +367,29 @@ func TestScriptExpandRun(t *testing.T) {
 		{"no re-expansion", "{a} {b}", Point{"a": "{b}", "b": 1}, "'{b}' 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := tc.script.ExpandRun(tc.point)
+			got, err := tc.script.ExpandPoint(tc.point)
 			if err != nil || got != tc.want {
-				t.Errorf("ExpandRun() = %q, %v; want %q", got, err, tc.want)
+				t.Errorf("ExpandPoint() = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}
 }
 
-func TestScriptExpandRunInvalidSetting(t *testing.T) {
-	_, err := Script("{f}").ExpandRun(Point{"f": math.NaN()})
+func TestScriptExpandPointInvalidSetting(t *testing.T) {
+	_, err := Script("{f}").ExpandPoint(Point{"f": math.NaN()})
 	if err == nil || !strings.Contains(err.Error(), "expand {f}") {
-		t.Errorf("ExpandRun() error = %v", err)
+		t.Errorf("ExpandPoint() error = %v", err)
 	}
 }
 
-func TestScriptExpandSetup(t *testing.T) {
+func TestScriptExpandFactors(t *testing.T) {
 	factors := Factors{"a": {12, 13}, "b": {"it's"}, "c": {[]any{1, 2}}, "unused": {true}}
-	got, err := Script("./setup {a} {b} {c} {missing}").ExpandSetup(factors)
+	got, err := Script("./setup {a} {b} {c} {missing}").ExpandFactors(factors)
 	want := `./setup '[12,13]' '["it'\''s"]' '[[1,2]]' {missing}`
 	if err != nil || got != want {
-		t.Errorf("ExpandSetup() = %q, %v; want %q", got, err, want)
+		t.Errorf("ExpandFactors() = %q, %v; want %q", got, err, want)
 	}
-	if _, err := Script("{f}").ExpandSetup(Factors{"f": {math.NaN()}}); err == nil || !strings.Contains(err.Error(), "expand {f}") {
-		t.Errorf("ExpandSetup() error = %v", err)
+	if _, err := Script("{f}").ExpandFactors(Factors{"f": {math.NaN()}}); err == nil || !strings.Contains(err.Error(), "expand {f}") {
+		t.Errorf("ExpandFactors() error = %v", err)
 	}
 }
