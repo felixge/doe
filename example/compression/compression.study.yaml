@@ -1,4 +1,4 @@
-setup: ./setup.bash
+setup: ./setup.bash {algorithm}
 run: ./run.bash {algorithm} {effort} {file}
 factors:
   file: [sample.pb, sample.png, sample.txt]
