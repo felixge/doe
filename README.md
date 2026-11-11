@@ -25,7 +25,7 @@ compression.study.yaml  run.bash  sample.pb  sample.png  sample.txt  setup.bash
 The heart is the [compression.study.yaml](./example/compression/compression.study.yaml) file which defines the scripts, factors, and replicates, plus a `smoke` preset that overrides some of them for a quick check:
 
 ```yaml
-setup: ./setup.bash
+setup: ./setup.bash {algorithm}
 run: ./run.bash {algorithm} {effort} {file}
 factors:
   file: [sample.pb, sample.png, sample.txt]
@@ -41,11 +41,11 @@ presets:
     replicates: 1
 ```
 
-It uses a [setup.bash](./example/compression/setup.bash) script to install dependencies and to emit a JSON object describing the environment:
+It uses a [setup.bash](./example/compression/setup.bash) script, which runs once and receives all settings of `{algorithm}` as a JSON array, to install each algorithm's tool and to emit a JSON object describing the environment:
 
 ```bash
-$ ./setup.bash
-{"os":"Darwin","arch":"arm64"}
+$ ./setup.bash '["gzip","zstd"]'
+{"os":"Darwin","arch":"arm64","gzip_version":"gzip 1.15","zstd_version":"*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***"}
 ```
 
 The [run.bash](./example/compression/run.bash) script is invoked `replicates` times for each design point (unique combination of factors and settings) and emits a JSON object on the last line of stdout containing the outputs of the run:
