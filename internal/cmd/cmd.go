@@ -507,10 +507,10 @@ Placeholders:
   Report does not expand placeholders.
 
 Workflow:
-  doe run -f study.yaml --design              # Preview resolved YAML; do not run.
-  doe run -f study.yaml -p smoke              # Run a small experiment.
-  doe run -f study.yaml -n 2 'effort=[min, max]'  # Override replicates and factors.
-  doe status -f study.yaml                    # Show progress and active log path.
+  doe run --design                       # Preview resolved YAML; do not run.
+  doe run -p smoke                       # Run a small experiment.
+  doe run -n 2 'effort=[min, max]'       # Override replicates and factors.
+  doe status                             # Show progress and active log path.
 
 Reuse:
   Successful runs with matching setup/run commands, point, and replicate
