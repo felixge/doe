@@ -19,10 +19,10 @@ Projects are directories containing one or more studies. Here is a study of diff
 ```bash
 $ cd ./example/compression
 $ ls
-compression.study.yaml  run.bash  sample.pb  sample.png  sample.txt  setup.bash
+run.bash  sample.pb  sample.png  sample.txt  setup.bash  study.yaml
 ```
 
-The heart is the [compression.study.yaml](./example/compression/compression.study.yaml) file which defines the scripts, factors, and replicates, plus a `smoke` preset that overrides some of them for a quick check:
+The heart is the [study.yaml](./example/compression/study.yaml) file which defines the scripts, factors, and replicates, plus a `smoke` preset that overrides some of them for a quick check:
 
 ```yaml
 setup: ./setup.bash {algorithm}
@@ -55,17 +55,17 @@ $ ./run.bash zstd default sample.pb
 {"level":3,"wall_seconds":0.00039,"cpu_seconds":0.00036,"peak_rss_bytes":2588672,"input_size_bytes":26400,"output_size_bytes":24243}
 ```
 
-Run an experiment with `doe run` and a study file, optionally with `-p smoke`. It displays live progress on a terminal, or prints the experiment ID when piped or redirected.
+Run an experiment with `doe run`, which loads `study.yaml` by default (use `-f` for other study files), optionally with `-p smoke`. It displays live progress on a terminal, or prints the experiment ID when piped or redirected.
 
 ```bash
-$ doe run -f compression.study.yaml
+$ doe run
 ```
 
 Successful runs with matching setup and run commands, factor settings, and replicate numbers are reused by default. Use `--no-reuse` to execute all runs, or `-c` to remove previous results first. Reuse does not track script file contents or external dependencies.
 
 CLI options override study and preset settings. For example, add `-n 2 'effort=[min, max]'` to change replicates and factor settings, or `--design` to print the resolved YAML without running.
 
-Use `doe status -f compression.study.yaml` to check the latest experiment, including progress and the active setup, run, or report log path.
+Use `doe status` to check the latest experiment, including progress and the active setup, run, or report log path.
 
 doe stores each experiment and run as an individual JSON document. Run inputs are nested under `point`, measurements are nested under `outcome`, and only runs with `state = 'done'` completed successfully:
 
